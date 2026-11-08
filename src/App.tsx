@@ -20,6 +20,14 @@ import {
   buildInitialComparison,
   generateTestResults,
 } from './data/mockStore';
+import {
+  DataSourceMode,
+  buildDefaultRunMap,
+  clearPersistedPortalState,
+  generateEnterpriseScaleTopology,
+  loadPersistedPortalState,
+  savePersistedPortalState,
+} from './adapters/syntheticsAdapter';
 import { generateComparisonMarkdownSummary } from './engine/rules';
 import {
   TestInspector,
@@ -80,6 +88,7 @@ import {
   Sparkles,
   LayoutGrid,
   History,
+  Search,
 } from 'lucide-react';
 
 type ViewMode =
@@ -113,18 +122,32 @@ export default function App() {
     account: string;
   } | null>(DEFAULT_TEMPLATE_CONFIG.branding.defaultOperator);
 
-  // 3. Config-Driven Topology & Suite State (Can be edited in template.config.ts or live in Settings)
-  const [apps, setApps] = useState<AppConfig[]>(
-    DEFAULT_TEMPLATE_CONFIG.properties
+  // 3. Persistent Config-Driven Topology & Suite State (Survives Browser Reloads)
+  const initialPersisted = useMemo(() => loadPersistedPortalState(), []);
+
+  const [dataSourceMode, setDataSourceMode] = useState<DataSourceMode>(
+    initialPersisted.dataSourceMode
   );
+  const [remoteApiBaseUrl, setRemoteApiBaseUrl] = useState<string>(
+    initialPersisted.remoteApiBaseUrl
+  );
+  const [apps, setApps] = useState<AppConfig[]>(initialPersisted.apps);
   const [testSuite, setTestSuite] = useState<TestCaseDefinition[]>(
-    DEFAULT_TEMPLATE_CONFIG.testSuite
+    initialPersisted.testSuite
   );
-  const [runs, setRuns] = useState<RunRecord[]>(INITIAL_RUNS);
-  const [acceptedRules, setAcceptedRules] = useState<AcceptedRule[]>(INITIAL_RULES);
-  const [acceptedCookies, setAcceptedCookies] = useState<string[]>([]);
-  const [acceptedVisualTests, setAcceptedVisualTests] = useState<string[]>([]);
-  const [ignoreAcceptedDiffs, setIgnoreAcceptedDiffs] = useState<boolean>(true);
+  const [runs, setRuns] = useState<RunRecord[]>(initialPersisted.runs);
+  const [acceptedRules, setAcceptedRules] = useState<AcceptedRule[]>(
+    initialPersisted.acceptedRules
+  );
+  const [acceptedCookies, setAcceptedCookies] = useState<string[]>(
+    initialPersisted.acceptedCookies
+  );
+  const [acceptedVisualTests, setAcceptedVisualTests] = useState<string[]>(
+    initialPersisted.acceptedVisualTests
+  );
+  const [ignoreAcceptedDiffs, setIgnoreAcceptedDiffs] = useState<boolean>(
+    initialPersisted.ignoreAcceptedDiffs
+  );
 
   const [targetStates, setTargetStates] = useState<
     Record<
@@ -138,7 +161,7 @@ export default function App() {
   >(INITIAL_TARGET_STATES);
 
   const [readyReports, setReadyReports] = useState<ReadyReportDefinition[]>(
-    DEFAULT_TEMPLATE_CONFIG.readyReports
+    initialPersisted.readyReports
   );
 
   // Background Jobs & Notification Popover State
@@ -175,42 +198,141 @@ export default function App() {
     },
   ]);
 
-  const [viewMode, setViewMode] = useState<ViewMode>('property');
+  const [viewMode, setViewMode] = useState<ViewMode>(initialPersisted.viewMode);
   const [activeAppId, setActiveAppId] = useState<string>(
-    DEFAULT_TEMPLATE_CONFIG.properties[0]?.id || 'www'
+    initialPersisted.activeAppId
   );
-  const [focusedTargetId, setFocusedTargetId] = useState<string>('www.prod.staging');
-  const [candidateTarget, setCandidateTarget] = useState<string>('www.prod.staging');
-  const [baselineTarget, setBaselineTarget] = useState<string>('www.prod.prod');
+  const [focusedTargetId, setFocusedTargetId] = useState<string>(
+    initialPersisted.focusedTargetId
+  );
+  const [candidateTarget, setCandidateTarget] = useState<string>(
+    initialPersisted.candidateTarget
+  );
+  const [baselineTarget, setBaselineTarget] = useState<string>(
+    initialPersisted.baselineTarget
+  );
 
   const [selectedRunByTarget, setSelectedRunByTarget] = useState<
     Record<string, string>
-  >(() => {
-    const map: Record<string, string> = {};
-    for (const r of INITIAL_RUNS) {
-      if (!map[r.target]) {
-        map[r.target] = r.key;
-      }
-    }
-    return map;
-  });
+  >(initialPersisted.selectedRunByTarget);
 
   const [candidateRunKey, setCandidateRunKey] = useState<string>(
-    () => INITIAL_RUNS.find((r) => r.target === 'www.prod.staging')?.key || ''
+    initialPersisted.candidateRunKey
   );
   const [baselineRunKey, setBaselineRunKey] = useState<string>(
-    () => INITIAL_RUNS.find((r) => r.target === 'www.prod.prod')?.key || ''
+    initialPersisted.baselineRunKey
   );
 
   const [selectedTestId, setSelectedTestId] = useState<string>(
-    DEFAULT_TEMPLATE_CONFIG.testSuite[0]?.id || 'T01'
+    initialPersisted.selectedTestId
   );
-  const [inspectorTab, setInspectorTab] = useState<InspectorDimension>('headers');
+  const [inspectorTab, setInspectorTab] = useState<InspectorDimension>(
+    initialPersisted.inspectorTab
+  );
   const [testFilter, setTestFilter] = useState<'all' | 'diffs' | 'matched'>('all');
+  const [diffSearchQuery, setDiffSearchQuery] = useState<string>('');
+  const [reportScope, setReportScope] = useState<'active' | 'all'>('active');
+  const [reportSearchQuery, setReportSearchQuery] = useState<string>('');
 
   const [isComparingBoth, setIsComparingBoth] = useState<boolean>(false);
   const [rerunningTestId, setRerunningTestId] = useState<string | null>(null);
   const [runningAiTestId, setRunningAiTestId] = useState<string | null>(null);
+
+  // Automatically persist portal state across reloads so user state never resets unexpectedly
+  useEffect(() => {
+    savePersistedPortalState({
+      version: 2,
+      dataSourceMode,
+      remoteApiBaseUrl,
+      apps,
+      testSuite,
+      runs,
+      readyReports,
+      acceptedRules,
+      acceptedCookies,
+      acceptedVisualTests,
+      ignoreAcceptedDiffs,
+      viewMode,
+      activeAppId,
+      focusedTargetId,
+      candidateTarget,
+      baselineTarget,
+      candidateRunKey,
+      baselineRunKey,
+      selectedRunByTarget,
+      selectedTestId,
+      inspectorTab,
+    });
+  }, [
+    dataSourceMode,
+    remoteApiBaseUrl,
+    apps,
+    testSuite,
+    runs,
+    readyReports,
+    acceptedRules,
+    acceptedCookies,
+    acceptedVisualTests,
+    ignoreAcceptedDiffs,
+    viewMode,
+    activeAppId,
+    focusedTargetId,
+    candidateTarget,
+    baselineTarget,
+    candidateRunKey,
+    baselineRunKey,
+    selectedRunByTarget,
+    selectedTestId,
+    inspectorTab,
+  ]);
+
+  const handleToggleScalePreset = () => {
+    if (apps.length >= 50) {
+      const defaultApps = DEFAULT_TEMPLATE_CONFIG.properties;
+      setApps(defaultApps);
+      setRuns(INITIAL_RUNS);
+      setReadyReports(DEFAULT_TEMPLATE_CONFIG.readyReports);
+      setSelectedRunByTarget(buildDefaultRunMap(INITIAL_RUNS));
+      setActiveAppId('www');
+      setCandidateTarget('www.prod.staging');
+      setBaselineTarget('www.prod.prod');
+      toast.info('Restored default 8-Property template topology');
+    } else {
+      const scaled = generateEnterpriseScaleTopology(50);
+      setApps(scaled.apps);
+      setRuns(scaled.runs);
+      setReadyReports(scaled.readyReports);
+      setSelectedRunByTarget(buildDefaultRunMap(scaled.runs));
+      toast.success(
+        `Loaded 50-Property Enterprise Scale Preset (${scaled.apps.length} properties · ${scaled.runs.length} runs)`
+      );
+    }
+  };
+
+  const handleResetPortalState = () => {
+    const clean = clearPersistedPortalState();
+    setDataSourceMode(clean.dataSourceMode);
+    setRemoteApiBaseUrl(clean.remoteApiBaseUrl);
+    setApps(clean.apps);
+    setTestSuite(clean.testSuite);
+    setRuns(clean.runs);
+    setReadyReports(clean.readyReports);
+    setAcceptedRules(clean.acceptedRules);
+    setAcceptedCookies(clean.acceptedCookies);
+    setAcceptedVisualTests(clean.acceptedVisualTests);
+    setIgnoreAcceptedDiffs(clean.ignoreAcceptedDiffs);
+    setViewMode(clean.viewMode);
+    setActiveAppId(clean.activeAppId);
+    setFocusedTargetId(clean.focusedTargetId);
+    setCandidateTarget(clean.candidateTarget);
+    setBaselineTarget(clean.baselineTarget);
+    setCandidateRunKey(clean.candidateRunKey);
+    setBaselineRunKey(clean.baselineRunKey);
+    setSelectedRunByTarget(clean.selectedRunByTarget);
+    setSelectedTestId(clean.selectedTestId);
+    setInspectorTab(clean.inspectorTab);
+    toast.success('Reset portal state to clean template defaults');
+  };
 
   const currentApp = useMemo(
     () => apps.find((a) => a.id === activeAppId) || apps[0],
@@ -510,13 +632,22 @@ export default function App() {
   const filteredItems = useMemo(() => {
     return comparison.items.filter((item) => {
       const { hasAny } = getItemDiffCounts(item);
-      if (testFilter === 'diffs') return hasAny;
-      if (testFilter === 'matched') return !hasAny;
+      if (testFilter === 'diffs' && !hasAny) return false;
+      if (testFilter === 'matched' && hasAny) return false;
+      if (diffSearchQuery.trim()) {
+        const q = diffSearchQuery.toLowerCase();
+        return (
+          item.testId.toLowerCase().includes(q) ||
+          item.testName.toLowerCase().includes(q) ||
+          item.url.toLowerCase().includes(q)
+        );
+      }
       return true;
     });
   }, [
     comparison.items,
     testFilter,
+    diffSearchQuery,
     acceptedFields,
     acceptedCookies,
     acceptedVisualTests,
@@ -1047,6 +1178,7 @@ export default function App() {
             apps={apps}
             activeAppId={activeAppId}
             onSelectProperty={handleSelectProperty}
+            onToggleScalePreset={handleToggleScalePreset}
             onOpenSettings={() => {
               setViewMode('settings');
               setShowNotifications(false);
@@ -1267,6 +1399,12 @@ export default function App() {
           onToggleAcceptVisual={handleToggleAcceptVisual}
           ignoreAcceptedDiffs={ignoreAcceptedDiffs}
           onChangeIgnoreAcceptedDiffs={setIgnoreAcceptedDiffs}
+          dataSourceMode={dataSourceMode}
+          onChangeDataSourceMode={setDataSourceMode}
+          remoteApiBaseUrl={remoteApiBaseUrl}
+          onChangeRemoteApiBaseUrl={setRemoteApiBaseUrl}
+          onToggleScalePreset={handleToggleScalePreset}
+          onResetPortalState={handleResetPortalState}
         />
       )}
 
@@ -1560,17 +1698,51 @@ export default function App() {
             </Card>
 
             <Card className="overflow-hidden">
-              <CardHeader className="py-2 px-4 border-b border-border bg-muted/20 flex flex-row items-center justify-between space-y-0">
+              <CardHeader className="py-2 px-4 border-b border-border bg-muted/20 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
                 <div className="flex items-center gap-2">
                   <GitCompare className="w-3.5 h-3.5 text-sky-500" />
                   <CardTitle className="text-xs font-semibold">
-                    Ready Comparative Reports ({currentApp.id})
+                    Ready Comparative Reports (
+                    {reportScope === 'active' ? currentApp.id : 'All Properties'})
                   </CardTitle>
+                  <div className="inline-flex items-center rounded border border-border bg-background p-0.5 text-[10px] font-mono">
+                    <button
+                      type="button"
+                      onClick={() => setReportScope('active')}
+                      className={`px-1.5 py-0.5 rounded-xs cursor-pointer ${
+                        reportScope === 'active'
+                          ? 'bg-foreground text-background font-semibold'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {currentApp.id} (
+                      {readyReports.filter((r) => r.appId === activeAppId).length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReportScope('all')}
+                      className={`px-1.5 py-0.5 rounded-xs cursor-pointer ${
+                        reportScope === 'all'
+                          ? 'bg-foreground text-background font-semibold'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      All ({readyReports.length})
+                    </button>
+                  </div>
                 </div>
-                <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0">
-                  {readyReports.filter((r) => r.appId === activeAppId).length}{' '}
-                  ready
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Filter reports…"
+                      value={reportSearchQuery}
+                      onChange={(e) => setReportSearchQuery(e.target.value)}
+                      className="h-6 pl-6 pr-2 rounded border border-input bg-background text-[11px] font-mono w-40"
+                    />
+                  </div>
+                </div>
               </CardHeader>
 
               <Table>
@@ -1587,7 +1759,19 @@ export default function App() {
                 </TableHeader>
                 <TableBody>
                   {readyReports
-                    .filter((r) => r.appId === activeAppId)
+                    .filter((r) =>
+                      reportScope === 'active' ? r.appId === activeAppId : true
+                    )
+                    .filter((r) => {
+                      if (!reportSearchQuery.trim()) return true;
+                      const q = reportSearchQuery.toLowerCase();
+                      return (
+                        r.id.toLowerCase().includes(q) ||
+                        r.title.toLowerCase().includes(q) ||
+                        r.candidateTarget.toLowerCase().includes(q) ||
+                        r.baselineTarget.toLowerCase().includes(q)
+                      );
+                    })
                     .map((rpt) => {
                       const targetRunsA = runs.filter(
                         (r) => r.target === rpt.candidateTarget
@@ -1766,7 +1950,7 @@ export default function App() {
           <main className="px-4 py-3 w-full flex-1">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
               <Card className="lg:col-span-5 overflow-hidden">
-                <div className="px-3.5 py-2 border-b border-border bg-muted/20 flex items-center justify-between gap-2">
+                <div className="px-3.5 py-2 border-b border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2">
                   <Tabs
                     value={testFilter}
                     onValueChange={(v) =>
@@ -1786,19 +1970,31 @@ export default function App() {
                     </TabsList>
                   </Tabs>
 
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => handleRerunAllDiffs()}
-                    disabled={rerunningTestId === 'ALL'}
-                  >
-                    <RotateCw
-                      className={`!size-3 ${
-                        rerunningTestId === 'ALL' ? 'animate-spin' : ''
-                      }`}
-                    />
-                    Rerun Diffs
-                  </Button>
+                  <div className="flex items-center gap-1.5">
+                    <div className="relative">
+                      <Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        placeholder="Filter tests…"
+                        value={diffSearchQuery}
+                        onChange={(e) => setDiffSearchQuery(e.target.value)}
+                        className="h-6 pl-6 pr-2 rounded border border-input bg-background text-[11px] font-mono w-28"
+                      />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => handleRerunAllDiffs()}
+                      disabled={rerunningTestId === 'ALL'}
+                    >
+                      <RotateCw
+                        className={`!size-3 ${
+                          rerunningTestId === 'ALL' ? 'animate-spin' : ''
+                        }`}
+                      />
+                      Rerun Diffs
+                    </Button>
+                  </div>
                 </div>
 
                 <Table>
@@ -2130,19 +2326,41 @@ export default function App() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="py-2">Test Case</TableHead>
-                        <TableHead className="text-right w-20 py-2">Status</TableHead>
-                        <TableHead className="text-right w-20 py-2">Latency</TableHead>
+                        <TableHead className="py-1.5">Test Case</TableHead>
+                        <TableHead
+                          className="text-center w-12 py-1.5"
+                          title="HTTP Status & Captured Headers — Click to open Headers tab"
+                        >
+                          <Code2 className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
+                        </TableHead>
+                        <TableHead
+                          className="text-center w-12 py-1.5"
+                          title="Captured Set-Cookie Jar — Click to open Cookies tab"
+                        >
+                          <KeyRound className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
+                        </TableHead>
+                        <TableHead
+                          className="text-center w-12 py-1.5"
+                          title="Captured DOM Snapshot — Click to open Captured Image tab"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
+                        </TableHead>
+                        <TableHead className="text-right w-16 py-1.5">Latency</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {activeSingleRun.results.map((res) => {
                         const isSelected = res.id === selectedSingleResult?.id;
+                        const headerCount = Object.keys(res.capturedHeaders || {}).length;
+                        const cookieCount = Object.keys(res.capturedCookies || {}).length;
                         return (
                           <TableRow
                             key={res.id}
                             data-state={isSelected ? 'selected' : undefined}
-                            onClick={() => setSelectedTestId(res.id)}
+                            onClick={() => {
+                              setSelectedTestId(res.id);
+                              setInspectorTab('headers');
+                            }}
                             className="cursor-pointer"
                           >
                             <TableCell className="py-1.5">
@@ -2150,12 +2368,24 @@ export default function App() {
                                 className="flex items-center gap-2"
                                 title={`${res.id}: ${res.name} (${res.url})`}
                               >
-                                <PageMiniThumb
-                                  testId={res.id}
-                                  testName={res.name}
-                                  url={res.url}
-                                  hasVisualDiff={!res.pass}
-                                />
+                                <div
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedTestId(res.id);
+                                    setInspectorTab('image');
+                                  }}
+                                >
+                                  <PageMiniThumb
+                                    testId={res.id}
+                                    testName={res.name}
+                                    url={res.url}
+                                    hasVisualDiff={!res.pass}
+                                    onClick={() => {
+                                      setSelectedTestId(res.id);
+                                      setInspectorTab('image');
+                                    }}
+                                  />
+                                </div>
                                 <div className="min-w-0">
                                   <div className="flex items-center gap-1.5">
                                     {res.pass ? (
@@ -2166,23 +2396,58 @@ export default function App() {
                                     <span className="font-mono font-bold text-xs">
                                       {res.id}
                                     </span>
-                                    <span className="font-medium text-xs truncate max-w-[140px]">
+                                    <span className="font-medium text-xs truncate max-w-[135px]">
                                       {res.name}
                                     </span>
                                   </div>
-                                  <div className="font-mono text-[10px] text-muted-foreground truncate max-w-[175px]">
+                                  <div className="font-mono text-[10px] text-muted-foreground truncate max-w-[165px]">
                                     {res.url}
                                   </div>
                                 </div>
                               </div>
                             </TableCell>
-                            <TableCell className="py-1.5 text-right font-mono text-xs">
+                            <TableCell
+                              className="py-1.5 text-center font-mono text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedTestId(res.id);
+                                setInspectorTab('headers');
+                              }}
+                              title={`HTTP ${res.actualStatus} · ${headerCount} headers — Click to inspect Headers`}
+                            >
                               <Badge
                                 variant={res.pass ? 'secondary' : 'destructive'}
                                 className="font-mono text-[10px] px-1.5 py-0"
                               >
                                 {res.actualStatus}
                               </Badge>
+                            </TableCell>
+                            <TableCell
+                              className="py-1.5 text-center font-mono text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedTestId(res.id);
+                                setInspectorTab('cookies');
+                              }}
+                              title={`${cookieCount} Set-Cookie attributes — Click to inspect Cookies`}
+                            >
+                              <Badge
+                                variant="outline"
+                                className="font-mono text-[10px] px-1.5 py-0"
+                              >
+                                {cookieCount}
+                              </Badge>
+                            </TableCell>
+                            <TableCell
+                              className="py-1.5 text-center font-mono text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedTestId(res.id);
+                                setInspectorTab('image');
+                              }}
+                              title="Click to inspect Captured DOM Snapshot"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 mx-auto" />
                             </TableCell>
                             <TableCell className="py-1.5 text-right font-mono text-xs text-muted-foreground">
                               {res.durationMs}ms
@@ -2202,6 +2467,8 @@ export default function App() {
                       runLabel={activeSingleRun.label || '#1'}
                       isRerunning={rerunningTestId === selectedSingleResult.id}
                       onRerunTest={handleRerunSingleTest}
+                      activeTab={inspectorTab}
+                      onTabChange={setInspectorTab}
                     />
                   )}
                 </div>

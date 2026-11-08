@@ -499,8 +499,8 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                     const cVal = cand?.capturedCookies?.[cookieName] ?? '(not set)';
                     const bVal = base?.capturedCookies?.[cookieName] ?? '(not set)';
                     const isDiff = cVal !== bVal;
-                    const isAccepted = acceptedCookies.includes(
-                      cookieName.toLowerCase()
+                    const isAccepted = normalizedAcceptedCookies.includes(
+                      normalizeCookieKey(cookieName)
                     );
 
                     return (
@@ -660,10 +660,24 @@ export const SingleRunInspector: React.FC<{
   runLabel: string;
   isRerunning: boolean;
   onRerunTest: (testId: string) => void;
-}> = ({ result, targetLabel, runLabel, isRerunning, onRerunTest }) => {
-  const [activeTab, setActiveTab] = useState<'headers' | 'cookies' | 'image'>(
-    'headers'
-  );
+  activeTab?: InspectorDimension;
+  onTabChange?: (tab: InspectorDimension) => void;
+}> = ({
+  result,
+  targetLabel,
+  runLabel,
+  isRerunning,
+  onRerunTest,
+  activeTab: controlledTab,
+  onTabChange,
+}) => {
+  const [internalTab, setInternalTab] = useState<InspectorDimension>('headers');
+  const activeTab = controlledTab ?? internalTab;
+  const handleTabChange = (v: string) => {
+    const next = v as InspectorDimension;
+    setInternalTab(next);
+    onTabChange?.(next);
+  };
 
   const headers = Object.entries(result.capturedHeaders || {});
   const cookies = Object.entries(result.capturedCookies || {});
@@ -685,12 +699,7 @@ export const SingleRunInspector: React.FC<{
       />
 
       <CardContent className="p-3.5">
-        <Tabs
-          value={activeTab}
-          onValueChange={(v) =>
-            setActiveTab(v as 'headers' | 'cookies' | 'image')
-          }
-        >
+        <Tabs value={activeTab} onValueChange={handleTabChange}>
           <div className="flex items-center justify-between gap-2 mb-2.5">
             <TabsList className="h-8">
               <TabsTrigger value="headers" className="text-xs">

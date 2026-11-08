@@ -88,7 +88,14 @@ export const PropertyCommandSwitcher: React.FC<{
   activeAppId: string;
   onSelectProperty: (appId: string) => void;
   onOpenSettings?: () => void;
-}> = ({ apps, activeAppId, onSelectProperty, onOpenSettings }) => {
+  onToggleScalePreset?: () => void;
+}> = ({
+  apps,
+  activeAppId,
+  onSelectProperty,
+  onOpenSettings,
+  onToggleScalePreset,
+}) => {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
 
@@ -200,23 +207,38 @@ export const PropertyCommandSwitcher: React.FC<{
               )}
             </div>
 
-            <div className="px-3 py-2 bg-muted/30 border-t border-border flex items-center justify-between text-[11px] text-muted-foreground">
+            <div className="px-3 py-2 bg-muted/30 border-t border-border flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
               <span className="font-mono">
-                Showing {filteredApps.length} of {apps.length} properties
+                {filteredApps.length} of {apps.length} properties
               </span>
-              {onOpenSettings && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    onOpenSettings();
-                  }}
-                  className="text-sky-600 dark:text-sky-400 hover:underline font-medium inline-flex items-center gap-1 cursor-pointer"
-                >
-                  <Plus className="w-3 h-3" />
-                  Register Property
-                </button>
-              )}
+              <div className="flex items-center gap-2.5">
+                {onToggleScalePreset && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onToggleScalePreset();
+                    }}
+                    title="Toggle between 8 default properties and 50 enterprise properties to test high-scale navigation"
+                    className="text-amber-600 dark:text-amber-400 hover:underline font-mono font-medium inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <Layers className="w-3 h-3" />
+                    {apps.length >= 50 ? 'Reset 8 Props' : 'Simulate 50 Props'}
+                  </button>
+                )}
+                {onOpenSettings && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpen(false);
+                      onOpenSettings();
+                    }}
+                    className="text-sky-600 dark:text-sky-400 hover:underline font-medium inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Register
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </>
@@ -1186,6 +1208,12 @@ export const SettingsView: React.FC<{
   onToggleAcceptVisual: (testId: string) => void;
   ignoreAcceptedDiffs: boolean;
   onChangeIgnoreAcceptedDiffs: (val: boolean) => void;
+  dataSourceMode?: 'template-seed' | 'remote-api';
+  onChangeDataSourceMode?: (mode: 'template-seed' | 'remote-api') => void;
+  remoteApiBaseUrl?: string;
+  onChangeRemoteApiBaseUrl?: (url: string) => void;
+  onToggleScalePreset?: () => void;
+  onResetPortalState?: () => void;
 }> = ({
   theme,
   onToggleTheme,
@@ -1202,6 +1230,12 @@ export const SettingsView: React.FC<{
   onToggleAcceptVisual,
   ignoreAcceptedDiffs,
   onChangeIgnoreAcceptedDiffs,
+  dataSourceMode = 'template-seed',
+  onChangeDataSourceMode,
+  remoteApiBaseUrl = '/api/synthetics',
+  onChangeRemoteApiBaseUrl,
+  onToggleScalePreset,
+  onResetPortalState,
 }) => {
   const [awsRegion, setAwsRegion] = useState(
     DEFAULT_TEMPLATE_CONFIG.infrastructure.awsRegion
@@ -1239,33 +1273,78 @@ export const SettingsView: React.FC<{
     <main className="px-4 py-3 space-y-3 w-full">
       {/* Row 1: Template Adaptation Builder (Add Properties & Test Cases Live or Export Config) */}
       <Card>
-        <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row items-center justify-between space-y-0">
+        <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
           <div>
-            <CardTitle className="text-sm flex items-center gap-2">
+            <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
               <Code2 className="w-4 h-4 text-sky-500" />
-              Template Adaptation & Live Topology Builder (
-              <code className="font-mono text-xs">src/config/template.config.ts</code>)
+              <span>
+                Template Adaptation & Live Topology Builder (
+                <code className="font-mono text-xs">
+                  src/config/template.config.ts
+                </code>
+                )
+              </span>
+              <Badge
+                variant="success"
+                className="font-mono text-[10px]"
+                title="All changes, accepted rules, and triggered runs are automatically persisted in browser storage across reloads"
+              >
+                State Auto-Persisted
+              </Badge>
             </CardTitle>
             <CardDescription>
-              Adapt this template to your organization by adding Properties, Environments, or Test Suite URLs below, or edit <code className="font-mono">src/config/template.config.ts</code> directly.
+              Adapt this template to your organization by adding Properties, Environments, or Canary Check URLs below, or edit{' '}
+              <code className="font-mono">src/config/template.config.ts</code> and{' '}
+              <code className="font-mono">src/adapters/syntheticsAdapter.ts</code>.
             </CardDescription>
           </div>
-          <Button variant="outline" size="xs" onClick={handleCopyTemplateConfig}>
-            {copiedTemplateJson ? (
-              <Check className="text-emerald-600 dark:text-emerald-400 !size-3" />
-            ) : (
-              <Copy className="!size-3" />
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {onToggleScalePreset && (
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={onToggleScalePreset}
+                title="Toggle between 8 default properties and 50 enterprise properties to test high-scale UI/UX"
+              >
+                <Layers className="!size-3 text-amber-500" />
+                {apps.length >= 50
+                  ? 'Restore 8 Default Properties'
+                  : 'Simulate 50 Properties'}
+              </Button>
             )}
-            {copiedTemplateJson ? 'Copied Config JSON' : 'Export template.config.json'}
-          </Button>
+            <Button variant="outline" size="xs" onClick={handleCopyTemplateConfig}>
+              {copiedTemplateJson ? (
+                <Check className="text-emerald-600 dark:text-emerald-400 !size-3" />
+              ) : (
+                <Copy className="!size-3" />
+              )}
+              {copiedTemplateJson
+                ? 'Copied Config JSON'
+                : 'Export template.config.json'}
+            </Button>
+            {onResetPortalState && (
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={onResetPortalState}
+                title="Clear browser storage and reset properties, runs, and accepted rules back to clean template defaults"
+              >
+                <RotateCw className="!size-3 text-rose-500" />
+                Reset Portal State
+              </Button>
+            )}
+          </div>
         </CardHeader>
 
-        <CardContent className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
-          {/* Add Property Form */}
+        <CardContent className="p-4 grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs">
+          {/* 1. Add Property Form */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              const cleanId = newAppId.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+              const cleanId = newAppId
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9-]/g, '');
               if (!cleanId || !newAppName.trim()) return;
               const envList = newAppEnvs
                 .split(',')
@@ -1279,42 +1358,45 @@ export const SettingsView: React.FC<{
               setNewAppId('');
               setNewAppName('');
             }}
-            className="p-3 rounded-md border border-border bg-muted/10 space-y-2.5"
+            className="p-3 rounded-md border border-border bg-muted/10 space-y-2.5 flex flex-col justify-between"
           >
-            <div className="flex items-center justify-between">
-              <span className="font-semibold text-foreground">
-                1. Register New Property & Environments
-              </span>
-              <Badge variant="secondary" className="font-mono text-[10px]">
-                {apps.length} active properties
-              </Badge>
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-foreground">
+                  1. Register New Property & Envs
+                </span>
+                <Badge variant="secondary" className="font-mono text-[10px]">
+                  {apps.length} properties
+                </Badge>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  placeholder="ID (e.g. billing)"
+                  value={newAppId}
+                  onChange={(e) => setNewAppId(e.target.value)}
+                  className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                />
+                <input
+                  type="text"
+                  placeholder="Name (e.g. Billing Hub)"
+                  value={newAppName}
+                  onChange={(e) => setNewAppName(e.target.value)}
+                  className="h-7 rounded border border-input bg-background px-2 text-xs"
+                />
+                <input
+                  type="text"
+                  placeholder="Envs (prod, uat)"
+                  value={newAppEnvs}
+                  onChange={(e) => setNewAppEnvs(e.target.value)}
+                  className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                />
+              </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <input
-                type="text"
-                placeholder="ID (e.g. api, checkout)"
-                value={newAppId}
-                onChange={(e) => setNewAppId(e.target.value)}
-                className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
-              />
-              <input
-                type="text"
-                placeholder="Name (e.g. Checkout Portal)"
-                value={newAppName}
-                onChange={(e) => setNewAppName(e.target.value)}
-                className="h-7 rounded border border-input bg-background px-2 text-xs"
-              />
-              <input
-                type="text"
-                placeholder="Envs (prod, uat, dev)"
-                value={newAppEnvs}
-                onChange={(e) => setNewAppEnvs(e.target.value)}
-                className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-mono text-muted-foreground">
-                Current: {apps.map((a) => `${a.id} (${a.envs.map((e) => e.id).join('/')})`).join(' · ')}
+            <div className="flex items-center justify-between pt-2 border-t border-border">
+              <span className="text-[11px] font-mono text-muted-foreground truncate max-w-[180px]">
+                {apps.slice(0, 4).map((a) => a.id).join(', ')}
+                {apps.length > 4 ? ` +${apps.length - 4} more` : ''}
               </span>
               <Button type="submit" size="xs">
                 <Plus className="!size-3" />
@@ -1323,37 +1405,121 @@ export const SettingsView: React.FC<{
             </div>
           </form>
 
-          {/* AWS CloudWatch Synthetics Canary Binding (Read-Only) */}
-          <div className="p-3 rounded-md border border-border bg-muted/10 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="font-semibold text-foreground">
-                2. AWS CloudWatch Synthetics Canary Binding
-              </span>
-              <Badge variant="success" className="font-mono text-[10px]">
-                Managed in AWS Synthetics
-              </Badge>
+          {/* 2. Add Canary Check URL Form */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!newTestName.trim() || !newTestPath.trim()) return;
+              const nextNum = testSuite.length + 1;
+              const nextId = `T${String(nextNum).padStart(2, '0')}`;
+              const cleanPath = newTestPath.trim().startsWith('/')
+                ? newTestPath.trim()
+                : `/${newTestPath.trim()}`;
+              onAddTestCase({
+                id: nextId,
+                name: newTestName.trim(),
+                path: cleanPath,
+                expectedStatus: newTestStatus,
+                category: 'Edge Cache',
+                visualGate: 'standard',
+                enabled: true,
+              });
+              setNewTestName('');
+              setNewTestPath('/api/health');
+            }}
+            className="p-3 rounded-md border border-border bg-muted/10 space-y-2.5 flex flex-col justify-between"
+          >
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-foreground">
+                  2. Add Canary Journey Check URL
+                </span>
+                <Badge variant="secondary" className="font-mono text-[10px]">
+                  {testSuite.length} checks
+                </Badge>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  placeholder="Check Name (e.g. Cart API)"
+                  value={newTestName}
+                  onChange={(e) => setNewTestName(e.target.value)}
+                  className="h-7 rounded border border-input bg-background px-2 text-xs"
+                />
+                <input
+                  type="text"
+                  placeholder="/path (e.g. /cart)"
+                  value={newTestPath}
+                  onChange={(e) => setNewTestPath(e.target.value)}
+                  className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                />
+                <select
+                  value={newTestStatus}
+                  onChange={(e) => setNewTestStatus(e.target.value)}
+                  className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                >
+                  <option value="200">HTTP 200</option>
+                  <option value="301">HTTP 301</option>
+                </select>
+              </div>
             </div>
-            <p className="text-muted-foreground text-[11px] leading-relaxed">
-              Test scripts and journeys execute completely inside{' '}
-              <strong className="text-foreground">
-                {DEFAULT_TEMPLATE_CONFIG.infrastructure.runnerEngine}
-              </strong>{' '}
-              (runtime{' '}
-              <code className="font-mono text-foreground">
-                {DEFAULT_TEMPLATE_CONFIG.infrastructure.runtimeVersion}
-              </code>
-              ). This portal ingests run results from{' '}
-              <code className="font-mono text-foreground">
-                {DEFAULT_TEMPLATE_CONFIG.infrastructure.s3Bucket}
-              </code>{' '}
-              to compute release gate diffs and run telemetry.
-            </p>
-            <div className="flex items-center justify-between pt-1 border-t border-border font-mono text-[11px] text-muted-foreground">
-              <span>
-                Active Canary Checks: {testSuite.length} ({testSuite.map((t) => t.id).join(', ')})
+            <div className="flex items-center justify-between pt-2 border-t border-border">
+              <span className="text-[11px] font-mono text-muted-foreground truncate max-w-[180px]">
+                {testSuite.map((t) => t.id).join(', ')}
               </span>
+              <Button type="submit" size="xs">
+                <Plus className="!size-3" />
+                Add Check
+              </Button>
+            </div>
+          </form>
+
+          {/* 3. Pluggable Execution Adapter Config */}
+          <div className="p-3 rounded-md border border-border bg-muted/10 space-y-2 flex flex-col justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-foreground">
+                  3. Pluggable Synthetics Adapter
+                </span>
+                <Badge
+                  variant={dataSourceMode === 'remote-api' ? 'warning' : 'success'}
+                  className="font-mono text-[10px]"
+                >
+                  {dataSourceMode === 'remote-api' ? 'Remote API' : 'Template Seed'}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <select
+                  aria-label="Data Source Adapter Mode"
+                  value={dataSourceMode}
+                  onChange={(e) =>
+                    onChangeDataSourceMode?.(
+                      e.target.value as 'template-seed' | 'remote-api'
+                    )
+                  }
+                  className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                >
+                  <option value="template-seed">
+                    Mode: Local Template Seed
+                  </option>
+                  <option value="remote-api">
+                    Mode: Remote AWS / MCP API
+                  </option>
+                </select>
+                <input
+                  type="text"
+                  aria-label="Remote API Base URL"
+                  value={remoteApiBaseUrl}
+                  onChange={(e) => onChangeRemoteApiBaseUrl?.(e.target.value)}
+                  placeholder="/api/synthetics"
+                  className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between pt-2 border-t border-border font-mono text-[10px] text-muted-foreground">
+              <span>Adapter: src/adapters/syntheticsAdapter.ts</span>
               <span className="text-sky-600 dark:text-sky-400">
-                Region: {DEFAULT_TEMPLATE_CONFIG.infrastructure.awsRegion}
+                {DEFAULT_TEMPLATE_CONFIG.infrastructure.runtimeVersion}
               </span>
             </div>
           </div>

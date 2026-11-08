@@ -382,3 +382,53 @@ test('FR-INS-11: Markdown summary generates ticket summary with verdict & rollup
   assert.match(summary, /www\.prod\.staging-vs-prod/);
   assert.match(summary, /0 functional diffs/);
 });
+
+// ---------------------------------------------------------------------------
+// 7. Cookie Diff Normalization, Run-over-Run Seeding & 50-Property Scale Tests
+// ---------------------------------------------------------------------------
+import {
+  calculateCookieDiffs,
+  buildInitialComparison,
+  seedRunsFromConfig,
+} from '../data/mockStore';
+import { generateEnterpriseScaleTopology } from '../adapters/syntheticsAdapter';
+
+test('Cookie diffs use clean unprefixed cookie names so acceptedCookies turns badge to OK', () => {
+  const runs = seedRunsFromConfig();
+  const stgRun = runs.find((r) => r.key === 'run-www-prod-staging-1')!;
+  const prdRun = runs.find((r) => r.key === 'run-www-prod-prod-1')!;
+  const t02Stg = stgRun.results.find((r) => r.id === 'T02')!;
+  const t02Prd = prdRun.results.find((r) => r.id === 'T02')!;
+
+  const cookieDiffs = calculateCookieDiffs(t02Stg, t02Prd);
+  assert.equal(cookieDiffs.length, 2);
+  assert.deepEqual(
+    cookieDiffs.map((d) => d.field).sort(),
+    ['edge_cache_bypass', 'edge_region']
+  );
+});
+
+test('Each target seeds both Latest Run and Previous Run for default Run-over-Run comparison', () => {
+  const runs = seedRunsFromConfig();
+  const stgTargetRuns = runs.filter((r) => r.target === 'www.prod.staging');
+  assert.equal(stgTargetRuns.length, 2);
+  assert.equal(stgTargetRuns[0].label, 'v2026.11-rc1');
+  assert.equal(stgTargetRuns[1].label, 'v2026.10-prev');
+
+  const runOverRunComp = buildInitialComparison(
+    stgTargetRuns[0],
+    stgTargetRuns[1],
+    'network'
+  );
+  assert.equal(runOverRunComp.candidateRunKey, stgTargetRuns[0].key);
+  assert.equal(runOverRunComp.baselineRunKey, stgTargetRuns[1].key);
+  assert.equal(runOverRunComp.items.length, 8);
+});
+
+test('Enterprise scale generator scales cleanly to 50 properties with multi-run history', () => {
+  const scaled = generateEnterpriseScaleTopology(50);
+  assert.equal(scaled.apps.length, 50);
+  assert.ok(scaled.runs.length >= 100);
+  assert.ok(scaled.readyReports.length >= 15);
+});
+
