@@ -1,0 +1,6 @@
+{
+  "name": "Akamai Synthetic Release Gate",
+  "description": "Automated staging-vs-production regression verification, AI visual judging, and Go/No-Go release gating for Akamai CDN property activations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

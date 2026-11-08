@@ -1,0 +1,505 @@
+# Product Requirements Document: Akamai Synthetic Release Gate
+
+| | |
+|---|---|
+| **Product** | Akamai Synthetic Release Gate (repo: `synthetics-tests`) |
+| **Document type** | Functional PRD |
+| **Status** | Reflects the implemented system as of 2026-11-07 (single-profile v1, multi-app model from `PLAN-APPS.md`) |
+| **Scope** | Functional behaviour only. How the capabilities are presented is out of scope for this document and follows from the requirements below. |
+
+---
+
+## 1. Summary
+
+Akamai property changes are activated first on the Akamai **staging** network and then on **production**. Before activating to production, a release engineer has to answer one question: *does the site behave and look the same through staging as it does through production?* Today that is answered by hand from a regression sheet: page loads, header checks, redirects and eyeballed screenshots.
+
+The product automates that sheet. It runs each app's test suite on a schedule or on demand against every **app × environment × Akamai network** combination. It records functional results and screenshots, and **compares** runs pairwise: staging against prod, one environment against another, or any two runs. The comparison combines deterministic functional diffs with an AI visual judge, and produces a **Go / Review / No-Go** verdict for the change.
+
+Everything is available to signed-in users with role-based permissions, through an HTTP API and to AI assistants through an MCP server. Every action is written to an audit trail.
+
+---
+
+## 2. Problem statement
+
+| Problem | Consequence today |
+|---|---|
+| Staging-vs-prod verification is manual | Slow, inconsistent, skipped under time pressure |
+| Testing on Akamai staging means editing `/etc/hosts` per hostname | Error-prone, not reproducible, impossible to schedule |
+| Screenshot comparison by eye | Misses regressions, or flags noise (carousels, ads, chat widgets) as failures |
+| No history | A red test can't be classified as a regression, a flake or an environment problem |
+| Several apps and environments (prod, UAT, …) | Each combination multiplies the manual work |
+| Approvals happen in change tickets | There is no evidence trail of what was tested, by whom, and what the result was |
+
+---
+
+## 3. Goals, non-goals and success metrics
+
+### 3.1 Goals
+| # | Goal |
+|---|---|
+| G1 | Answer "is this Akamai staging configuration safe to activate?" per app and environment, with an evidence-backed Go/No-Go. |
+| G2 | Execute an existing regression sheet unchanged in meaning, against both Akamai networks, without manual host pinning. |
+| G3 | Separate real regressions from noise: deterministic functional checks plus an AI visual judge that ignores known dynamic content. |
+| G4 | Let users declare known, acceptable differences once, so they stop blocking every later verdict. |
+| G5 | Scale to many apps and environments through **configuration only**: no code change to add an app or an env. |
+| G6 | Make every result, verdict and action attributable to a named user and auditable. |
+| G7 | Make the whole product usable programmatically (API) and by AI assistants (MCP) with the same permissions. |
+
+### 3.2 Non-goals
+- A general-purpose test platform: no pluggable test types, no arbitrary dimensions or tags. The model is exactly **app → env → network**.
+- Comparing runs of **different apps**, or more than two runs at once.
+- Editing suites inside the product. Suites are authored as spreadsheets/CSV.
+- Non-Akamai CDNs or networks.
+- A database. Object storage plus small index documents is enough.
+- Per-app roles (deferred, see §15).
+- Automating form submits, emails and PDF downloads from the sheet. Only page loads and HTTP checks are automated.
+
+### 3.3 Success metrics
+| Metric | Target |
+|---|---|
+| Time from "start comparison" to verdict for a ~90-test suite with ~55 screenshots | ≤ 5 min (runs take ~1–2 min) |
+| Verdict correctness | GO is never issued for a partial run, a run with judge errors, or a candidate with failing tests |
+| False "different" visual verdicts on unchanged pages | Near zero: identical and near-identical pairs never reach the AI, and blocking verdicts are second-checked |
+| Effort to add an app | One CSV plus one config entry |
+| Effort to add an environment | One config line |
+| Overview API latency (warm, 30 targets) | p95 < 300 ms, with no object LIST and no canary-status call per request |
+| Actions attributable to a user | 100% of state-changing actions audited |
+
+---
+
+## 4. Users and roles
+
+### 4.1 Personas
+| Persona | Need |
+|---|---|
+| **Release engineer** (Akamai config owner) | Has just pushed a property version to staging. Needs a Go/No-Go before activating to prod, and a summary for the change ticket. |
+| **On-call / triager** | A scheduled run went red. Needs to know whether it is a real regression, a flake or an environment issue. |
+| **Test author** | Iterating on one failing row of the sheet. Needs to re-run single tests and reproduce a check outside the tool. |
+| **Reviewer / lead** | Needs a shareable, credential-free reference to a result, and evidence for approvals. |
+| **Platform owner / admin** | Deploys the system, manages users, audits activity. |
+| **AI assistant user** | Wants to ask an assistant to "compare staging with prod for CHG-1234 and tell me if it's a go". |
+
+### 4.2 Roles
+| Role | Can |
+|---|---|
+| **viewer** | Read everything: runs, comparisons, tests, rules, live progress, their own audit trail. |
+| **operator** | Everything a viewer can, plus start, stop and queue runs; start ad-hoc comparisons; re-judge; create, toggle and delete accepted-difference rules. |
+| **admin** | Everything an operator can, plus manage users and read everyone's audit trail. |
+| **owner** | The holder of the deployment's master token. Acts as an admin. Used to bootstrap users and for automation. |
+
+Roles are global: they apply to every app.
+
+---
+
+## 5. Domain model and glossary
+
+```
+App ─┬─ Suite (one CSV; canonical hostnames; test IDs unique within the app)
+     └─ Env ─┬─ host map, headers, schedules
+             └─ Network: prod | staging (Akamai)
+                    = Target ── Runs ── Results ── Screenshots
+Comparison = (baseline Target, candidate Target, kind)    kind: network | env | adhoc
+Accepted rule = (comparison, kind of difference, test?)   per app
+```
+
+| Term | Definition |
+|---|---|
+| **App** | A site with its own suite and canonical hostnames, e.g. `www`. |
+| **Env** | One deployment of an app. It maps the suite's canonical hosts to its own, e.g. `uat`: `www.salesforce.com` → `www-uat1.salesforce.com`. |
+| **Network** | The Akamai network requests go through: `prod` (normal DNS) or `staging`. |
+| **Target** | App × env × network, e.g. `www.uat.staging`. One scheduled runner and one run history. |
+| **Suite** | The CSV export of an app's regression sheet. One row is one test. |
+| **Run** | One execution of a target's suite, either full or a subset of tests. |
+| **Result** | The outcome of one test in one run: status, headers, assertion errors, redirect chain, timing, screenshot. |
+| **Comparison** | A diff of a candidate run against a baseline run, test by test. |
+| **Network comparison** | Same app and env, staging (candidate) vs prod (baseline). Generated automatically. This is the release gate. |
+| **Env comparison** | Same app and network, two envs, e.g. uat vs prod. Opt-in. |
+| **Ad-hoc comparison** | Any two finished runs of one app. Informational, with no Go/No-Go. |
+| **Item** | One test's entry in a comparison: functional diffs, visual verdict, item verdict. |
+| **Version** | A re-run or re-judge produces a new version of a comparison. It is not a new comparison. |
+| **Accepted rule** | A user-declared acceptable difference that stops counting towards verdicts. |
+| **Pinned baseline** | A known-good baseline run chosen explicitly, so only the candidate has to run. |
+
+### 5.1 Identifiers
+- App and env names match `^[a-z][a-z0-9-]{0,11}$`, contain no dots, and the app name `suites` is reserved.
+- Target ID: `<app>.<env>.<network>`.
+- Comparison IDs:
+  - network: `<app>.<env>.staging-vs-prod`
+  - env: `<app>.<candidate>-vs-<baseline>.<network>`
+  - ad hoc: `<app>.adhoc`, one bucket per app
+- Test identity is `(app, test id)`. Every API that names a test also names the app.
+- Runner name: `<prefix>-<app>-<env>-<p|s>`, at most 21 characters. Two app/env pairs must never produce the same runner name.
+
+---
+
+## 6. Functional requirements
+
+Requirement IDs are stable: `FR-<area>-<n>`. **Must** is mandatory. **Should** is expected unless there is a stated reason not to.
+
+### 6.1 Configuration and topology (CFG)
+
+| ID | Requirement |
+|---|---|
+| FR-CFG-1 | The system **must** be configured declaratively with a set of apps. Each app has a suite path, optional default networks (default: both), optional app headers, one or more envs, and optional env comparisons. |
+| FR-CFG-2 | Each env **must** support: a host map (canonical → env host), headers, a network override, a run schedule (starts every target of the env), and a comparison schedule (starts the env's network comparison). |
+| FR-CFG-3 | Targets **must** be derived as every app × env × allowed network. No target is listed by hand. |
+| FR-CFG-4 | A **network comparison** **must** be generated automatically for every env that has both networks. |
+| FR-CFG-5 | An **env comparison** **must** be created for each `compare_envs` entry (candidate env, baseline env, network, defaulting to prod, plus an optional schedule). |
+| FR-CFG-6 | Configuration **must** be validated before deploy, with these rules: name patterns; reserved names; runner-name length ≤ 21; no runner-name collisions; networks a non-empty subset of {prod, staging}; every env comparison references two different existing envs that both have the network; no duplicate env comparisons. Each failure **must** produce an actionable message, e.g. "use a shorter app or env name". |
+| FR-CFG-7 | Headers **must** merge in the order global < app < env, with the more specific winning. Header values **may** reference secrets as `{{KEY}}`. |
+| FR-CFG-8 | The resolved topology (apps, targets, comparisons, header **names** only, host maps, legacy aliases) **must** be published as one versioned document. Its version is a content hash. Services **must** pick up a new version without redeploying code. Header values and secrets **must not** be in the topology. |
+| FR-CFG-9 | Adding an app **must** need only a suite file and a config entry. Adding an env **must** need only one config entry. |
+| FR-CFG-10 | Global settings **must** cover: retention days for results and for audit, the primary and verification AI models, the pairing window, comparison concurrency, screenshot concurrency, HTTP concurrency, and screenshot settle time. |
+
+### 6.2 Test suites (SUITE)
+
+| ID | Requirement |
+|---|---|
+| FR-SUITE-1 | Each app **must** have one suite in CSV format with these columns: `id`, `name`, `url`, `method`, `body`, `request_headers`, `expected_status`, `expected_headers`, `body_contains`, `run_on`, `screenshot`, `screenshot_delay`, `screenshot_wait_for`, `enabled`. Header names are case- and punctuation-insensitive. Multi-line cells **must** be supported. |
+| FR-SUITE-2 | Suites **must** be stored centrally and read by the runner at the start of every run. Editing a suite **must not** require redeploying runners. |
+| FR-SUITE-3 | Every run **must** record which suite it used: key, SHA-256 and row count. |
+| FR-SUITE-4 | A row with no `id` **must** get a stable fallback id derived from its row number. Rows with `enabled = no` (or false/n/0/off) or with no URL **must** be skipped. |
+| FR-SUITE-5 | **Assertions:**<br>• `expected_status`: one or more allowed codes.<br>• `expected_headers`, one per line: `Name` (must exist), `!Name` (must be absent), `Name: text` (contains), `Name: /regex/flags`.<br>• `body_contains`, one per line: text or `/regex/`, with a `!` prefix meaning "must not contain". |
+| FR-SUITE-6 | **Scopes.** `run_on` and any `[scope …]` line prefix in `request_headers`, `expected_headers`, `body_contains` and the screenshot columns **must** limit a row or line to matching targets, using these scope words:<br>• `all`, `both` or blank: every target.<br>• bare `prod` / `staging`: always the **network**, even if an env has that name.<br>• `net:<n>`: the network.<br>• `env:<e>`: the env.<br>• `<env>.<network>` or a full target id: one target.<br>• any other bare word: the env.<br>Several scope words **may** be listed. |
+| FR-SUITE-7 | `{{KEY}}` placeholders in URL, body and headers **must** be resolved from the secret store at run time. An unresolved placeholder **must** be left as is. |
+| FR-SUITE-8 | `screenshot = no` **must** skip the screenshot. Only GET rows get screenshots. `screenshot_delay` (seconds, capped at 30) and `screenshot_wait_for` (a CSS selector, waited for up to 15 s) **must** tune that row's capture. |
+| FR-SUITE-9 | The system **should** be able to pull a suite from a published spreadsheet CSV URL per app (`sync`), as long as the sheet is laid out in the suite's column format. |
+
+### 6.3 Test execution (EXEC)
+
+| ID | Requirement |
+|---|---|
+| FR-EXEC-1 | Each target **must** have its own runner that executes the app's enabled, in-scope suite rows against the env's hosts. Each URL's canonical host is rewritten through the env's host map. |
+| FR-EXEC-2 | **Prod network:** normal DNS resolution. |
+| FR-EXEC-3 | **Staging network:** for each hostname, the runner **must** follow the CNAME chain to its Akamai edge hostname (`*.edgekey.net`, `*.edgesuite.net`, `*.akamaized.net`), resolve the `-staging` equivalent, and pin the connection to that IP. SNI and the Host header stay unchanged. Hosts not on Akamai **must** fall back to normal DNS, and the result **must** carry a note saying so. |
+| FR-EXEC-4 | Every request **must** send the Akamai `Pragma` debug headers and an identifiable user agent. The runner **must** capture at least: `location`, `cache-control`, `content-type`, `x-cache`, `x-cache-remote`, `x-check-cacheable`, `x-cache-key`, `x-akamai-request-id`, `x-akamai-staging`, `x-sfdc-page-render-type`, `x-sfdc-content-source`, `x-sfdc-agent-cohort-decision`, `x-sfdc-agent-cohort-source`. |
+| FR-EXEC-5 | **Redirects:**<br>• Followed up to 10 hops, carrying cookies set along the way. 301/302/303 switch to GET; 307/308 keep the method and body.<br>• If the row expects only 3xx, the first real redirect is asserted instead, so redirect rules can be checked with `Location:`.<br>• Same-path hops that only change the query (e.g. a geo `?bc=` redirect) are always followed.<br>• Every hop **must** be recorded in a redirect chain: method, URL, status, start offset, duration, edge IP, cache header, location. |
+| FR-EXEC-6 | Each request **must** time out after 15 s, with a recorded error. |
+| FR-EXEC-7 | HTTP checks **must** run with configurable concurrency (default 10). |
+| FR-EXEC-8 | **Screenshots** **must** be taken in a real browser that uses the same staging pinning, headers, user agent and viewport (1366×900) as the HTTP check.<br>• Target-specific headers go only to the suite's own hostnames, never to third parties.<br>• Analytics and ad beacons and media are blocked. Chat and experiment scripts are kept, because they change the page. |
+| FR-EXEC-9 | **Screenshot readiness.** Capture in this order:<br>1. Wait for the DOM, then for the network to settle.<br>2. Wait up to 15 s until the viewport looks loaded: fonts loaded, visible images decoded, and no visible skeleton, shimmer, spinner, loading or `aria-busy` element, including inside open shadow roots.<br>3. Wait the configured settle time plus the row's delay.<br>4. Freeze CSS animations, transitions, the caret and videos, then capture a JPEG.<br>A capture that still looked unready **must** be flagged `still loading`. |
+| FR-EXEC-10 | Screenshots **must** be taken in parallel by a separate fan-out worker (default 20 at a time per run). Each starts as soon as its check is done. A setting **must** allow falling back to in-runner capture. A crashed browser tab or browser **must** be replaced or relaunched, without losing the test results. |
+| FR-EXEC-11 | **Time budget.** A run **must** stop starting screenshots 60 s before its budget (30 s in-runner) and stop starting tests 15 s before it. Default budget: 780 s, under the 14-minute runner limit. Skipped tests and screenshots **must** be reported with a reason, never silently dropped. |
+| FR-EXEC-12 | **Live progress.** While running, the runner **must** publish a progress document with: target, suite, start time, total, done, failed, current activity (`checks n/N`, `screenshots n/M`), the plan (ids, names, URLs), per-test results as they land, and the request metadata (by, label, request id, pin, re-run). A finished run **must** mark it finished. |
+| FR-EXEC-13 | **Run result.** At the end, the runner **must** write an immutable result document: target, app, env, network, suite, start and finish times, totals, subset, request metadata, and the per-test results in sheet order. Each result has: id, name, URL, pass, errors, expectations, status, timing, captured headers, redirect chain, staging IP or edge, note, screenshot key, screenshot error, loading flag and duration. |
+| FR-EXEC-14 | The runner **must** maintain a per-target index of the last 30 run summaries, newest first. The index is best effort and **must** be rebuildable from the results. |
+| FR-EXEC-15 | A run with failing tests **must** be reported to the scheduler as failed, so alarms can fire, and **must** be distinguishable from a crash. |
+| FR-EXEC-16 | **Run requests.** A run **may** be parameterised by a one-time request: a subset of ids, by, label, pinned baseline, re-run target. The runner consumes it once. A request older than 15 minutes **must** be ignored. A failure to load the suite **must not** consume the request. |
+
+### 6.4 Run control (RUN)
+
+| ID | Requirement |
+|---|---|
+| FR-RUN-1 | Operators **must** be able to start: one target; every target of an env; or both targets of a configured comparison. |
+| FR-RUN-2 | A start **may** carry a **subset** of test ids (≤ 500), a **change label** (≤ 120 chars, e.g. `CHG-1234`), and, for comparisons, a **pinned baseline run**. With a pinned baseline, only the candidate runs. |
+| FR-RUN-3 | A pinned baseline **must** be a run of that comparison's baseline target and must still exist. An expired pin **must** be rejected with an explanation. |
+| FR-RUN-4 | Runs **must** be credited to the signed-in user. Only the owner may set "by" freely. |
+| FR-RUN-5 | A **full** run, or a **scheduled** run, that finds its target busy **must** be skipped and reported as "already running". It must not be queued. |
+| FR-RUN-6 | **Queue.** A subset, pinned or re-run request that finds a target busy **must** be queued per app instead of dropped:<br>• Entries with the same targets, pin and re-run **merge**: their test ids are added up, and a full run covers any subset.<br>• A comparison's entry starts **both** sides together, so the two runs pair.<br>• The queue is first-in first-out per target. An older entry holds its targets.<br>• At most 50 entries per app. Entries older than 6 h are dropped.<br>• The queue **must** drain when a runner changes state, and periodically as a fallback.<br>• A start that loses a race is re-queued at the front. |
+| FR-RUN-7 | Operators **must** be able to list queued entries (position, targets, ids, by, label, pinned, re-run of) and remove one. |
+| FR-RUN-8 | Operators **must** be able to stop one target, or every running target of an env. |
+| FR-RUN-9 | **Schedules.** Env run schedules and comparison schedules **must** start runs with `by = schedule`. |
+| FR-RUN-10 | **Run state** of each target **must** be one of: ready, starting, running (with progress), stopping/updating, or crashed. A crash is a runner failure that is not a test failure, recorded with its time and reason, and shown only if it is newer than the last good result. A progress document unfinished for more than 15 min **must** be treated as a dead run. |
+| FR-RUN-11 | A start response **must** report per target whether it started, was queued (with queue id, position and what it waits for), or was refused (with the reason). |
+
+### 6.5 Comparisons (CMP)
+
+#### 6.5.1 Pairing
+| ID | Requirement |
+|---|---|
+| FR-CMP-1 | When a run's result lands, every configured comparison that has its target as baseline or candidate **must** be evaluated. |
+| FR-CMP-2 | If the candidate run carries a pin for that comparison, it **must** be compared with the pinned baseline. |
+| FR-CMP-3 | Otherwise:<br>• If the other side is still running, the comparison **must** wait for that run and record a status of "waiting".<br>• If it isn't, pair with the other side's latest run, but only if both runs started within the pairing window (default 30 min).<br>• Otherwise record "skipped" with the reason (e.g. "started 47 min apart; use Compare now"). |
+| FR-CMP-4 | Each pair **must** be compared exactly once, even when the results event is delivered twice. |
+| FR-CMP-5 | The latest pairing status (waiting or skipped, the reason, the run keys) **must** be readable per comparison until a newer comparison starts. |
+| FR-CMP-6 | Subset runs **must** be compared only on the tests both sides ran. If there are none in common, record "skipped". |
+
+#### 6.5.2 Functional diff (deterministic)
+| ID | Requirement |
+|---|---|
+| FR-CMP-10 | Per test, the system **must** flag a functional difference for: a different HTTP status; a different value of `location`, `content-type`, `cache-control`, `x-check-cacheable` or `x-sfdc-content-source`; a different pass/fail; or a test that only ran on one side. |
+| FR-CMP-11 | **Normalization.** `cache-control` `max-age=<n>` with n > 0 **must** compare as `max-age=N`, so cacheable is compared against non-cacheable, not the remaining TTL. `content-type` **must** compare case-insensitively. |
+| FR-CMP-12 | **Host-aware.** `location` **must** be compared after mapping each side's env hosts back to the canonical hosts. When values match only after mapping, that **must** be recorded, with both raw values. |
+
+#### 6.5.3 Visual judge
+| ID | Requirement |
+|---|---|
+| FR-CMP-20 | When both sides have a screenshot, the pair **must** get a visual verdict: `same`, `minor`, `different` or `error`, plus a one-sentence summary and a list of differences, each with a severity (minor or major). |
+| FR-CMP-21 | **Cost gate.**<br>• Byte-identical screenshots: `same` ("pixel-identical"), with no AI call.<br>• Fewer than 0.1% of pixels visibly differing: `same` ("visually identical"), with no AI call. |
+| FR-CMP-22 | **Region hint.** When at most 4 changed regions are found (on a 12×12 tile grid), the judge **must** be told exactly where the pixels differ, and that everything else is identical. |
+| FR-CMP-23 | The judge's instructions **must** depend on the kind:<br>• **network**: expect identical pages.<br>• **env / ad hoc**: content may legitimately differ; only broken-looking pages are `different`, and content changes are `minor`. |
+| FR-CMP-24 | The judge **must** ignore: rotating carousels and banners; ads; dates; personalised content; cookie or consent banners; chat pop-ups; animation frames; per-request ids on error pages; sub-pixel noise; swapped photos or logos in an unchanged layout. A loading skeleton on one side is at most `minor`. |
+| FR-CMP-25 | Listed "differences" that say the two sides are the same **must** be dropped, and the verdict **must** follow what remains. |
+| FR-CMP-26 | **Second opinion.** A `different` verdict from the primary model **must** be re-checked by a stronger verification model (configurable, can be disabled). The verification model's answer is kept and marked as checked, with the first opinion attached. A verification error keeps the first verdict and records the error. |
+| FR-CMP-27 | **Retries.** Model or tool-call failures **must** be retried up to 3 times with varied sampling. A persistent failure gives `error`, with the reason. One test's error **must not** stop the others. |
+| FR-CMP-28 | **Known differences.** The comparison's enabled accepted visual rules **must** be matched against the found differences in a separate text-only step. Each difference is tagged with the rule it matches, if any. |
+| FR-CMP-29 | Visual judging **must** run with configurable parallelism (default 10). |
+
+#### 6.5.4 Item and comparison verdicts
+| ID | Requirement |
+|---|---|
+| FR-CMP-30 | **Item verdict, network kind:** `different` if there is any functional diff or the visual verdict is `different`. Otherwise the visual verdict. |
+| FR-CMP-31 | **Item verdict, env and ad-hoc kinds:** status, pass/fail and one-sided diffs, or a visual `different`, give `different`. Header-only diffs give at least `minor` and are flagged "to review". |
+| FR-CMP-32 | Items **must** be ordered worst first: different, error, minor, same. The comparison **must** carry counts per verdict, a rollup (functional, critical, visual, minor, error, failing-on-candidate), the suite hashes of both sides with a "suites differ" flag, the model used, and progress (done/total) while running. |
+| FR-CMP-33 | **Go/No-Go** **must** be computed by the rules in §7.1, only from a **full** finished comparison, after applying accepted rules. Subset comparisons are **PARTIAL** and never set the verdict. Running ones are **COMPARING**. Ad hoc has no verdict. |
+| FR-CMP-34 | The newest full comparison per configured comparison **must** be its current verdict. A newer partial comparison **must** be reported alongside it, without replacing it. |
+| FR-CMP-35 | The system **must** warn when the two runs of a non-pinned comparison started more than 20 min apart, because content changes in between show up as differences. |
+
+#### 6.5.5 Re-runs, re-judges and versions
+| ID | Requirement |
+|---|---|
+| FR-CMP-40 | **Re-run tests of a comparison.** Operators **must** be able to re-run chosen tests of a comparison, either on both sides or on the candidate only against that comparison's baseline run. The new results **must** replace those tests in a **new version** of the comparison, marked "re-run" with who, when and label. The verdict is recomputed. No new comparison is created. |
+| FR-CMP-41 | Shortcuts **must** exist for: re-run every changed test of a comparison; re-run one test. |
+| FR-CMP-42 | **Re-judge.** Operators **must** be able to re-run the visual judge, without re-running the tests, on: (a) items whose verdict was `error`; (b) with the visual option, also `minor` and `different` items, so newly accepted visual rules apply; (c) explicit test ids, whatever their verdict. The output is a new version, named up front so the caller can follow it, with pending ids and progress. |
+| FR-CMP-43 | Comparison history **must** list each comparison once, at its newest version, with its version count and a link to the original. |
+| FR-CMP-44 | Finished run and comparison documents **must** be immutable. Changes always produce new versions or are applied when the document is read (rules). |
+
+#### 6.5.6 Ad-hoc comparisons
+| ID | Requirement |
+|---|---|
+| FR-CMP-50 | Operators **must** be able to compare any two finished runs of the same app, optionally limited to some test ids and labelled. |
+| FR-CMP-51 | **Guards:**<br>• both keys are valid run keys of the **same app** (else 400 "different apps");<br>• the keys differ;<br>• both runs exist (else 404, "expired");<br>• both are finished (else 409);<br>• they have tests in common (≤ 500);<br>• at most 2 ad-hoc comparisons running per user (else 429). |
+| FR-CMP-52 | The same pair compared again **must** return the existing comparison, unless `force` is set. |
+| FR-CMP-53 | **Kind derivation:** same env on different networks gives `network`, for the judge prompt; anything else gives `adhoc`. |
+| FR-CMP-54 | **Presets** for a target's newest full run:<br>• **previous**: its previous full run (drift).<br>• **last_go**: the baseline run of the newest GO comparison that has this target as candidate.<br>• **prod**: the run of `<app>.prod.<network>` closest in start time. |
+| FR-CMP-55 | An ad-hoc comparison **must** apply, read-only, the rules of the configured comparison with the same two targets, if one exists. No rules can be created on ad-hoc comparisons. |
+
+### 6.6 Accepted differences (RULE)
+
+| ID | Requirement |
+|---|---|
+| FR-RULE-1 | Operators **must** be able to accept a **kind** of difference for a comparison, either on every test of it or on one test. Kinds:<br>• a functional header name (e.g. `x-check-cacheable`), `status`, `assertions`, `only ran on`;<br>• an assertion error, by exact message (`error: <message>`);<br>• a visual difference (`visual: <description>`, at least 8 meaningful characters). |
+| FR-RULE-2 | Rules **must** match the kind of difference, not its values. Accepting `x-check-cacheable` covers both `NO vs YES` and `YES vs NO`. |
+| FR-RULE-3 | An assertion error that starts with `not run` **must not** be acceptable. |
+| FR-RULE-4 | While a rule is enabled, matching differences **must** be excluded from the item verdict, counts, rollup and Go/No-Go, for every past and future comparison it applies to. They **must** stay visible and be marked as accepted, with the rule id. |
+| FR-RULE-5 | A result whose assertion errors are **all** accepted **must** count as passed, marked "pass (accepted)". |
+| FR-RULE-6 | **Visual rules.**<br>• Accepted differences are removed, and the verdict becomes the worst remaining severity, or `same` when none remain. The judge's original verdict is kept.<br>• Docs judged before the rule existed match by normalized text.<br>• Later comparisons match by the judge's tag (FR-CMP-28), so a reworded description of the same element still matches.<br>• When every difference is accepted, that state **must** be reported as "all N differences accepted (judged different)". |
+| FR-RULE-7 | Several rules **must** be creatable in one atomic request (≤ 50), e.g. accepting every difference of one test. |
+| FR-RULE-8 | Rules **must** be toggleable (enable or disable) and deletable. Re-accepting an existing (comparison, kind, test) **must** re-enable it, not create a duplicate. |
+| FR-RULE-9 | Rules **must** be stored per app, with: id, comparison, kind, test, enabled, example, by, at. Concurrent edits **must not** overwrite each other (conditional write with retry). Each change increments the app's rules version. |
+| FR-RULE-10 | Rules **must** be applied when a comparison is read, never written into comparison documents. Turning a rule off restores the original verdicts. Cached responses **must** be keyed to the rules version, so a document is never served under stale rules. |
+| FR-RULE-11 | Rules and suites **must not** expire. |
+
+### 6.7 Status, history and insight (INS)
+
+| ID | Requirement |
+|---|---|
+| FR-INS-1 | **Portfolio.** Per app: envs; per-target state (running, failing, ok or none) with last failed/total, last run time and crash flag; the verdict of each comparison; the worst verdict (order NO-GO > REVIEW > COMPARING > GO > PARTIAL > NONE); running count; last activity. Optionally, counts of runs and comparisons newer than a given time ("new since"). |
+| FR-INS-2 | **App overview.** For one app: every target with its state, live progress (done/total, failed, current phase), the last 20 runs, crash info and queued count; every comparison with its latest and latest-full summary and its pairing status; the queue; and the app's accepted rules with their version. |
+| FR-INS-3 | **Run history** per target, paginated (25), newest first. Each entry has: start and finish, passed/failed/total, subset, by, label. A trend of the failed share over full runs **must** be derivable. |
+| FR-INS-4 | **Run detail.** Every result of a run, with time-limited access to its screenshot. Totals, pass rate, duration and slowest test **must** be derivable. Results **must** be filterable by status, group (id prefix), host and text. |
+| FR-INS-5 | **Live run.** The in-flight run's per-test results as they land, or, when idle, the runner state, latest run key and last crash. |
+| FR-INS-6 | **Test history.** One test of an app across the last 20 runs of every target. Each target's history **must** be classified per §7.2 as stable, flaky, regressed, failing in all, or n/N failed. |
+| FR-INS-7 | **What changed.** For a failing test, the system **must** diff the latest failing result against the last passing one: status, every captured header, redirects. Volatile fields (request id, `x-cache`, `x-cache-remote`) are excluded, and `cache-control` is marked "varies anyway". |
+| FR-INS-8 | **Matrix.** Every test × target of an app, optionally one env, over the last n runs (1–20, default 10): per-cell pass/fail history and the latest errors (max 2). Sortable by failing-now, most-flaky or id. All-green rows foldable. |
+| FR-INS-9 | **Needs attention.** Per app, the system **must** surface: tests that regressed, tests that fail everywhere, and tests that flip in the last 6 runs. Each entry carries a re-run action. A test failing on several targets **must** be one entry listing those targets. |
+| FR-INS-10 | **Failure signatures.** Errors **must** be grouped by a normalized signature: URLs reduced to host + path, quoted values to `"…"`, numbers to `N`, at most 120 chars. Grouping applies to failed results within a run, to needs attention, and to the matrix. A signature that covers more than 50% of a run **must** be flagged **"looks environmental"** (e.g. WAF block, host down, expired secret) and ranked first. |
+| FR-INS-11 | **Comparison summary.** The system **must** produce a markdown summary of a comparison for change tickets. It contains: the verdict, label, the two runs with their times, pinned flag or time gap, the rollup line, up to 12 worst items with their first diff or visual summary, a count of the rest, and a credential-free reference to the report. |
+| FR-INS-12 | **Reproduce a check.** For any result, the system **must** produce an equivalent `curl` command. It includes: `--resolve` pinning to the recorded staging edge IP; the Pragma and user-agent headers; the target's header names, with secret values as `{{PLACEHOLDERS}}`; the in-scope request headers; and the recorded redirect chain and notes as comments. Secrets **must never** appear in it. |
+| FR-INS-13 | **Recent activity.** A timeline of recent runs and comparisons per app, and the set of everything in flight or just finished across apps (runs, comparisons, re-judges, queued entries). |
+| FR-INS-14 | **Completion events.** A user who starts a run, comparison or re-judge **must** be able to follow it to completion and be told when it finishes. A re-judge or re-run **must** expose the key of the new version as soon as it starts. |
+| FR-INS-15 | **Addressability.** Every app, target, run, comparison, test and matrix **must** have a stable reference that contains no credentials. Opening it requires sign-in and then resolves to that entity. |
+| FR-INS-16 | **Lateral navigation.** Given a test, run or comparison, the system **must** be able to resolve its counterpart in another env or network of the same app: the same test; the run closest in start time on the other network; the same kind of comparison for the other env. |
+| FR-INS-17 | **Personal lists.** Users **should** be able to star targets and comparisons. Without stars, the most visited are used. |
+
+### 6.8 Identity and sessions (AUTH)
+
+| ID | Requirement |
+|---|---|
+| FR-AUTH-1 | Users **must** sign in with their own name and password. Names are 2–64 chars of `a-z 0-9 . _ @ -` (an email works). `owner` is reserved. |
+| FR-AUTH-2 | Passwords **must** be stored as salted PBKDF2-SHA256 with 600k iterations, never in clear, and never readable by the comparison service. |
+| FR-AUTH-3 | **Password policy:** at least 10 characters; at most 256; must not contain the user name; a new password must differ from the old one. |
+| FR-AUTH-4 | Admins create users with a role. Without an explicit password, the system **must** generate a temporary one, returned **once**. The user **must** choose their own at first sign-in, and no other action is allowed until then. |
+| FR-AUTH-5 | Admins **must** be able to change a role, disable or enable a user, reset a password (new temporary password, change required), delete a user, and list users (without hashes). Admins **must not** be able to disable, delete or demote themselves. |
+| FR-AUTH-6 | A sign-in **must** return a signed session token valid for 12 h. It is invalidated immediately when the user is disabled, deleted or changes password. Role changes apply within seconds, with no new sign-in. |
+| FR-AUTH-7 | **Throttling.** After 5 failed sign-ins in 15 min, per name **or** per client IP, sign-in **must** be refused (429) for a while. Unknown names **must** take the same time as known ones. |
+| FR-AUTH-8 | Users **must** be able to read their own profile (role, last sign-in, session expiry) and change their password. Changing it returns a fresh session. |
+| FR-AUTH-9 | The deployment's master token **must** authenticate as the owner (admin). Changing it **must** sign everyone out. |
+| FR-AUTH-10 | A user **must** be able to obtain their own session token and a ready-made AI-assistant configuration that carries it, so the assistant acts as them, with their role. |
+
+### 6.9 Authorization (AUTHZ)
+
+| Capability | viewer | operator | admin/owner |
+|---|:-:|:-:|:-:|
+| Read portfolio, overviews, runs, live, comparisons, tests, matrix, rules | ✓ | ✓ | ✓ |
+| Own profile, change own password, own audit trail | ✓ | ✓ | ✓ |
+| Start, stop, unqueue runs; ad-hoc compare; re-judge; accept, toggle, delete rules | | ✓ | ✓ |
+| Manage users; everyone's audit trail | | | ✓ |
+
+| ID | Requirement |
+|---|---|
+| FR-AUTHZ-1 | Every API call except sign-in and the public documentation **must** be authenticated. |
+| FR-AUTHZ-2 | A refused action **must** return 403 with the reason ("a viewer can't do that", "password change required") and **must** be audited. |
+
+### 6.10 Audit (AUD)
+
+| ID | Requirement |
+|---|---|
+| FR-AUD-1 | The system **must** record every sign-in attempt (successful, failed, throttled, temporary-password), every state-changing action (start, stop, unqueue, compare, re-judge, accept, user changes, password change) and every refused or failed action. |
+| FR-AUD-2 | Each event **must** hold: time, user, role, action, ok, status, scope (app, env, target), detail, client IP and user agent. Detail is scrubbed: no passwords or tokens, strings truncated, long id lists reduced to counts. It also holds the outcome (what started or was queued, rule id, key). |
+| FR-AUD-3 | Writing the trail **must never** make the action fail. |
+| FR-AUD-4 | The audit query **must** filter by user, action, app, env and days (≤ 365, default 30). It returns events newest first (limit ≤ 500) and per-user stats: sign-ins, failed sign-ins, actions, actions by kind, refusals, first/last seen, last sign-in, last action. Non-admins only ever see their own events. |
+| FR-AUD-5 | The audit trail **must** be kept for a configurable period (default 365 days). |
+
+### 6.11 API (API)
+
+| ID | Requirement |
+|---|---|
+| FR-API-1 | Every capability above **must** be available over an HTTP JSON API, documented as OpenAPI 3.1 and served publicly. The build **must** fail if a route exists without a spec entry. |
+| FR-API-2 | Routes:<br>• **Read:** `GET /api/apps`, `/api/overview?app=`, `/api/runs?target=&page=`, `/api/run?key=`, `/api/live?target=`, `/api/comparisons?name=&page=`, `/api/comparison?key=`, `/api/test?app=&id=`, `/api/matrix?app=&n=&env=`, `/api/me`, `/api/audit`, `/api/users`.<br>• **Write:** `POST /api/login`, `/api/password`, `/api/users`, `/api/start`, `/api/stop`, `/api/unqueue`, `/api/compare`, `/api/rejudge`, `/api/accept`. |
+| FR-API-3 | App-scoped reads **must** require `app`, unless only one app exists. A missing or unknown app returns 400/404 with the list of valid apps. |
+| FR-API-4 | Errors **must** be JSON `{error, …}` with meaningful status codes: 400 bad input, 401 unauthenticated, 403 forbidden, 404 unknown or expired, 409 conflict or concurrent change, 429 limits, 503 topology missing. |
+| FR-API-5 | Frequently read endpoints (apps, overview, live, runs, comparisons, matrix) **must** return an ETag and answer `If-None-Match` with 304. Finished run and comparison documents **must** be cacheable by the client for less than the lifetime of their screenshot links (50 min vs 60 min). |
+| FR-API-6 | Screenshot access **must** be through time-limited signed links (1 h). Storage is never exposed directly. |
+| FR-API-7 | The API **must** be invocable by the scheduler with `{target}`, `{app, env}` or `{comparison}`, and by runner state-change events (queue drain). |
+| FR-API-8 | Interactive API documentation **must** be served that executes requests as the signed-in user, so they are subject to role and audit. |
+
+### 6.12 AI assistant integration (MCP)
+
+| ID | Requirement |
+|---|---|
+| FR-MCP-1 | The system **must** expose an MCP server, hosted (Streamable HTTP, stateless) and runnable locally (stdio, or HTTP on localhost). |
+| FR-MCP-2 | Hosted clients **must** authenticate with a session token (`Authorization: Bearer` or `X-Portal-Token`). Tools act as that user, so roles and the audit trail apply. |
+| FR-MCP-3 | **Read tools:** `synthetics_overview(app?)`, `list_runs`, `get_run` (failed tests only by default), `get_live_run`, `list_comparisons`, `get_comparison` (changed tests only by default, with Go/No-Go by kind), `get_test`, `get_test_matrix` (problems by default), `get_screenshot`, `compare_screenshots` (both images plus the judge's verdict), `list_accepted_rules`. |
+| FR-MCP-4 | **Side-effect tools:** `start_run` (target, comparison or app+env; ids, label, pinned baseline), `stop_run`, `compare_runs`, `compare_with` (preset), `rejudge_comparison`, `accept_difference`, `set_accepted_rule`, `delete_accepted_rule`. A read-only mode **must** hide all of them. |
+| FR-MCP-5 | **Waiting tools:** `wait_for_run` and `wait_for_comparison` **must** block until the result lands, reporting progress. They follow re-run and re-judge versions. When hosted, each call returns within a configurable cap (default 45 s), so the assistant calls again. |
+| FR-MCP-6 | The MCP verdict logic **must** be identical to the API's (§7.1). |
+| FR-MCP-7 | Tool descriptions **must** explain comparison kinds and verdict rules, and the about/help content **must** list every tool. The build **must** fail if a tool is missing from it. |
+| FR-MCP-8 | The run "by" for MCP actions defaults to `<user> (mcp)` and is configurable. |
+
+### 6.13 Data storage and retention (DATA)
+
+| ID | Requirement |
+|---|---|
+| FR-DATA-1 | All state **must** live in one object store, with this key layout. `<t>` = `<app>/<env>/<network>`.<br>• `results/<t>/<ts>.json`<br>• `screenshots/<t>/<ts>/<id>.jpg`<br>• `progress/<t>.json`<br>• `requests/<t>.json`<br>• `requests/queue/<app>.json`<br>• `comparisons/<app>/<id-without-app>/<cand_ts>__<base_ts>[__rerun-|__rejudge-<ts>].json`<br>• `comparisons/<app>/_adhoc/…`<br>• `comparisons/<app>/_status/<id>.json`<br>• `comparisons/<app>/_locks/<id>/…`<br>• `index/<app>/runs/<env>.<network>.json`<br>• `index/<app>/comparisons/<id>.json`<br>• `config/suites/<app>.csv`<br>• `config/topology.json`<br>• `config/<app>/accepted.json`<br>• `config/users.json`<br>• `audit/<ts>_<id>.json` |
+| FR-DATA-2 | Index documents **must** be caches only. A reader that finds one missing or behind the latest finished run **must** rebuild it from a bounded listing and write it back. |
+| FR-DATA-3 | Concurrent writers to shared documents (comparison index, queue, rules, users) **must** use conditional writes with retry. First-writer-wins claims **must** dedupe comparisons and re-run merges. |
+| FR-DATA-4 | Results, screenshots, progress, comparisons and index docs **must** expire after a configurable period (default 30 days). Config (suites, topology, rules, users) **must not** expire. The audit trail follows its own retention. |
+| FR-DATA-5 | Each service **must** have least-privilege access. In particular, the comparison service **must not** read user records. |
+
+### 6.14 Migration and compatibility (MIG)
+
+| ID | Requirement |
+|---|---|
+| FR-MIG-1 | A migration tool **must** move the single-profile layout to the app layout. It is a dry run by default and writes on request. It only copies: it never deletes and it skips existing keys, so it is re-runnable. It rewrites the references inside documents, renames the rules file per app, and rebuilds the indexes. Screenshots stay where they are. |
+| FR-MIG-2 | For one release, legacy profile and comparison names **must** be accepted by the API and by references, mapped through a configurable alias table (`staging` → `www.prod.staging`, `staging-vs-prod` → `www.prod.staging-vs-prod`, …). |
+
+### 6.15 Operations and local development (OPS)
+
+| ID | Requirement |
+|---|---|
+| FR-OPS-1 | One command **must** build and deploy everything. Other commands **must** cover: run a target; print the access link; manage users and list them; show audit stats (filters: user, days, app); sync a suite from a sheet; migrate; print an MCP client config (hosted or local). |
+| FR-OPS-2 | A local mode **must** run the real API and comparison logic against in-memory fakes of storage, the runner service, functions and the AI model. It **must** include seeded history for several apps (one with only prod network), simulated runs at adjustable speed, and seeded users (operator, viewer and admin). No cloud account is needed. |
+| FR-OPS-3 | Automated tests **must** cover the API, the comparison logic, migration, the suite format and the MCP server end to end against the local fakes. |
+
+---
+
+## 7. Business rules reference
+
+### 7.1 Go/No-Go (after accepted rules, full comparisons only)
+
+| Verdict | Network comparison | Env comparison |
+|---|---|---|
+| **NO-GO** | any functional diff, or any visual `different` | any status / pass-fail / one-sided diff ("critical"), or any visual `different` (looks broken) |
+| **REVIEW** | any `minor`, any judge `error`, any test failing on the candidate (even if it also fails on the baseline), or no items | header-only diffs, any judge `error`, any test failing on the candidate, or no items |
+| **GO** | everything else | everything else, **including** `minor` (content changed) |
+
+- **Other states:** PARTIAL (subset), COMPARING (running), NONE (no comparison yet), informational (ad hoc).
+- "Red on both sides" is never GO.
+
+### 7.2 Test classification (newest first, over the runs considered)
+
+| Class | Rule (evaluated in order) |
+|---|---|
+| stable | no failures |
+| failing in all | every run failed |
+| regressed | latest failed and the 3 latest all failed |
+| flaky | failure share < 30% **or** ≥ 3 pass/fail flips |
+| n/N failed | otherwise |
+
+### 7.3 Visual verdict pipeline
+`identical bytes → same` → `< 0.1% pixels changed → same` → primary model (kind-specific prompt + pixel-region hint) → drop "sameness" differences → if `different`, verification model → tag known differences → item verdict (§6.5.4) → accepted rules applied on read.
+
+---
+
+## 8. Key user journeys (functional flows)
+
+1. **Activation Go/No-Go.** Operator starts the network comparison for `www.prod`, labelled `CHG-1234`, optionally with a pinned prod baseline. Both targets run, or only the candidate if pinned. Results land, the pair is compared, and the visual judge runs. The verdict is produced, and a markdown summary is generated for the ticket.
+2. **Triage a red scheduled run.** Needs attention shows a regressed test on 2 of 4 targets. The test history says "regressed since 09:12". What changed shows `x-check-cacheable: YES → NO`. A curl reproduces it. A re-run of that test confirms it.
+3. **Clean up noise.** A comparison is REVIEW because a chat widget appears on one side. The operator accepts that visual difference on all tests and re-judges the visual items. The verdict becomes GO, and later comparisons ignore the widget.
+4. **Iterate on a failure.** The operator re-runs only the changed tests of a NO-GO comparison while the canaries are busy. The request is queued and merged with a colleague's re-run. Both sides run together, and the comparison gets a new version with a recomputed verdict.
+5. **Drift check.** The operator compares a target's latest run with its previous one (preset). Identical screenshots cost nothing, and the result is informational.
+6. **Assistant-driven.** "Compare staging with prod for CHG-1234 and tell me if it's a go." The assistant runs `start_run`, then `wait_for_comparison`, then `get_comparison`, and returns the verdict with the worst items, all audited as the user.
+
+---
+
+## 9. Non-functional requirements
+
+| Area | Requirement |
+|---|---|
+| **Performance** | Overview p95 < 300 ms warm at 30 targets, reading at most one index doc per target, plus one progress doc per running target, plus one rules doc. A 90-test run with 55 screenshots completes in about 1–2 min. |
+| **Scalability** | ≥ 1,000 tests per target with screenshots within the 14-min runner limit. ≥ 1,000 screenshot pairs per comparison within the 15-min function limit at concurrency 10. About 40 targets before the runner quota needs raising. |
+| **Cost** | No AI call for identical or near-identical pairs. About one AI request with two images per changed pair (fractions of a cent per run with the lite model). `screenshot = no` for API-only rows. |
+| **Security** | The serving function is reachable only through the CDN with signed origin requests, and is never public. Strict content-security policy. No secrets in topology, logs, audit, curl output or summaries. Session tokens are signed and revocable. Hashed passwords. Least-privilege IAM per service. Optional IP allow-list at the edge. |
+| **Reliability** | Index docs self-heal. Results are always written, even if the browser crashes or the time budget runs out. Duplicate events are deduped. Concurrent writers are safe. Audit and index failures never fail the action. |
+| **Auditability** | Every action is attributable to a named user, as in §6.10. |
+| **Compatibility** | Legacy names and references work for one release (§6.14). |
+| **Portability of tests** | The suite format stays a plain CSV, round-trippable to a spreadsheet. |
+
+---
+
+## 10. Constraints and limits
+
+- One runner per target. Runner names ≤ 21 chars. The runner timeout is 14 min (budget 780 s). Comparisons must finish within 15 min.
+- Each running target uses up to 20 concurrent screenshot workers, so account concurrency must be planned.
+- Hosted MCP calls must return within the CDN's 60-s origin timeout.
+- Retention: 30 days for runs and comparisons, so pinned baselines expire with them. 365 days for audit.
+- Ad hoc: ≤ 500 tests, ≤ 2 running per user. Queue: ≤ 50 per app, 6-h TTL. Rule batch ≤ 50. Subset ≤ 500 ids.
+
+## 11. Dependencies
+- AWS: CloudWatch Synthetics (runners), Lambda (API, comparison, screenshot worker, MCP), S3, Secrets Manager, EventBridge, CloudFront + Lambda@Edge, Bedrock (Amazon Nova Lite/Pro; first-party, no Marketplace subscription).
+- Akamai: edge hostnames resolvable on the staging network. Sites that honour Pragma debug headers.
+- The regression sheet, exported in the suite column format.
+
+## 12. Assumptions
+- Staging and prod serve the same origin, so a network comparison expects identical pages.
+- Absolute redirects differ between envs only by host, which the host map covers.
+- One secret store is shared by all apps, with keys namespaced by convention.
+
+---
+
+## 13. Acceptance criteria (release-level)
+
+1. With only config changes, adding the app `help` (prod network only) creates its targets, with no network comparison generated for it.
+2. A uat-vs-prod env comparison shows **no** `Location` diff for redirects that differ only by host.
+3. A comparison containing one subset re-run never changes the headline verdict. A re-run version recomputes the verdict of the comparison it came from.
+4. Byte-identical screenshot pairs produce `same` with zero AI calls.
+5. Accepting `x-check-cacheable` on a NO-GO comparison whose only diff it is turns the verdict to GO. Disabling the rule restores NO-GO, and the stored docs are unchanged.
+6. A viewer's start request is refused with 403 and appears in the audit trail.
+7. A disabled user's existing session stops working on its next request.
+8. A seeded run where 31 of 40 tests fail with the same 403 is reported as one "looks environmental" cause.
+9. The overview makes 0 LIST and 0 runner-status calls per request at 30 seeded targets (counted by the fakes).
+10. `wait_for_comparison` through the hosted MCP returns within its cap and resumes correctly on the next call.
+11. A curl generated for a staging result contains `--resolve` with the recorded edge IP and no secret values.
+
+---
+
+## 14. Delivery status
+
+| Area | Status |
+|---|---|
+| Single-suite runner, staging pinning, screenshots, network comparison, AI judge, verdicts | Implemented |
+| Users, roles, sessions, audit | Implemented |
+| API + OpenAPI + interactive docs, MCP (hosted and local) | Implemented |
+| Multi-app topology, per-app suites, scopes, index docs, env comparisons, host normalization, ad hoc + presets, run queue, migration | Implemented in code. `PLAN-APPS.md` still says "proposed" and should be updated. |
+
+## 15. Open questions and deferred items
+
+| # | Topic | Position |
+|---|---|---|
+| 1 | App-wide accepted visual rules (e.g. a chat widget that differs everywhere) | Deferred. Revisit once the same visual difference has been accepted on ≥ 3 comparisons of an app: then add an admin-only `scope: app` for visual rules only. Functional and error rules stay per comparison. |
+| 2 | Per-app roles (operator on `www` only) | Deferred until a second team owns an app. Every write already names an app. |
+| 3 | Runner pooling per app | Deferred until the quota or cost requires it. |
+| 4 | Keeping pinned baselines beyond retention | Open. Today an expired pin is rejected. |
+| 5 | Separate secrets per app | Deferred until apps have different owners. |
+| 6 | Cross-app comparison | Rejected: suites and test IDs differ, so the result would be meaningless. |
