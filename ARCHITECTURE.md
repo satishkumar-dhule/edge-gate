@@ -151,62 +151,95 @@ The Terraform configuration in `infra/terraform/` is engineered so a freshly clo
 4. **`aws_iam_role.synthetics_canary_role` & `aws_iam_role_policy.synthetics_bedrock_s3_policy`**:
    - Least-privilege execution role assumable by `synthetics.amazonaws.com`, `lambda.amazonaws.com`, and `tasks.apprunner.amazonaws.com`.
    - Grants read/write access to the S3 artifact bucket, DynamoDB run store, CloudWatch Logs/Metrics, and `bedrock:InvokeModel` / `bedrock:Converse` on `arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.nova-lite-v1:0`.
-5. **`aws_synthetics_canary.property_gate` (`for_each` Matrix)**:
+5. **`aws_synthetics_canary.property_gate` (`for_each` Matrix — Ad-Hoc Run-Once Mode)**:
    - Dynamically flattens `var.properties × envs × ["staging", "prod"]`.
+   - Configured with `schedule { expression = "rate(0 minutes)" }` and `start_canary = false` so canaries incur **$0.00/month** when idle and execute only on demand via `StartCanary`.
    - Sanitizes Canary names to obey CloudWatch Synthetics' strict 21-character `^[0-9a-z_\-]+$` constraint without trailing hyphens (`akg-<app>-<env>-<stg|prd>`).
    - Injects environment variables (`TARGET_ID`, `EDGE_RESOLVE_IP`, `EDGE_HOST_SUFFIX`, `AKAMAI_PRAGMA_HEADERS`, `S3_ARTIFACT_BUCKET`, `DYNAMODB_RUNS_TABLE`, `BEDROCK_NOVA_LITE_MODEL_ID`).
-6. **`aws_ecr_repository.control_plane` & `aws_apprunner_service.control_plane`**:
-   - Provisions an Amazon ECR repository (`akamai-synthetic-release-gate`) and an optional AWS App Runner service (`var.deploy_apprunner_service`) configured with HTTP health checks on `/api/v1/health` and IAM instance role access to S3, DynamoDB, Synthetics, and Bedrock Nova Lite.
+6. **`aws_lambda_function.control_plane_api`, `aws_lambda_function.adhoc_edge_runner` & `aws_apigatewayv2_api.control_plane_http_api` ($0/Idle Scale-to-Zero Compute)**:
+   - Provisions ARM64 Graviton2 Node.js 20 Lambda functions (`aws-lambda/control-plane-handler.js` and `aws-lambda/adhoc-edge-runner.js`) fronted by an Amazon API Gateway v2 HTTP API (`$default` stage) and direct Lambda Function URL.
+7. **`aws_cloudfront_distribution.portal_cdn` & `aws_cloudfront_origin_access_control.portal_oac` (Global CloudFront Edge Distribution)**:
+   - Deploys the entire application as an **Amazon CloudFront Distribution** (`http2and3`, `PriceClass_100`):
+     - **Default Origin (`/*`)**: Serves the compiled Vite React SPA from S3 (`/portal-ui`) secured via SigV4 Origin Access Control (`aws_cloudfront_origin_access_control.portal_oac` + `aws_s3_bucket_policy.allow_cloudfront_oac`), with SPA fallback routing (`403`/`404` -> `/index.html`).
+     - **Ordered API Origin (`/api/*`)**: Routes all `/api/v1/*` and `/api/synthetics/*` requests (`GET, POST, PUT, PATCH, DELETE, OPTIONS`) directly to the Scale-to-Zero API Gateway v2 HTTP API / Control Plane Lambda with `min_ttl = 0`, `default_ttl = 0`, `max_ttl = 0` and `Authorization`, `Content-Type`, and `X-Operator-Email` headers forwarded.
 
 ---
 
-## 6. OpenAPI 3.1.0 & Model Context Protocol (MCP) Specification
+## 6. OpenAPI 3.1.0, Headless User API & Model Context Protocol (MCP) Specification
 
-The Express backend (`server.ts`) serves both the interactive web application and a versioned REST + MCP API on port `3000`. The live OpenAPI 3.1.0 document is available at `GET /api/v1/openapi.json` and can be tested interactively in the **MCP & AWS → OpenAPI 3.1 / Swagger UI** tab.
+The Express backend (`server.ts`) and AWS Lambda handler (`aws-lambda/control-plane-handler.js`) serve both the interactive web application and a versioned REST + Headless User Management/Tracking + MCP API. The live OpenAPI 3.1.0 document is available at `GET /api/v1/openapi.json`.
 
 ### 6.1 REST API Endpoints
 | Method | Path | Tag | Description |
 | :--- | :--- | :--- | :--- |
 | `GET` | `/api/v1/openapi.json` | `System & Config` | Returns the complete OpenAPI 3.1.0 JSON specification. |
-| `GET` | `/api/v1/health` | `System & Config` | Returns Control Plane health, AWS region, S3 bucket, DynamoDB table, Staging/Prod edge IPs, and Bedrock Nova Lite model status. |
+| `GET` | `/api/v1/health` | `System & Config` | Returns Control Plane health, CloudFront + Lambda topology, AWS region, S3 bucket, DynamoDB table, Staging/Prod edge IPs, user summary counters, and Bedrock Nova Lite model status. |
 | `GET` | `/api/v1/config` | `System & Config` | Returns active `TemplateConfig` (networks, infrastructure, pragma headers, and test suite). |
 | `GET` | `/api/v1/properties` | `System & Config` | Lists all configured Akamai properties (`www`, `store`, `help`, etc.) and environments. |
 | `GET` | `/api/v1/runs` | `AWS Synthetics Runs` | Queries ingested synthetic runs with optional `?appId=`, `?target=`, or `?network=` filters. |
-| `POST` | `/api/v1/runs/trigger` | `AWS Synthetics Runs` | Triggers a new synthetic run on `targetId` and automatically computes a Run-over-Run comparison against the previous run. |
-| `POST` | `/api/v1/comparisons/evaluate` | `3-Dim Release Gate` | Evaluates 3-dimension diffs (`headers`, `cookies`, `image_ai`) and headline verdict (`GO` / `NO-GO` / `REVIEW`) between `candidateTarget` and `baselineTarget`. |
-| `POST` | `/api/v1/judge/nova-lite` | `Bedrock Nova Lite Judge` | Invokes Amazon Bedrock Nova Lite (`amazon.nova-lite-v1:0`) visual regression evaluation (uses live Bedrock `ConverseCommand` when PNG bytes + AWS credentials are present, or deterministic fallback locally). |
+| `POST` | `/api/v1/runs/trigger` | `AWS Synthetics Runs` | Triggers a new synthetic run on `targetId`, automatically computes a Run-over-Run comparison against the previous run, and records operator activity telemetry. |
+| `POST` | `/api/v1/comparisons/evaluate` | `3-Dim Release Gate` | Evaluates 3-dimension diffs (`headers`, `cookies`, `image_ai`) and headline verdict (`GO` / `NO-GO` / `REVIEW`) between `candidateTarget` and `baselineTarget` and tracks operator usage. |
+| `POST` | `/api/v1/judge/nova-lite` | `Bedrock Nova Lite Judge` | Invokes Amazon Bedrock Nova Lite (`amazon.nova-lite-v1:0`) visual regression evaluation behind the `0.1%` pixel-diff cost gate. |
 | `POST` | `/api/v1/mcp/rpc` | `MCP JSON-RPC` | Model Context Protocol JSON-RPC 2.0 endpoint for IDE agents and CI/CD pipelines. |
+| `GET` | `/api/v1/users` | `User Management & Tracking (CLI)` | Headless CLI/API endpoint listing all registered operators, roles, statuses, and activity counters (no password hashes exposed). |
+| `POST` | `/api/v1/users` | `User Management & Tracking (CLI)` | Headless CLI/API endpoint creating a new user with PBKDF2-HMAC-SHA256 salted password hashing (`make user-add`). |
+| `POST` | `/api/v1/users/reset-password` | `User Management & Tracking (CLI)` | Headless CLI/API endpoint rotating a user's password with a fresh cryptographic salt and incrementing `passwordResetCount` (`make user-reset-password`). |
+| `POST` | `/api/v1/users/status` | `User Management & Tracking (CLI)` | Headless CLI/API endpoint enabling/disabling a user account or updating role (`make user-disable` / `make user-enable`). |
+| `DELETE` | `/api/v1/users/:email` | `User Management & Tracking (CLI)` | Headless CLI/API endpoint deleting a user (`make user-delete`). |
+| `POST` | `/api/v1/users/authenticate` | `User Management & Tracking (CLI)` | Verifies operator credentials, issues a session token, and increments login telemetry (`make user-auth`). |
+| `GET` | `/api/v1/users/stats` | `User Management & Tracking (CLI)` | Returns aggregated user activity tracking telemetry (runs triggered, comparisons evaluated, Bedrock Nova Lite judge calls, MCP calls, password resets) and the audit log (`make user-stats`). |
 
 ### 6.2 MCP Server Tools (`POST /api/v1/mcp/rpc`)
 - **`evaluate_visual_diff_nova_lite`**: Invokes `amazon.nova-lite-v1:0` on Side-A vs Side-B S3 DOM snapshots and returns semantic verdict, confidence score, and localized bounding-box descriptions.
 - **`compare_akamai_runs`**: Computes the 3-dimension diff report between any two targets or run keys.
-- **`run_aws_synthetics_suite`**: Dispatches an AWS CloudWatch Synthetics Canary run with DNS edge pinning and Pragma headers.
+- **`run_aws_synthetics_suite`**: Dispatches an AWS CloudWatch Synthetics Canary or Ad-Hoc Lambda run with DNS edge pinning and Pragma headers.
 - **`list_akamai_properties`**: Lists all configured properties, environments, and Staging/Prod targets.
+- **`get_user_stats`**: Returns headless operator activity statistics and recent audit trail events.
 
 ---
 
-## 7. Deployment & Operations Runbook
+## 7. Makefile, CLI User Management & CloudFront Deployment Runbook
 
-### 7.1 Local Development & Automated Unit Testing
+All operational workflows — including building, testing, deploying the **CloudFront Distribution + Scale-to-Zero AWS Lambda stack**, running ad-hoc synthetics, and managing users/passwords/stats (headlessly via CLI & API with zero UI screens) — are standardized in the root `Makefile` and `scripts/user-admin-cli.ts`.
+
+### 7.1 Build, Test & Verify
 ```bash
-# 1. Install dependencies
-npm install
-
-# 2. Run the 18 TDD unit tests (Engine, Normalization, Verdicts, Cookie Diffs, 50-Prop Scale, OpenAPI & Terraform)
-npx tsx --test src/engine/rules.test.ts
-
-# 3. Start full-stack Express + Vite server on http://localhost:3000
-npm run dev
+# Run all 21 TDD unit tests + TypeScript lint + production Vite SPA build
+make verify
+# Or via npm:
+npm test && npm run lint && npm run build
 ```
 
-### 7.2 Deploying to AWS via Terraform
+### 7.2 Deploy CloudFront Distribution + Scale-to-Zero Lambda on AWS
 ```bash
-# Option A: Direct Terraform Apply (Provisions S3, Packaged Canary ZIP, DynamoDB, IAM, CloudWatch Synthetics Canaries & ECR)
-cd infra/terraform
-terraform init
-terraform validate
-terraform apply
-
-# Option B: 1-Command Script with Docker Build, ECR Push & AWS App Runner Rollout
-./scripts/deploy-aws.sh --with-apprunner
+# Full end-to-end deployment:
+# 1. Builds Vite SPA (dist/)
+# 2. Runs terraform apply (S3 + OAC + CloudFront Distribution + Scale-to-Zero Lambda + API Gateway v2 + DynamoDB + Run-Once Canaries)
+# 3. Uploads dist/ to s3://<bucket>/portal-ui/ and invalidates CloudFront cache
+make deploy-cloudfront
 ```
+
+### 7.3 Headless User Management, Password Reset & Activity Tracking (CLI Only — No UI Screens)
+```bash
+# List all registered users & activity counters
+make user-list
+
+# Add a new operator user (PBKDF2-HMAC-SHA256 salted password hash)
+make user-add EMAIL=alice.sre@company.com NAME="Alice SRE" ROLE="Staff Edge SRE" PASSWORD="StrongPassword#2026!"
+
+# Reset a user's password
+make user-reset-password EMAIL=alice.sre@company.com NEW_PASSWORD="RotatedPassword#2026!"
+
+# Authenticate user credentials via CLI
+make user-auth EMAIL=alice.sre@company.com PASSWORD="RotatedPassword#2026!"
+
+# Disable / Enable / Delete a user
+make user-disable EMAIL=alice.sre@company.com
+make user-enable  EMAIL=alice.sre@company.com
+make user-delete  EMAIL=alice.sre@company.com
+
+# View per-user tracking stats & audit trail
+make user-stats
+make user-audit EMAIL=alice.sre@company.com
+```
+

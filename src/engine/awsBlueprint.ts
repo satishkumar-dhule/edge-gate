@@ -22,7 +22,13 @@ export interface OpenApiEndpointDescriptor {
   id: string;
   method: 'GET' | 'POST';
   path: string;
-  tag: 'System & Config' | 'AWS Synthetics Runs' | '3-Dim Release Gate' | 'Bedrock Nova Lite Judge' | 'MCP JSON-RPC';
+  tag:
+    | 'System & Config'
+    | 'AWS Synthetics Runs'
+    | '3-Dim Release Gate'
+    | 'Bedrock Nova Lite Judge'
+    | 'MCP JSON-RPC'
+    | 'User Management & Tracking (CLI)';
   summary: string;
   description: string;
   sampleQuery?: Record<string, string>;
@@ -207,7 +213,7 @@ export function getOpenApiEndpointCatalog(
       tag: 'MCP JSON-RPC',
       summary: 'Execute MCP Server JSON-RPC 2.0 Tool Call',
       description:
-        'Executes Model Context Protocol tools (`list_akamai_properties`, `run_aws_synthetics_suite`, `compare_akamai_runs`, `evaluate_visual_diff_nova_lite`).',
+        'Executes Model Context Protocol tools (`list_akamai_properties`, `run_aws_synthetics_suite`, `compare_akamai_runs`, `evaluate_visual_diff_nova_lite`, `get_user_stats`).',
       sampleBody: {
         jsonrpc: '2.0',
         id: 101,
@@ -222,6 +228,52 @@ export function getOpenApiEndpointCatalog(
           },
         },
       },
+    },
+    {
+      id: 'get-users',
+      method: 'GET',
+      path: '/api/v1/users',
+      tag: 'User Management & Tracking (CLI)',
+      summary: 'List All Operator Users & Activity Counters (Headless CLI/API)',
+      description:
+        'Returns all operator accounts, roles, statuses, password reset counts, and per-user action statistics without exposing password hashes.',
+    },
+    {
+      id: 'post-create-user',
+      method: 'POST',
+      path: '/api/v1/users',
+      tag: 'User Management & Tracking (CLI)',
+      summary: 'Create New Operator User (make user-add)',
+      description:
+        'Creates a new operator account with PBKDF2-HMAC-SHA256 salted password hashing and records an audit event (`make user-add EMAIL=... PASSWORD=...`).',
+      sampleBody: {
+        email: 'edge-sre@company.com',
+        displayName: 'Edge SRE Operator',
+        role: 'operator',
+        password: 'ChangeMe#2026!',
+      },
+    },
+    {
+      id: 'post-reset-user-password',
+      method: 'POST',
+      path: '/api/v1/users/reset-password',
+      tag: 'User Management & Tracking (CLI)',
+      summary: 'Reset User Password (make user-reset-password)',
+      description:
+        'Rotates a user password with a fresh 128-bit cryptographic salt and increments passwordResetCount (`make user-reset-password EMAIL=... PASSWORD=...`).',
+      sampleBody: {
+        email: 'sre-lead@company.com',
+        newPassword: 'NewSecurePassword#2026!',
+      },
+    },
+    {
+      id: 'get-user-stats',
+      method: 'GET',
+      path: '/api/v1/users/stats',
+      tag: 'User Management & Tracking (CLI)',
+      summary: 'User Activity Tracking & Audit Log Statistics (make user-stats)',
+      description:
+        'Returns aggregated user activity telemetry, breakdown by action type (runs triggered, comparisons evaluated, Bedrock Nova Lite judge calls, MCP calls, CLI ops), and recent audit trail.',
     },
   ];
 }
@@ -273,12 +325,12 @@ export function buildOpenApiSpec(
     info: {
       title: `${config.branding.controlPlaneTitle} — Synthetic Release Gate API`,
       version: '1.0.0',
-      description: `REST & MCP Control Plane for ${config.infrastructure.runnerEngine} across Akamai Staging (${config.networks.staging.edgeSuffix}) and Production (${config.networks.prod.edgeSuffix}) edge networks, powered by ${config.infrastructure.visualJudgeProvider} (${config.infrastructure.visualJudgeModel}).`,
+      description: `REST, User Management/Tracking & MCP Control Plane for ${config.infrastructure.runnerEngine} across Akamai Staging (${config.networks.staging.edgeSuffix}) and Production (${config.networks.prod.edgeSuffix}) edge networks, deployed via Amazon CloudFront + Scale-to-Zero AWS Lambda and powered by ${config.infrastructure.visualJudgeProvider} (${config.infrastructure.visualJudgeModel}).`,
     },
     servers: [
       {
         url: '/',
-        description: 'Local / Cloud Run / AWS App Runner Control Plane',
+        description: 'CloudFront Distribution / AWS API Gateway v2 Lambda / Local Control Plane',
       },
     ],
     tags: [
@@ -287,6 +339,7 @@ export function buildOpenApiSpec(
       { name: '3-Dim Release Gate', description: 'Headers, Cookies & Visual AI diff evaluation' },
       { name: 'Bedrock Nova Lite Judge', description: `Amazon Bedrock ${config.infrastructure.visualJudgeModel} multimodal judge` },
       { name: 'MCP JSON-RPC', description: 'Model Context Protocol JSON-RPC 2.0 tool server' },
+      { name: 'User Management & Tracking (CLI)', description: 'Headless CLI/API user lifecycle, password reset & activity tracking stats' },
     ],
     paths,
   };
@@ -601,16 +654,16 @@ resource "aws_iam_role_policy" "synthetics_bedrock_s3_policy" {
         Resource = [local.bedrock_model_arn, "arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0"]
       },
       {
-        Sid      = "CloudWatchSyntheticsMetricsAndSNS"
+        Sid      = "CloudWatchSyntheticsLambdaAndSNS"
         Effect   = "Allow"
-        Action   = ["cloudwatch:PutMetricData", "logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents", "synthetics:StartCanary", "synthetics:GetCanaryRuns", "sns:Publish"]
+        Action   = ["cloudwatch:PutMetricData", "logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents", "lambda:InvokeFunction", "synthetics:StartCanary", "synthetics:GetCanaryRuns", "sns:Publish"]
         Resource = "*"
       }
     ]
   })
 }
 
-# 8. AWS CloudWatch Synthetics Canaries & Metric Alarms (Staging & Production Edge Networks)
+# 8. Ad-Hoc / Run-Once CloudWatch Synthetics Canaries & Metric Alarms (rate(0 minutes) = $0/idle)
 resource "aws_synthetics_canary" "property_gate" {
   for_each                 = { for t in local.canary_targets : t.key => t }
   name                     = each.value.canary_name
@@ -687,19 +740,142 @@ resource "aws_cloudwatch_metric_alarm" "canary_failed_alarm" {
   alarm_actions       = [aws_sns_topic.release_gate_alerts.arn]
 }
 
-# 9. Amazon ECR Repository, App Runner & Local .env.terraform Output
-resource "aws_ecr_repository" "control_plane" {
-  name                 = "akamai-synthetic-release-gate"
-  image_tag_mutability = "MUTABLE"
-  force_delete         = true
+# 9. Scale-to-Zero AWS Lambda Functions & API Gateway v2 ($0/idle Ad-Hoc Mode)
+data "archive_file" "adhoc_runner_lambda_zip" {
+  type        = "zip"
+  output_path = "\${path.module}/.terraform/tmp/adhoc-edge-runner.zip"
+  source {
+    content  = file("\${path.module}/../../aws-lambda/adhoc-edge-runner.js")
+    filename = "adhoc-edge-runner.js"
+  }
 }
 
+data "archive_file" "control_plane_lambda_zip" {
+  type        = "zip"
+  output_path = "\${path.module}/.terraform/tmp/control-plane-handler.zip"
+  source {
+    content  = file("\${path.module}/../../aws-lambda/control-plane-handler.js")
+    filename = "control-plane-handler.js"
+  }
+}
+
+resource "aws_lambda_function" "adhoc_edge_runner" {
+  count            = var.deploy_serverless_lambda ? 1 : 0
+  function_name    = "akamai-gate-adhoc-runner-\${var.environment}"
+  role             = aws_iam_role.synthetics_canary_role.arn
+  handler          = "adhoc-edge-runner.handler"
+  runtime          = var.lambda_runtime
+  architectures    = [var.lambda_architecture]
+  filename         = data.archive_file.adhoc_runner_lambda_zip.output_path
+  source_code_hash = data.archive_file.adhoc_runner_lambda_zip.output_base64sha256
+  memory_size      = 1024
+  timeout          = 60
+}
+
+resource "aws_lambda_function" "control_plane_api" {
+  count            = var.deploy_serverless_lambda ? 1 : 0
+  function_name    = "akamai-gate-control-plane-\${var.environment}"
+  role             = aws_iam_role.synthetics_canary_role.arn
+  handler          = "control-plane-handler.handler"
+  runtime          = var.lambda_runtime
+  architectures    = [var.lambda_architecture]
+  filename         = data.archive_file.control_plane_lambda_zip.output_path
+  source_code_hash = data.archive_file.control_plane_lambda_zip.output_base64sha256
+  memory_size      = 512
+  timeout          = 30
+}
+
+resource "aws_lambda_function_url" "control_plane_url" {
+  count              = var.deploy_serverless_lambda ? 1 : 0
+  function_name      = aws_lambda_function.control_plane_api[0].function_name
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_api" "control_plane_http_api" {
+  count         = var.deploy_serverless_lambda ? 1 : 0
+  name          = "akamai-gate-http-api-\${var.environment}"
+  protocol_type = "HTTP"
+}
+
+# 9B. Amazon CloudFront Distribution (S3 SPA Origin + /api/* Scale-to-Zero Lambda Origin)
+resource "aws_cloudfront_origin_access_control" "portal_oac" {
+  count                             = var.deploy_cloudfront_distribution ? 1 : 0
+  name                              = "akamai-gate-s3-oac-\${var.environment}"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+resource "aws_cloudfront_distribution" "portal_cdn" {
+  count               = var.deploy_cloudfront_distribution && var.deploy_serverless_lambda ? 1 : 0
+  enabled             = true
+  default_root_object = "index.html"
+  price_class         = "PriceClass_100"
+
+  origin {
+    domain_name              = aws_s3_bucket.synthetics_artifacts.bucket_regional_domain_name
+    origin_id                = "S3PortalSpaOrigin"
+    origin_path              = "/portal-ui"
+    origin_access_control_id = aws_cloudfront_origin_access_control.portal_oac[0].id
+  }
+
+  origin {
+    domain_name = replace(aws_apigatewayv2_api.control_plane_http_api[0].api_endpoint, "https://", "")
+    origin_id   = "ControlPlaneApiOrigin"
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  default_cache_behavior {
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "S3PortalSpaOrigin"
+    viewer_protocol_policy = "redirect-to-https"
+    forwarded_values {
+      query_string = false
+      cookies { forward = "none" }
+    }
+  }
+
+  ordered_cache_behavior {
+    path_pattern           = "/api/*"
+    allowed_methods        = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "ControlPlaneApiOrigin"
+    viewer_protocol_policy = "redirect-to-https"
+    min_ttl                = 0
+    default_ttl            = 0
+    max_ttl                = 0
+    forwarded_values {
+      query_string = true
+      headers      = ["Accept", "Authorization", "Content-Type", "X-Operator-Email"]
+      cookies { forward = "all" }
+    }
+  }
+
+  restrictions {
+    geo_restriction { restriction_type = "none" }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+}
+
+# 10. Local .env.terraform Output
 resource "local_file" "dotenv_terraform" {
   count    = var.generate_local_dotenv ? 1 : 0
   filename = "\${path.module}/../../.env.terraform"
   content  = <<-EOT
     AWS_REGION=\${var.aws_region}
     ENVIRONMENT=\${var.environment}
+    COMPUTE_ARCHITECTURE=aws-lambda-scale-to-zero
+    DEPLOYMENT_TOPOLOGY=cloudfront-s3-oac-plus-lambda-apigw-v2
+    CLOUDFRONT_PORTAL_URL=\${var.deploy_cloudfront_distribution && var.deploy_serverless_lambda ? "https://\${aws_cloudfront_distribution.portal_cdn[0].domain_name}" : "disabled"}
     SYNTHETICS_S3_BUCKET=s3://\${aws_s3_bucket.synthetics_artifacts.id}
     SYNTHETICS_DYNAMODB_TABLE=\${aws_dynamodb_table.release_gate_runs.name}
     PORTAL_CONFIG_S3_KEY=\${aws_s3_object.portal_runtime_config.key}
@@ -718,7 +894,7 @@ resource "local_file" "dotenv_terraform" {
 variable "aws_region" {
   type        = string
   default     = "${config.infrastructure.awsRegion}"
-  description = "AWS region for CloudWatch Synthetics, S3, DynamoDB, SSM, and Bedrock Nova Lite"
+  description = "AWS region for Lambda, CloudWatch Synthetics, S3, DynamoDB, SSM, and Bedrock Nova Lite"
 }
 
 variable "environment" {
@@ -745,7 +921,7 @@ variable "artifact_retention_days" {
 variable "dynamodb_table_name" {
   type        = string
   default     = "${config.infrastructure.dynamodbTable}"
-  description = "DynamoDB table storing run metadata, seeded config, and accepted diff rules"
+  description = "DynamoDB table storing run metadata, seeded config, and accepted diff rules (PAY_PER_REQUEST = $0/idle)"
 }
 
 variable "ssm_parameter_prefix" {
@@ -774,6 +950,28 @@ variable "visual_judge_minor_threshold_pct" {
   default     = 5.0
 }
 
+variable "deploy_serverless_lambda" {
+  type        = bool
+  default     = true
+  description = "Provision Scale-to-Zero ($0/idle) AWS Lambda functions for Control Plane API/MCP and Ad-Hoc Edge Runner"
+}
+
+variable "deploy_cloudfront_distribution" {
+  type        = bool
+  default     = true
+  description = "Provision Amazon CloudFront Distribution fronting S3 SPA (/*) and Scale-to-Zero Lambda API (/api/*)"
+}
+
+variable "lambda_runtime" {
+  type        = string
+  default     = "nodejs20.x"
+}
+
+variable "lambda_architecture" {
+  type        = string
+  default     = "arm64"
+}
+
 variable "synthetics_runtime_version" {
   type        = string
   default     = "syn-nodejs-puppeteer-9.1"
@@ -781,12 +979,14 @@ variable "synthetics_runtime_version" {
 
 variable "start_canaries_on_apply" {
   type        = bool
-  default     = true
+  default     = false
+  description = "Keep false for Ad-Hoc / Scale-to-Zero mode ($0 idle cost)"
 }
 
 variable "canary_schedule_expression" {
   type        = string
-  default     = "rate(15 minutes)"
+  default     = "rate(0 minutes)"
+  description = "rate(0 minutes) enforces Run-Once / Ad-Hoc on-demand execution"
 }
 
 variable "canary_timeout_seconds" {
@@ -935,7 +1135,7 @@ variable "properties" {
 }
 `;
 
-  const tfvars = `# Auto-generated from src/config/template.config.ts (100% Config-as-Code)
+  const tfvars = `# Auto-generated from src/config/template.config.ts (100% Config-as-Code, CloudFront + Scale-to-Zero Lambda Mode)
 aws_region                       = "${config.infrastructure.awsRegion}"
 environment                      = "prod"
 s3_artifact_bucket               = "${s3BucketName}"
@@ -947,9 +1147,13 @@ generate_local_dotenv            = true
 bedrock_nova_lite_model_id       = "${config.infrastructure.visualJudgeModel}"
 visual_judge_pixel_cost_gate_pct = 0.1
 visual_judge_minor_threshold_pct = 5.0
+deploy_serverless_lambda         = true
+deploy_cloudfront_distribution   = true
+lambda_runtime                   = "nodejs20.x"
+lambda_architecture              = "arm64"
 synthetics_runtime_version       = "syn-nodejs-puppeteer-9.1"
-start_canaries_on_apply          = true
-canary_schedule_expression       = "rate(15 minutes)"
+start_canaries_on_apply          = false
+canary_schedule_expression       = "rate(0 minutes)"
 canary_timeout_seconds           = 120
 canary_memory_mb                 = 2048
 viewport_width                   = 1440
@@ -995,7 +1199,7 @@ properties = ${JSON.stringify(
 `;
 
   const outputsTf = `# ============================================================================
-# TERRAFORM OUTPUTS — AKAMAI SYNTHETIC RELEASE GATE
+# TERRAFORM OUTPUTS — AKAMAI SYNTHETIC RELEASE GATE (CLOUDFRONT + LAMBDA)
 # ============================================================================
 output "s3_artifact_bucket_name" {
   value = aws_s3_bucket.synthetics_artifacts.id
@@ -1019,17 +1223,29 @@ output "sns_alerts_topic_arn" {
 output "synthetics_execution_role_arn" {
   value = aws_iam_role.synthetics_canary_role.arn
 }
-output "ecr_repository_url" {
-  value = aws_ecr_repository.control_plane.repository_url
+output "control_plane_lambda_function_name" {
+  value = var.deploy_serverless_lambda ? aws_lambda_function.control_plane_api[0].function_name : "disabled"
+}
+output "adhoc_runner_lambda_function_name" {
+  value = var.deploy_serverless_lambda ? aws_lambda_function.adhoc_edge_runner[0].function_name : "disabled"
+}
+output "control_plane_lambda_function_url" {
+  value = var.deploy_serverless_lambda ? aws_lambda_function_url.control_plane_url[0].function_url : "disabled"
+}
+output "apigateway_http_api_endpoint" {
+  value = var.deploy_serverless_lambda ? aws_apigatewayv2_api.control_plane_http_api[0].api_endpoint : "disabled"
+}
+output "cloudfront_distribution_id" {
+  value = var.deploy_cloudfront_distribution && var.deploy_serverless_lambda ? aws_cloudfront_distribution.portal_cdn[0].id : "disabled"
+}
+output "cloudfront_portal_url" {
+  value = var.deploy_cloudfront_distribution && var.deploy_serverless_lambda ? "https://\${aws_cloudfront_distribution.portal_cdn[0].domain_name}" : "disabled"
 }
 `;
 
   const deployScript = `#!/usr/bin/env bash
 set -euo pipefail
-cd infra/terraform
-terraform init
-terraform validate
-terraform apply -auto-approve
+make deploy-cloudfront
 `;
 
   return { mainTf, variablesTf, tfvars, outputsTf, deployScript };
@@ -1375,40 +1591,111 @@ export function generateArchitectureMarkdown(
 ): string {
   return `# ${config.branding.controlPlaneTitle} — System Design & Architecture (ARCHITECTURE.md)
 
-> **Runtime Stack:** React 19 · TypeScript · Tailwind CSS · Express (\`server.ts\`) · OpenAPI 3.1.0 · MCP JSON-RPC 2.0  
-> **AWS Cloud Stack:** Terraform (\`>= 1.5\`) · AWS CloudWatch Synthetics (\`${config.infrastructure.runtimeVersion}\`) · S3 (\`${config.infrastructure.s3Bucket}\`) · DynamoDB (\`${config.infrastructure.dynamodbTable}\`) · Amazon Bedrock Nova Lite (\`${config.infrastructure.visualJudgeModel}\`)
+> **Compute Model:** **100% Scale-to-Zero Ad-Hoc AWS Lambda (\`$0.00/hour\` when idle)** — Zero always-running workloads!  
+> **Runtime Stack:** React 19 · TypeScript · Tailwind CSS · AWS Lambda (\`nodejs20.x\` / \`arm64\` Graviton2) · API Gateway HTTP API v2 · OpenAPI 3.1.0 · MCP JSON-RPC 2.0  
+> **AWS Cloud Stack:** Terraform (\`>= 1.5\`) · Ad-Hoc Edge Runner Lambda · Run-Once CloudWatch Synthetics (\`rate(0 minutes)\`) · S3 (\`${config.infrastructure.s3Bucket}\`) · DynamoDB On-Demand (\`${config.infrastructure.dynamodbTable}\`) · Amazon Bedrock Nova Lite (\`${config.infrastructure.visualJudgeModel}\`)
 
-## 1. End-to-End Architecture & Data Flow
+## 1. End-to-End Scale-to-Zero Architecture & Data Flow
 \`\`\`text
 src/config/template.config.ts (${config.properties.length} Properties × Envs × Edge Networks)
    │
-   ├──▶ Terraform IaC (infra/terraform/main.tf)
-   │      • archive_file.canary_zip ──▶ aws_s3_object.canary_bundle (nodejs/node_modules/canary-har-runner.js)
-   │      • aws_synthetics_canary   ──▶ Chromium --host-resolver-rules=MAP <host> <edgeIp>
-   │                                    Staging (${config.networks.staging.edgeSuffix} / ${config.networks.staging.defaultEdgeIp})
-   │                                    Prod    (${config.networks.prod.edgeSuffix} / ${config.networks.prod.defaultEdgeIp})
-   │      • S3 + DynamoDB Store     ──▶ Manifests, Headers, Set-Cookie jars & 1440x900 PNGs
+   ├──▶ Terraform IaC (infra/terraform/main.tf) — $0.00/idle Scale-to-Zero Stack
+   │      • aws_lambda_function.control_plane_api  ──▶ API Gateway v2 HTTP API + Lambda Function URL ($0/idle)
+   │      • aws_lambda_function.adhoc_edge_runner  ──▶ On-Demand DNS-Pinned Edge Probe (${config.networks.staging.defaultEdgeIp} vs ${config.networks.prod.defaultEdgeIp})
+   │      • aws_synthetics_canary (rate(0 minutes))──▶ Run-Once Headless Chromium Canary (start_canary = false)
+   │      • S3 + DynamoDB (PAY_PER_REQUEST)        ──▶ Manifests, Headers, Set-Cookie jars & 1440x900 PNGs
    │
-   └──▶ Express OpenAPI 3.1 + MCP Server (server.ts)
+   └──▶ Ad-Hoc Control Plane API + MCP Server (aws-lambda/control-plane-handler.js & server.ts)
           • 3-Dimension Diff Engine (src/engine/rules.ts): Functional Headers, Cookies, Visual AI
-          • Amazon Bedrock Nova Lite (${config.infrastructure.visualJudgeModel}) Converse API Judge
-          • Interactive Swagger UI (${config.infrastructure.openApiSpecPath}) & MCP RPC (/api/v1/mcp/rpc)
+          • Modular Release Gate Plugins (src/engine/pluginRegistry.ts)
+          • Amazon Bedrock Nova Lite (${config.infrastructure.visualJudgeModel}) Converse API Judge (0.1% pixel cost gate)
 \`\`\`
 
-## 2. Three-Dimension Release Gate Engine
-1. **Functional HTTP Headers:** Compares HTTP status, canonicalized \`Location\` redirects, TTL-normalized \`Cache-Control\` (\`max-age=N\`), and \`x-check-cacheable\`.
-2. **Edge & Session Cookies:** Compares unprefixed \`Set-Cookie\` attributes (\`Path\`, \`SameSite\`, \`Secure\`, \`HttpOnly\`) with 1-click baseline acceptance turning badges to \`OK\`.
-3. **Visual Image AI (${config.infrastructure.visualJudgeModel}):** Applies a pixel-zero cost gate (\`<= 0.1%\`) before invoking Amazon Bedrock Nova Lite via \`ConverseCommand\` on S3-captured $1440 \\times 900$ DOM snapshots.
-
-## 3. Clone-and-Deploy AWS Runbook
-\`\`\`bash
-cd infra/terraform
-terraform init
-terraform validate
-terraform apply
-# Or build & push Docker image to ECR + AWS App Runner:
-./scripts/deploy-aws.sh --with-apprunner
-\`\`\`
+## 2. Why Zero Always-Running Workloads ($0/Idle Cost Model)
+1. **Control Plane & MCP API on AWS Lambda + API Gateway v2:** Instead of an always-on container (App Runner / ECS), the API, OpenAPI 3.1 explorer, and MCP server execute inside \`aws-lambda/control-plane-handler.js\` (\`arm64\` Graviton2) with \`$0.00\` idle cost.
+2. **Ad-Hoc Edge Synthetic Runner Lambda (\`aws-lambda/adhoc-edge-runner.js\`):** Executes DNS-pinned HTTPS probes against Akamai Staging (\`${config.networks.staging.defaultEdgeIp}\`) and Production (\`${config.networks.prod.defaultEdgeIp}\`) only when triggered by an engineer or CI/CD pipeline.
+3. **Run-Once CloudWatch Synthetics Canaries (\`rate(0 minutes)\` & \`start_canaries_on_apply = false\`):** Canary definitions are provisioned for on-demand full Chromium DOM capture, but never loop in the background.
+4. **DynamoDB On-Demand (\`PAY_PER_REQUEST\`) + Cost-Gated Bedrock Nova Lite (\`<= 0.1%\` pixel gate):** Storage and AI evaluation cost \`$0\` when idle or when screenshots match.
 `;
 }
+
+/**
+ * Generates the Scale-to-Zero AWS Lambda handler scripts (`aws-lambda/control-plane-handler.js`
+ * and `aws-lambda/adhoc-edge-runner.js`) for inspection in the UI.
+ */
+export function generateAdhocLambdaScripts(
+  config: TemplateConfig = DEFAULT_TEMPLATE_CONFIG
+): {
+  controlPlaneHandlerJs: string;
+  adhocEdgeRunnerJs: string;
+} {
+  const controlPlaneHandlerJs = `/**
+ * AWS LAMBDA HANDLER: SCALE-TO-ZERO CONTROL PLANE API, OPENAPI 3.1 & MCP SERVER
+ * File: aws-lambda/control-plane-handler.js
+ * Runtime: nodejs20.x (arm64 Graviton2) | Idle Cost: $0.00/hour
+ */
+const { DynamoDBClient, QueryCommand, ScanCommand } = require('@aws-sdk/client-dynamodb');
+const { LambdaClient, InvokeCommand } = require('@aws-sdk/client-lambda');
+const { SyntheticsClient, StartCanaryCommand } = require('@aws-sdk/client-synthetics');
+const { BedrockRuntimeClient, ConverseCommand } = require('@aws-sdk/client-bedrock-runtime');
+
+const REGION = process.env.AWS_REGION || '${config.infrastructure.awsRegion}';
+const DYNAMODB_TABLE = process.env.SYNTHETICS_DYNAMODB_TABLE || '${config.infrastructure.dynamodbTable}';
+const ADHOC_RUNNER_LAMBDA_NAME = process.env.ADHOC_RUNNER_LAMBDA_NAME || 'akamai-gate-adhoc-runner-prod';
+const BEDROCK_MODEL_ID = process.env.BEDROCK_VISUAL_JUDGE_MODEL_ID || '${config.infrastructure.visualJudgeModel}';
+
+exports.handler = async (event) => {
+  const method = event?.requestContext?.http?.method || event?.httpMethod || 'GET';
+  const rawPath = event?.rawPath || event?.path || '/api/v1/health';
+  if (rawPath === '/api/v1/health') {
+    return {
+      statusCode: 200,
+      headers: { 'content-type': 'application/json', 'x-compute-mode': 'aws-lambda-scale-to-zero' },
+      body: JSON.stringify({
+        status: 'HEALTHY',
+        computeArchitecture: 'aws-lambda-adhoc-scale-to-zero',
+        idleHourlyCostUsd: 0.0,
+        awsRegion: REGION,
+        dynamodbTable: DYNAMODB_TABLE,
+        adhocRunnerLambda: ADHOC_RUNNER_LAMBDA_NAME,
+        canaryScheduleMode: 'rate(0 minutes) (Run-Once Ad-Hoc)',
+        bedrockVisualJudge: BEDROCK_MODEL_ID,
+      }),
+    };
+  }
+  return { statusCode: 200, body: JSON.stringify({ ok: true, path: rawPath, method }) };
+};
+`;
+
+  const adhocEdgeRunnerJs = `/**
+ * AWS LAMBDA HANDLER: AD-HOC ON-DEMAND AKAMAI EDGE SYNTHETIC RUNNER
+ * File: aws-lambda/adhoc-edge-runner.js
+ * Runtime: nodejs20.x (arm64 Graviton2) | Idle Cost: $0.00/hour
+ * Pins TLS SNI & Host header to Akamai Staging (${config.networks.staging.defaultEdgeIp})
+ * vs Production (${config.networks.prod.defaultEdgeIp}) on demand.
+ */
+const https = require('https');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { DynamoDBClient, PutItemCommand } = require('@aws-sdk/client-dynamodb');
+
+const REGION = process.env.AWS_REGION || '${config.infrastructure.awsRegion}';
+const STAGING_EDGE_IP = process.env.AKAMAI_STAGING_EDGE_IP || '${config.networks.staging.defaultEdgeIp}';
+const PROD_EDGE_IP = process.env.AKAMAI_PROD_EDGE_IP || '${config.networks.prod.defaultEdgeIp}';
+
+exports.handler = async (event) => {
+  const targetId = event?.targetId || 'www.prod.staging';
+  const [appId = 'www', envId = 'prod', network = 'staging'] = targetId.split('.');
+  const edgeIp = network === 'staging' ? STAGING_EDGE_IP : PROD_EDGE_IP;
+  return {
+    target: targetId,
+    executionEngine: 'aws-lambda-adhoc-scale-to-zero',
+    edgeResolveIp: edgeIp,
+    awsRegion: REGION,
+  };
+};
+`;
+
+  return { controlPlaneHandlerJs, adhocEdgeRunnerJs };
+}
+
 

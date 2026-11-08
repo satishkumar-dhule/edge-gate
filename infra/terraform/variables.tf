@@ -221,7 +221,7 @@ variable "restricted_headers" {
 }
 
 # ----------------------------------------------------------------------------
-# 7. AWS CLOUDWATCH SYNTHETICS CANARY EXECUTION & VIEWPORT SETTINGS
+# 7. AD-HOC CLOUDWATCH SYNTHETICS CANARY EXECUTION & VIEWPORT SETTINGS
 # ----------------------------------------------------------------------------
 variable "synthetics_runtime_version" {
   type        = string
@@ -231,14 +231,14 @@ variable "synthetics_runtime_version" {
 
 variable "start_canaries_on_apply" {
   type        = bool
-  default     = true
-  description = "Automatically start CloudWatch Synthetics canaries immediately after terraform apply"
+  default     = false
+  description = "Keep false for Ad-Hoc / Scale-to-Zero mode ($0 idle cost). Canaries only execute on-demand when triggered via StartCanary"
 }
 
 variable "canary_schedule_expression" {
   type        = string
-  default     = "rate(15 minutes)"
-  description = "CloudWatch Synthetics schedule expression (e.g. rate(15 minutes) or rate(0 minutes) for on-demand only)"
+  default     = "rate(0 minutes)"
+  description = "CloudWatch Synthetics schedule expression: rate(0 minutes) enforces Run-Once / Ad-Hoc on-demand execution with zero recurring background runs"
 }
 
 variable "canary_timeout_seconds" {
@@ -295,7 +295,7 @@ variable "navigation_timeout_ms" {
 variable "log_retention_days" {
   type        = number
   default     = 30
-  description = "CloudWatch Log Group retention in days for Canary execution logs"
+  description = "CloudWatch Log Group retention in days for Lambda and Canary execution logs"
 }
 
 variable "alarm_success_threshold_pct" {
@@ -317,48 +317,146 @@ variable "alarm_notification_email" {
 }
 
 # ----------------------------------------------------------------------------
-# 9. CONTROL PLANE (ECR, APP RUNNER, OPENAPI & MCP SERVER)
+# 9. SCALE-TO-ZERO AWS LAMBDA, API GATEWAY V2 & OPTIONAL APP RUNNER
 # ----------------------------------------------------------------------------
+variable "deploy_serverless_lambda" {
+  type        = bool
+  default     = true
+  description = "Provision Scale-to-Zero ($0/idle) AWS Lambda functions for the Control Plane API/MCP and Ad-Hoc Edge Runner"
+}
+
+variable "lambda_runtime" {
+  type        = string
+  default     = "nodejs20.x"
+  description = "AWS Lambda Node.js runtime version for scale-to-zero Control Plane and Ad-Hoc Edge Runner functions"
+}
+
+variable "lambda_architecture" {
+  type        = string
+  default     = "arm64"
+  description = "AWS Lambda CPU architecture (arm64 Graviton2 provides 20% lower cost and faster cold starts)"
+}
+
+variable "control_plane_lambda_memory_mb" {
+  type        = number
+  default     = 512
+  description = "Memory in MB for the scale-to-zero Control Plane REST/OpenAPI/MCP AWS Lambda function"
+}
+
+variable "control_plane_lambda_timeout_seconds" {
+  type        = number
+  default     = 30
+  description = "Timeout in seconds for the Control Plane AWS Lambda function"
+}
+
+variable "adhoc_runner_lambda_memory_mb" {
+  type        = number
+  default     = 1024
+  description = "Memory in MB for the Ad-Hoc On-Demand Akamai Edge Synthetic Runner AWS Lambda function"
+}
+
+variable "adhoc_runner_lambda_timeout_seconds" {
+  type        = number
+  default     = 60
+  description = "Timeout in seconds for the Ad-Hoc On-Demand Akamai Edge Synthetic Runner AWS Lambda function"
+}
+
+variable "enable_lambda_function_url" {
+  type        = bool
+  default     = true
+  description = "Provision a direct HTTPS AWS Lambda Function URL for the Control Plane API/MCP Lambda ($0 fixed cost)"
+}
+
+variable "enable_apigateway_http_api" {
+  type        = bool
+  default     = true
+  description = "Provision an Amazon API Gateway v2 HTTP API ($default stage) fronting the Control Plane Lambda ($0 fixed cost when idle)"
+}
+
+variable "deploy_cloudfront_distribution" {
+  type        = bool
+  default     = true
+  description = "Provision an Amazon CloudFront Distribution fronting both the S3 React SPA (/*) via Origin Access Control (OAC) and the Scale-to-Zero Control Plane Lambda API (/api/*)"
+}
+
+variable "cloudfront_price_class" {
+  type        = string
+  default     = "PriceClass_100"
+  description = "CloudFront distribution price class (PriceClass_100, PriceClass_200, or PriceClass_All)"
+}
+
+variable "cloudfront_spa_origin_path" {
+  type        = string
+  default     = "/portal-ui"
+  description = "S3 prefix path where the compiled Vite SPA bundle (dist/) is uploaded and served by CloudFront"
+}
+
+variable "initial_operator_users" {
+  type = list(object({
+    email        = string
+    display_name = string
+    role         = string
+  }))
+  default = [
+    {
+      email        = "sre-lead@company.com"
+      display_name = "Principal Edge SRE"
+      role         = "admin"
+    },
+    {
+      email        = "release-bot@company.com"
+      display_name = "CI/CD Release Automation"
+      role         = "operator"
+    },
+    {
+      email        = "qa-auditor@company.com"
+      display_name = "Edge QA Auditor"
+      role         = "viewer"
+    }
+  ]
+  description = "Seeded operator user accounts provisioned into DynamoDB for headless CLI/API user management and activity tracking"
+}
+
 variable "ecr_repository_name" {
   type        = string
   default     = "akamai-synthetic-release-gate"
-  description = "Amazon ECR repository name for the Control Plane container image"
+  description = "Amazon ECR repository name (optional, only used if container deployment is enabled)"
 }
 
 variable "deploy_apprunner_service" {
   type        = bool
   default     = false
-  description = "Set to true after pushing the Docker image to ECR to provision the AWS App Runner Control Plane"
+  description = "Keep false for $0/idle Ad-Hoc Lambda mode. Only set to true if you explicitly want an always-running container"
 }
 
 variable "container_image_tag" {
   type        = string
   default     = "latest"
-  description = "Docker image tag in ECR for the Control Plane service"
+  description = "Docker image tag in ECR for optional container deployment"
 }
 
 variable "apprunner_cpu" {
   type        = string
   default     = "1024"
-  description = "AWS App Runner vCPU allocation (1024 = 1 vCPU, 2048 = 2 vCPU)"
+  description = "AWS App Runner vCPU allocation (only used when deploy_apprunner_service = true)"
 }
 
 variable "apprunner_memory" {
   type        = string
   default     = "2048"
-  description = "AWS App Runner memory allocation in MB (2048 = 2 GB, 4096 = 4 GB)"
+  description = "AWS App Runner memory allocation in MB (only used when deploy_apprunner_service = true)"
 }
 
 variable "apprunner_port" {
   type        = string
   default     = "3000"
-  description = "Container port exposed by the Express + Vite/SPA Control Plane"
+  description = "Port exposed by the Express + Vite/SPA Control Plane"
 }
 
 variable "apprunner_health_check_path" {
   type        = string
   default     = "/api/v1/health"
-  description = "HTTP health check endpoint path for AWS App Runner"
+  description = "HTTP health check endpoint path"
 }
 
 variable "mcp_endpoint_uri" {

@@ -9,6 +9,7 @@ import {
 import {
   buildOpenApiSpec,
   evaluateNovaLiteVisualDiff,
+  generateAdhocLambdaScripts,
   generateArchitectureMarkdown,
   generateBedrockNovaJudgeScript,
   generateEnvConfigFile,
@@ -1153,6 +1154,7 @@ export const McpAndAwsBackendView: React.FC<{
 
   // --- Sub-tab 2: Terraform IaC & AWS Synthetics / Bedrock Nova Lite Files ---
   const tfBundle = generateTerraformBundle(effectiveConfig);
+  const lambdaBundle = generateAdhocLambdaScripts(effectiveConfig);
   const canaryScript = generateSyntheticsCanaryScript(effectiveConfig);
   const bedrockJudgeScript = generateBedrockNovaJudgeScript(effectiveConfig);
   const envFileContent = generateEnvConfigFile(effectiveConfig);
@@ -1161,9 +1163,9 @@ export const McpAndAwsBackendView: React.FC<{
     {
       id: 'main.tf',
       label: 'infra/terraform/main.tf',
-      badge: 'Terraform HCL',
+      badge: 'Terraform HCL ($0/idle)',
       description:
-        'Provisions S3 Artifact Bucket, DynamoDB Run Store, IAM Roles (Synthetics + Bedrock Nova Lite), and CloudWatch Synthetics Canaries across Staging & Prod Edge Networks.',
+        'Provisions Scale-to-Zero AWS Lambda Control Plane + Ad-Hoc Edge Runner, API Gateway v2, Run-Once Canaries (rate(0 minutes)), S3, SSM, DynamoDB On-Demand, and Bedrock Nova Lite IAM.',
       content: tfBundle.mainTf,
     },
     {
@@ -1171,7 +1173,7 @@ export const McpAndAwsBackendView: React.FC<{
       label: 'infra/terraform/variables.tf',
       badge: 'Terraform Vars',
       description:
-        'Input variables for AWS region, S3 bucket, DynamoDB table, Bedrock Nova Lite model ID (amazon.nova-lite-v1:0), Akamai edge networks, and property matrix.',
+        'Input variables for Scale-to-Zero Lambda (arm64 Graviton2), Run-Once Canaries (start_canaries_on_apply=false), S3, DynamoDB, Bedrock Nova Lite (amazon.nova-lite-v1:0), and properties.',
       content: tfBundle.variablesTf,
     },
     {
@@ -1179,7 +1181,7 @@ export const McpAndAwsBackendView: React.FC<{
       label: 'infra/terraform/terraform.tfvars',
       badge: 'Live Topology Vars',
       description:
-        'Auto-generated tfvars synced with your current Portal Properties, Staging/Prod Edge Networks, and AWS Nova Lite judge configuration.',
+        'Auto-generated tfvars synced with your current Portal Properties, Staging/Prod Edge Networks, Scale-to-Zero Lambda settings, and AWS Nova Lite judge configuration.',
       content: tfBundle.tfvars,
     },
     {
@@ -1187,15 +1189,31 @@ export const McpAndAwsBackendView: React.FC<{
       label: 'infra/terraform/outputs.tf',
       badge: 'Terraform Outputs',
       description:
-        'Outputs S3 bucket name/ARN, DynamoDB table ARN, IAM Role ARN, Bedrock Nova Lite ARN, ECR repo URL, and App Runner HTTPS URL.',
+        'Outputs Control Plane Lambda Function URL, API Gateway v2 HTTP API endpoint, Ad-Hoc Edge Runner Lambda name, S3 bucket, DynamoDB table, and SSM Parameter paths.',
       content: tfBundle.outputsTf,
+    },
+    {
+      id: 'control-plane-handler.js',
+      label: 'aws-lambda/control-plane-handler.js',
+      badge: 'Lambda Control Plane',
+      description:
+        'Scale-to-Zero ($0/idle) AWS Lambda handler (nodejs20.x / arm64 Graviton2) serving the REST API (/api/v1/*), OpenAPI 3.1 spec, and MCP JSON-RPC 2.0 server.',
+      content: lambdaBundle.controlPlaneHandlerJs,
+    },
+    {
+      id: 'adhoc-edge-runner.js',
+      label: 'aws-lambda/adhoc-edge-runner.js',
+      badge: 'Lambda Edge Runner',
+      description:
+        'Scale-to-Zero ($0/idle) on-demand AWS Lambda runner that probes Akamai Staging vs Prod edge IPs with TLS SNI pinning and Pragma headers, writing to S3 and DynamoDB.',
+      content: lambdaBundle.adhocEdgeRunnerJs,
     },
     {
       id: 'canary-har-runner.js',
       label: 'aws-synthetics/canary-har-runner.js',
-      badge: 'CloudWatch Canary',
+      badge: 'Run-Once Canary',
       description:
-        'Node.js Puppeteer CloudWatch Synthetics handler using --host-resolver-rules to pin Akamai Staging (.edgekey-staging.net) vs Prod (.edgekey.net), injecting Pragma headers and writing to S3 + DynamoDB.',
+        'Run-Once (rate(0 minutes)) CloudWatch Synthetics Puppeteer handler using --host-resolver-rules to capture full 1440x900 DOM screenshots only when triggered on demand.',
       content: canaryScript,
     },
     {
@@ -1203,7 +1221,7 @@ export const McpAndAwsBackendView: React.FC<{
       label: 'aws-synthetics/bedrock-nova-lite-judge.ts',
       badge: 'Bedrock Nova Lite',
       description:
-        'Multimodal AI Visual Regression Judge invoking Amazon Bedrock Nova Lite (amazon.nova-lite-v1:0) via ConverseCommand with deterministic local fallback.',
+        'Cost-gated Multimodal AI Visual Regression Judge invoking Amazon Bedrock Nova Lite (amazon.nova-lite-v1:0) via ConverseCommand only when pixel diff > 0.1%.',
       content: bedrockJudgeScript,
     },
     {
@@ -1211,7 +1229,7 @@ export const McpAndAwsBackendView: React.FC<{
       label: '.env.example / .env.production',
       badge: 'Env & Networks',
       description:
-        'Environment configuration for Staging & Prod Akamai edge networks, AWS Synthetics S3/DynamoDB, Amazon Bedrock Nova Lite, and OpenAPI/MCP server endpoints.',
+        'Environment configuration for Staging & Prod Akamai edge networks, Scale-to-Zero AWS Lambda, S3/DynamoDB, Amazon Bedrock Nova Lite, and OpenAPI/MCP server endpoints.',
       content: envFileContent,
     },
     {
@@ -1219,7 +1237,7 @@ export const McpAndAwsBackendView: React.FC<{
       label: 'scripts/deploy-aws.sh',
       badge: 'Deploy Script',
       description:
-        'One-command deployment script running terraform init, terraform validate, terraform apply, and optional Docker ECR push + AWS App Runner rollout.',
+        'One-command deployment script running terraform init, terraform validate, and terraform apply to provision the $0/idle Scale-to-Zero AWS Lambda stack.',
       content: tfBundle.deployScript,
     },
     {
@@ -1227,7 +1245,7 @@ export const McpAndAwsBackendView: React.FC<{
       label: 'ARCHITECTURE.md',
       badge: 'System Design',
       description:
-        'Complete system design & architecture documentation covering data flow, 3-dimension diff rules, AWS Terraform IaC, CloudWatch Synthetics, and Bedrock Nova Lite.',
+        'Complete system design & architecture documentation covering Scale-to-Zero AWS Lambda, Run-Once CloudWatch Synthetics, 3-dimension diff rules, and Bedrock Nova Lite.',
       content: generateArchitectureMarkdown(effectiveConfig),
     },
   ];
@@ -1410,16 +1428,16 @@ export const McpAndAwsBackendView: React.FC<{
             <div className="flex items-center justify-between">
               <CardTitle className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                 <Cpu className="w-3.5 h-3.5 text-sky-500" />
-                AWS CloudWatch Synthetics
+                Ad-Hoc AWS Lambda ($0/Idle)
               </CardTitle>
               <Badge variant="success" className="font-mono text-[9px] px-1 py-0">
-                {effectiveConfig.infrastructure.awsRegion}
+                Scale-to-Zero · {effectiveConfig.infrastructure.awsRegion}
               </Badge>
             </div>
           </CardHeader>
           <CardContent className="px-3.5 pb-2.5 space-y-0.5 text-xs">
             <div className="font-mono text-foreground font-semibold truncate">
-              {effectiveConfig.infrastructure.runtimeVersion}
+              Graviton2 arm64 Lambda + Run-Once Canary
             </div>
             <p className="text-muted-foreground text-[11px]">
               Staging <code className="font-mono">{effectiveConfig.networks.staging.defaultEdgeIp}</code>{' '}

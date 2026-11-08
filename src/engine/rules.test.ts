@@ -531,9 +531,9 @@ test('AWS Bedrock Nova Lite judge defaults to amazon.nova-lite-v1:0 and classifi
   assert.equal(sameRes.differences.length, 0);
 });
 
-test('OpenAPI 3.1.0 specification and catalog expose all 8 REST + MCP + Nova Lite endpoints', () => {
+test('OpenAPI 3.1.0 specification and catalog expose all 12 REST + MCP + Nova Lite + Headless User Management/Tracking endpoints', () => {
   const catalog = getOpenApiEndpointCatalog();
-  assert.equal(catalog.length, 8);
+  assert.equal(catalog.length, 12);
 
   const spec = buildOpenApiSpec() as {
     openapi: string;
@@ -543,9 +543,12 @@ test('OpenAPI 3.1.0 specification and catalog expose all 8 REST + MCP + Nova Lit
   assert.ok(spec.paths['/api/v1/health']);
   assert.ok(spec.paths['/api/v1/judge/nova-lite']);
   assert.ok(spec.paths['/api/v1/mcp/rpc']);
+  assert.ok(spec.paths['/api/v1/users']);
+  assert.ok(spec.paths['/api/v1/users/reset-password']);
+  assert.ok(spec.paths['/api/v1/users/stats']);
 });
 
-test('Terraform IaC & AWS Synthetics generators produce valid clone-and-apply HCL, Canary zip packaging, SSM/S3/DynamoDB config seeding, alarms, and env config', () => {
+test('Terraform IaC & AWS Synthetics generators produce valid clone-and-apply HCL, CloudFront Distribution, Canary zip packaging, SSM/S3/DynamoDB config seeding, alarms, and env config', () => {
   const tf = generateTerraformBundle();
   assert.match(tf.mainTf, /aws_synthetics_canary/);
   assert.match(tf.mainTf, /data "archive_file" "canary_zip"/);
@@ -556,16 +559,32 @@ test('Terraform IaC & AWS Synthetics generators produce valid clone-and-apply HC
   assert.match(tf.mainTf, /resource "aws_dynamodb_table_item" "seeded_accepted_rules"/);
   assert.match(tf.mainTf, /resource "aws_cloudwatch_metric_alarm" "canary_failed_alarm"/);
   assert.match(tf.mainTf, /resource "aws_sns_topic" "release_gate_alerts"/);
+  assert.match(tf.mainTf, /resource "aws_lambda_function" "adhoc_edge_runner"/);
+  assert.match(tf.mainTf, /resource "aws_lambda_function" "control_plane_api"/);
+  assert.match(tf.mainTf, /resource "aws_lambda_function_url" "control_plane_url"/);
+  assert.match(tf.mainTf, /resource "aws_apigatewayv2_api" "control_plane_http_api"/);
+  assert.match(tf.mainTf, /resource "aws_cloudfront_origin_access_control" "portal_oac"/);
+  assert.match(tf.mainTf, /resource "aws_cloudfront_distribution" "portal_cdn"/);
+  assert.match(tf.mainTf, /path_pattern\s*=\s*"\/api\/\*"/);
   assert.match(tf.mainTf, /resource "local_file" "dotenv_terraform"/);
   assert.match(tf.mainTf, /nodejs\/node_modules\/canary-har-runner\.js/);
   assert.match(tf.mainTf, /data\.aws_caller_identity\.current\.account_id/);
   assert.match(tf.mainTf, /amazon\.nova-lite-v1:0/);
   assert.match(tf.variablesTf, /variable "bedrock_nova_lite_model_id"/);
+  assert.match(tf.variablesTf, /variable "deploy_serverless_lambda"/);
+  assert.match(tf.variablesTf, /variable "deploy_cloudfront_distribution"/);
   assert.match(tf.variablesTf, /variable "test_suite"/);
   assert.match(tf.variablesTf, /variable "accepted_diff_rules"/);
   assert.match(tf.tfvars, /bedrock_nova_lite_model_id\s*=\s*"amazon\.nova-lite-v1:0"/);
+  assert.match(tf.tfvars, /deploy_cloudfront_distribution\s*=\s*true/);
+  assert.match(tf.tfvars, /start_canaries_on_apply\s*=\s*false/);
+  assert.match(tf.tfvars, /canary_schedule_expression\s*=\s*"rate\(0 minutes\)"/);
   assert.match(tf.tfvars, /test_suite\s*=/);
   assert.match(tf.outputsTf, /output "s3_artifact_bucket_name"/);
+  assert.match(tf.outputsTf, /output "control_plane_lambda_function_url"/);
+  assert.match(tf.outputsTf, /output "apigateway_http_api_endpoint"/);
+  assert.match(tf.outputsTf, /output "cloudfront_distribution_id"/);
+  assert.match(tf.outputsTf, /output "cloudfront_portal_url"/);
   assert.match(tf.outputsTf, /output "ssm_parameter_names"/);
 
   const canary = generateSyntheticsCanaryScript();
@@ -677,6 +696,118 @@ test('Release Gate Plugin Pipeline & AI Agent Skills Registry evaluate plugins a
   assert.match(prompt, /src\/config\/template\.config\.ts/);
   assert.match(prompt, /infra\/terraform\/terraform\.tfvars\.example/);
 });
+
+// ---------------------------------------------------------------------------
+// 10. Headless User Administration, Password Reset & Activity Tracking Engine
+// ---------------------------------------------------------------------------
+import { UserManager, hashUserPassword, verifyUserPassword } from './userManager';
+
+test('UserManager supports user creation, PBKDF2 password hashing, password reset, auth, status toggles, and activity tracking stats', () => {
+  const mgr = new UserManager({ persistToFile: false });
+
+  // 1. Seeded users exist and never expose passwordHash in public view
+  const initialUsers = mgr.listUsers();
+  assert.equal(initialUsers.length, 3);
+  assert.ok(
+    initialUsers.some(
+      (u) => u.email === DEFAULT_TEMPLATE_CONFIG.branding.defaultOperator.email
+    )
+  );
+  assert.equal(
+    'passwordHash' in (initialUsers[0] as unknown as Record<string, unknown>),
+    false
+  );
+
+  // 2. Cryptographic PBKDF2-HMAC-SHA256 verification
+  const { salt, hash } = hashUserPassword('SuperSecret#2026');
+  assert.equal(verifyUserPassword('SuperSecret#2026', salt, hash), true);
+  assert.equal(verifyUserPassword('WrongPassword#2026', salt, hash), false);
+
+  // 3. Create new user
+  const created = mgr.createUser({
+    email: 'new-sre@company.com',
+    name: 'New Edge SRE',
+    role: 'Staff Edge SRE',
+    password: 'InitialPassword#123',
+    actor: 'cli-admin',
+    source: 'cli',
+  });
+  assert.equal(created.email, 'new-sre@company.com');
+  assert.equal(created.role, 'Staff Edge SRE');
+  assert.equal(created.status, 'active');
+
+  // 4. Authenticate with initial password
+  const authOk = mgr.authenticateUser({
+    email: 'new-sre@company.com',
+    password: 'InitialPassword#123',
+    source: 'cli',
+  });
+  assert.equal(authOk.authenticated, true);
+  assert.ok(authOk.sessionToken?.startsWith('akg_sess_'));
+
+  // 5. Reset password and verify old password fails while new password succeeds
+  const resetRes = mgr.resetPassword({
+    email: 'new-sre@company.com',
+    newPassword: 'RotatedPassword#999',
+    actor: 'cli-admin',
+    source: 'cli',
+  });
+  assert.equal(resetRes.passwordResetCount, 1);
+
+  const oldAuth = mgr.authenticateUser({
+    email: 'new-sre@company.com',
+    password: 'InitialPassword#123',
+    source: 'cli',
+  });
+  assert.equal(oldAuth.authenticated, false);
+
+  const newAuth = mgr.authenticateUser({
+    email: 'new-sre@company.com',
+    password: 'RotatedPassword#999',
+    source: 'cli',
+  });
+  assert.equal(newAuth.authenticated, true);
+
+  // 6. Track user actions and verify aggregated stats
+  mgr.trackUserAction({
+    email: 'new-sre@company.com',
+    action: 'SYNTHETIC_RUN_TRIGGERED',
+    target: 'www.prod.staging',
+    source: 'cli',
+  });
+  mgr.trackUserAction({
+    email: 'new-sre@company.com',
+    action: 'COMPARISON_EVALUATED',
+    target: 'www.prod.staging vs www.prod.prod',
+    source: 'cli',
+  });
+
+  const stats = mgr.getStatsSummary();
+  assert.equal(stats.totalUsers, 4);
+  const trackedUser = stats.users.find((u) => u.email === 'new-sre@company.com')!;
+  assert.equal(trackedUser.stats.runsTriggered, 1);
+  assert.equal(trackedUser.stats.comparisonsEvaluated, 1);
+  assert.equal(trackedUser.stats.loginCount, 2);
+  assert.equal(trackedUser.stats.passwordResetCount, 1);
+
+  // 7. Disable user -> authentication blocked
+  mgr.updateUserStatusOrRole({
+    email: 'new-sre@company.com',
+    status: 'disabled',
+  });
+  const disabledAuth = mgr.authenticateUser({
+    email: 'new-sre@company.com',
+    password: 'RotatedPassword#999',
+    source: 'cli',
+  });
+  assert.equal(disabledAuth.authenticated, false);
+
+  // 8. Delete user
+  const deleted = mgr.deleteUser('new-sre@company.com');
+  assert.equal(deleted, true);
+  assert.equal(mgr.listUsers().length, 3);
+});
+
 
 
 

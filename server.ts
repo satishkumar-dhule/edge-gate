@@ -20,6 +20,11 @@ import {
   evaluatePluginPipeline,
   generateAiAgentAdaptationBundle,
 } from './src/engine/pluginRegistry';
+import {
+  defaultUserManager,
+  type UserActionType,
+  type UserStatus,
+} from './src/engine/userManager';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,20 +38,40 @@ async function startServer() {
   // In-memory server run store (seeded from DEFAULT_TEMPLATE_CONFIG, updated on POST /api/v1/runs/trigger)
   let serverRuns = [...INITIAL_RUNS];
 
+  // Helper to resolve operator email from request headers/body for user tracking
+  const resolveOperatorEmail = (req: express.Request): string => {
+    const headerEmail = req.headers['x-operator-email'];
+    if (typeof headerEmail === 'string' && headerEmail.trim()) {
+      return headerEmail.trim().toLowerCase();
+    }
+    if (typeof req.body?.userEmail === 'string' && req.body.userEmail.trim()) {
+      return req.body.userEmail.trim().toLowerCase();
+    }
+    if (typeof req.body?.email === 'string' && req.body.email.trim()) {
+      return req.body.email.trim().toLowerCase();
+    }
+    if (typeof req.body?.by === 'string' && req.body.by.includes('@')) {
+      return req.body.by.trim().toLowerCase();
+    }
+    return DEFAULT_TEMPLATE_CONFIG.branding.defaultOperator.email;
+  };
+
   // 1. OpenAPI 3.1.0 Specification JSON
   app.get('/api/v1/openapi.json', (_req, res) => {
     res.json(buildOpenApiSpec(DEFAULT_TEMPLATE_CONFIG));
   });
 
-  // 2. Control Plane, AWS Synthetics & Bedrock Nova Lite Health
+  // 2. Control Plane, AWS Synthetics, CloudFront & Bedrock Nova Lite Health
   app.get('/api/v1/health', (_req, res) => {
     const awsLive = Boolean(
       process.env.AWS_EXECUTION_ENV || process.env.AWS_ACCESS_KEY_ID
     );
+    const userStats = defaultUserManager.getStatsSummary();
     res.json({
       status: 'HEALTHY',
       service: DEFAULT_TEMPLATE_CONFIG.branding.controlPlaneTitle,
       executionMode: awsLive ? 'aws-production' : 'local-seed-fallback',
+      deploymentTopology: 'cloudfront-s3-oac-plus-lambda-apigw-v2',
       awsRegion:
         process.env.AWS_REGION || DEFAULT_TEMPLATE_CONFIG.infrastructure.awsRegion,
       syntheticsRuntime:
@@ -68,6 +93,12 @@ async function startServer() {
       },
       networks: DEFAULT_TEMPLATE_CONFIG.networks,
       totalIndexedRuns: serverRuns.length,
+      userSummary: {
+        totalUsers: userStats.totalUsers,
+        activeUsers: userStats.activeUsers,
+        totalRunsTriggeredAcrossUsers: userStats.totalRunsTriggeredAcrossUsers,
+        totalAuditEvents: userStats.totalAuditEvents,
+      },
       timestamp: new Date().toISOString(),
     });
   });
@@ -117,6 +148,7 @@ async function startServer() {
       (req.body?.targetId as string) ||
       (req.body?.target as string) ||
       'www.prod.staging';
+    const operatorEmail = resolveOperatorEmail(req);
     const [appId = 'www', envId = 'prod', net = 'staging'] = targetId.split('.');
     const network = (net === 'staging' ? 'staging' : 'prod') as 'staging' | 'prod';
     const prevRun = serverRuns.find((r) => r.target === targetId);
@@ -146,7 +178,7 @@ async function startServer() {
       totalTests: results.length,
       passedTests: results.filter((r) => r.pass).length,
       failedTests: results.filter((r) => !r.pass).length,
-      by: 'aws-synthetics-api',
+      by: operatorEmail,
       label: `run #${runNum}`,
       results,
     };
@@ -156,6 +188,17 @@ async function startServer() {
     const comparison = prevRun
       ? buildInitialComparison(newRun, prevRun, 'network')
       : null;
+
+    defaultUserManager.trackUserAction({
+      email: operatorEmail,
+      action: 'SYNTHETIC_RUN_TRIGGERED',
+      target: targetId,
+      source: req.body?.source === 'cli' ? 'cli' : 'rest-api',
+      metadata: {
+        runKey: key,
+        verdict: comparison?.headlineVerdict || 'GO',
+      },
+    });
 
     res.json({
       dispatched: true,
@@ -176,6 +219,7 @@ async function startServer() {
       (req.body?.candidateTarget as string) || 'www.prod.staging';
     const baselineTarget =
       (req.body?.baselineTarget as string) || 'www.prod.prod';
+    const operatorEmail = resolveOperatorEmail(req);
     const candRun =
       serverRuns.find((r) => r.target === candidateTarget) || serverRuns[0];
     const baseRun =
@@ -184,6 +228,17 @@ async function startServer() {
       serverRuns[0];
     const kind = candRun.envId === baseRun.envId ? 'network' : 'env';
     const comp = buildInitialComparison(candRun, baseRun, kind);
+
+    defaultUserManager.trackUserAction({
+      email: operatorEmail,
+      action: 'COMPARISON_EVALUATED',
+      target: `${candidateTarget} vs ${baselineTarget}`,
+      source: req.body?.source === 'cli' ? 'cli' : 'rest-api',
+      metadata: {
+        comparisonId: comp.comparisonId,
+        headlineVerdict: comp.headlineVerdict,
+      },
+    });
 
     res.json({
       comparisonId: comp.comparisonId,
@@ -210,12 +265,21 @@ async function startServer() {
       (req.body?.candidateTarget as string) || 'www.prod.staging';
     const baselineTarget =
       (req.body?.baselineTarget as string) || 'www.prod.prod';
+    const operatorEmail = resolveOperatorEmail(req);
     const pixelDiffPercent =
       typeof req.body?.pixelDiffPercent === 'number'
         ? req.body.pixelDiffPercent
         : testId === 'T03'
         ? 1.8
         : 0.04;
+
+    defaultUserManager.trackUserAction({
+      email: operatorEmail,
+      action: 'VISUAL_JUDGE_INVOKED',
+      target: `${testId}:${candidateTarget}`,
+      source: 'rest-api',
+      metadata: { testId, pixelDiffPercent },
+    });
 
     if (req.body?.sideABase64Png && req.body?.sideBBase64Png) {
       try {
@@ -269,6 +333,15 @@ async function startServer() {
     const toolName =
       req.body?.params?.name || req.body?.tool || 'evaluate_visual_diff_nova_lite';
     const args = req.body?.params?.arguments || req.body?.params || {};
+    const operatorEmail = resolveOperatorEmail(req);
+
+    defaultUserManager.trackUserAction({
+      email: operatorEmail,
+      action: 'MCP_TOOL_INVOKED',
+      target: toolName,
+      source: 'mcp',
+      metadata: { toolName },
+    });
 
     if (toolName === 'list_akamai_properties') {
       res.json({
@@ -283,6 +356,15 @@ async function startServer() {
           })),
           totalRunsIndexed: serverRuns.length,
         },
+      });
+      return;
+    }
+
+    if (toolName === 'get_user_stats' || toolName === 'list_users') {
+      res.json({
+        jsonrpc: '2.0',
+        id: rpcId,
+        result: defaultUserManager.getStatsSummary(args.email),
       });
       return;
     }
@@ -422,6 +504,127 @@ async function startServer() {
       enabledPluginIds: body.enabledPluginIds,
     });
     res.json(report);
+  });
+
+  // ==========================================================================
+  // 13. HEADLESS USER MANAGEMENT, PASSWORD RESET & USER TRACKING API (CLI/API)
+  // ==========================================================================
+
+  // 13a. List All Users (No password hashes exposed)
+  app.get('/api/v1/users', (_req, res) => {
+    const users = defaultUserManager.listUsers();
+    res.json({
+      total: users.length,
+      users,
+    });
+  });
+
+  // 13b. Create New User
+  app.post('/api/v1/users', (req, res) => {
+    try {
+      const created = defaultUserManager.createUser({
+        email: req.body?.email || '',
+        name: req.body?.displayName || req.body?.name,
+        role: req.body?.role || 'Edge Release Engineer',
+        account: req.body?.account,
+        password: req.body?.password || '',
+        actor: req.body?.actorEmail || resolveOperatorEmail(req),
+        source: 'rest-api',
+      });
+      res.status(201).json({
+        created: true,
+        user: created,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to create user';
+      res.status(400).json({ created: false, error: message });
+    }
+  });
+
+  // 13c. Reset User Password
+  app.post('/api/v1/users/reset-password', (req, res) => {
+    try {
+      const result = defaultUserManager.resetPassword({
+        email: req.body?.emailOrId || req.body?.email || '',
+        newPassword: req.body?.newPassword || req.body?.password || '',
+        mustChangePassword: Boolean(req.body?.mustChangePassword),
+        actor: req.body?.actorEmail || resolveOperatorEmail(req),
+        source: 'rest-api',
+      });
+      res.json({
+        reset: true,
+        ...result,
+      });
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to reset user password';
+      res.status(400).json({ reset: false, error: message });
+    }
+  });
+
+  // 13d. Update User Status (active/disabled/locked) or Role
+  app.post('/api/v1/users/status', (req, res) => {
+    try {
+      const updated = defaultUserManager.updateUserStatusOrRole({
+        email: req.body?.emailOrId || req.body?.email || '',
+        status: req.body?.status as UserStatus | undefined,
+        role: req.body?.role,
+        actor: req.body?.actorEmail || resolveOperatorEmail(req),
+        source: 'rest-api',
+      });
+      res.json({
+        updated: true,
+        user: updated,
+      });
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to update user status';
+      res.status(400).json({ updated: false, error: message });
+    }
+  });
+
+  // 13e. Delete User
+  app.delete('/api/v1/users/:emailOrId', (req, res) => {
+    const email = decodeURIComponent(req.params.emailOrId);
+    const deleted = defaultUserManager.deleteUser(
+      email,
+      resolveOperatorEmail(req),
+      'rest-api'
+    );
+    if (!deleted) {
+      res.status(404).json({ deleted: false, error: `User ${email} not found` });
+      return;
+    }
+    res.json({ deleted: true, email });
+  });
+
+  // 13f. Authenticate User (Verify Password & Record Session Token + Tracking)
+  app.post('/api/v1/users/authenticate', (req, res) => {
+    const result = defaultUserManager.authenticateUser({
+      email: req.body?.email || '',
+      password: req.body?.password || '',
+      source: req.body?.source === 'cli' ? 'cli' : 'rest-api',
+    });
+    res.status(result.authenticated ? 200 : 401).json(result);
+  });
+
+  // 13g. Track Custom User Action
+  app.post('/api/v1/users/track', (req, res) => {
+    const user = defaultUserManager.trackUserAction({
+      email: req.body?.userEmail || req.body?.email || resolveOperatorEmail(req),
+      action: (req.body?.action as UserActionType) || 'SYNTHETIC_RUN_TRIGGERED',
+      target: req.body?.target || 'www.prod.staging',
+      source: req.body?.source === 'cli' ? 'cli' : 'rest-api',
+      metadata: req.body?.metadata,
+    });
+    res.status(201).json({ tracked: true, user });
+  });
+
+  // 13h. User Tracking Statistics & Audit Log Summary
+  app.get('/api/v1/users/stats', (req, res) => {
+    const emailFilter =
+      typeof req.query.email === 'string' ? req.query.email : undefined;
+    res.json(defaultUserManager.getStatsSummary(emailFilter));
   });
 
   // Vite Middleware (Development) or Static Dist (Production)

@@ -1,0 +1,198 @@
+{
+  "users": {
+    "satishkumardhule@gmail.com": {
+      "userId": "usr-01-principal",
+      "email": "satishkumardhule@gmail.com",
+      "name": "Principal Edge Architect",
+      "role": "Principal Edge SRE",
+      "account": "B-C-1AKAMAI-ENT (Enterprise Production)",
+      "status": "active",
+      "passwordHash": "9330151fc32223a44c3f76b29565c4d1085ec2ba56d33bf686534233bd4840d8",
+      "passwordSalt": "7d9cf5a7054c8d87f48437c96f9e49c3",
+      "mustChangePassword": false,
+      "createdAt": "2026-10-01T08:00:00.000Z",
+      "updatedAt": "2026-11-08T04:00:00.000Z",
+      "passwordUpdatedAt": "2026-10-15T10:00:00.000Z",
+      "stats": {
+        "runsTriggered": 18,
+        "comparisonsEvaluated": 24,
+        "visualJudgeInvocations": 9,
+        "mcpToolCalls": 14,
+        "cliCommandsRun": 11,
+        "loginCount": 32,
+        "failedLoginCount": 0,
+        "passwordResetCount": 1,
+        "lastActiveAt": "2026-11-08T04:00:00.000Z",
+        "lastLoginAt": "2026-11-08T04:00:00.000Z",
+        "lastTargetEvaluated": "www.prod.staging"
+      }
+    },
+    "sre-oncall@company.com": {
+      "userId": "usr-02-sre-oncall",
+      "email": "sre-oncall@company.com",
+      "name": "Edge SRE On-Call",
+      "role": "Staff Edge Reliability Engineer",
+      "account": "B-C-1AKAMAI-ENT (Enterprise Production)",
+      "status": "active",
+      "passwordHash": "0e63e46470616a990b325b014f0c3d7fd292f8c2917431d2c031651fe6082512",
+      "passwordSalt": "7d720fd3c754a41574c3f26b409a2930",
+      "mustChangePassword": false,
+      "createdAt": "2026-10-05T09:30:00.000Z",
+      "updatedAt": "2026-11-08T04:00:00.000Z",
+      "passwordUpdatedAt": "2026-10-05T09:30:00.000Z",
+      "stats": {
+        "runsTriggered": 12,
+        "comparisonsEvaluated": 15,
+        "visualJudgeInvocations": 4,
+        "mcpToolCalls": 6,
+        "cliCommandsRun": 19,
+        "loginCount": 14,
+        "failedLoginCount": 1,
+        "passwordResetCount": 0,
+        "lastActiveAt": "2026-11-08T03:45:00.000Z",
+        "lastLoginAt": "2026-11-08T02:10:00.000Z",
+        "lastTargetEvaluated": "checkout.prod.staging"
+      }
+    },
+    "release-bot@company.com": {
+      "userId": "usr-03-cicd-bot",
+      "email": "release-bot@company.com",
+      "name": "GitHub Actions / Terraform Release Bot",
+      "role": "Automated CI/CD Service Account",
+      "account": "B-C-1AKAMAI-ENT (Enterprise Production)",
+      "status": "active",
+      "passwordHash": "2fd75204b621d1d265fc9e8c54179dafbf7d3b2836333f388bcbe8aca2e70d63",
+      "passwordSalt": "766d5f4631cd605b264c48733df0d26d",
+      "mustChangePassword": false,
+      "createdAt": "2026-10-10T12:00:00.000Z",
+      "updatedAt": "2026-11-08T04:00:00.000Z",
+      "passwordUpdatedAt": "2026-10-10T12:00:00.000Z",
+      "stats": {
+        "runsTriggered": 42,
+        "comparisonsEvaluated": 42,
+        "visualJudgeInvocations": 12,
+        "mcpToolCalls": 30,
+        "cliCommandsRun": 42,
+        "loginCount": 42,
+        "failedLoginCount": 0,
+        "passwordResetCount": 0,
+        "lastActiveAt": "2026-11-08T04:15:00.000Z",
+        "lastLoginAt": "2026-11-08T04:15:00.000Z",
+        "lastTargetEvaluated": "api.prod.staging"
+      }
+    }
+  },
+  "auditEvents": [
+    {
+      "eventId": "evt-1794145985941-e88f",
+      "timestamp": "2026-11-08T13:53:05.941Z",
+      "email": "cli-tester@company.com",
+      "action": "USER_STATUS_CHANGED",
+      "actor": "cli-admin",
+      "source": "cli",
+      "metadata": {
+        "deleted": true
+      }
+    },
+    {
+      "eventId": "evt-1794145984191-8524",
+      "timestamp": "2026-11-08T13:53:04.191Z",
+      "email": "cli-tester@company.com",
+      "action": "COMPARISON_EVALUATED",
+      "target": "www.prod.staging vs www.prod.prod",
+      "actor": "cli-tester@company.com",
+      "source": "cli",
+      "metadata": {
+        "verdict": "NO-GO",
+        "functionalDiffs": 2
+      }
+    },
+    {
+      "eventId": "evt-1794145983283-4e92",
+      "timestamp": "2026-11-08T13:53:03.283Z",
+      "email": "cli-tester@company.com",
+      "action": "SYNTHETIC_RUN_TRIGGERED",
+      "target": "www.prod.staging",
+      "actor": "cli-tester@company.com",
+      "source": "cli",
+      "metadata": {
+        "passed": 8,
+        "total": 8
+      }
+    },
+    {
+      "eventId": "evt-1794145982522-b9c8",
+      "timestamp": "2026-11-08T13:53:02.522Z",
+      "email": "cli-tester@company.com",
+      "action": "USER_LOGIN",
+      "actor": "cli-tester@company.com",
+      "source": "cli",
+      "metadata": {
+        "loginCount": 1
+      }
+    },
+    {
+      "eventId": "evt-1794145981661-3ea9",
+      "timestamp": "2026-11-08T13:53:01.661Z",
+      "email": "cli-tester@company.com",
+      "action": "PASSWORD_RESET",
+      "actor": "cli-admin",
+      "source": "cli",
+      "metadata": {
+        "passwordResetCount": 1,
+        "mustChangePassword": false
+      }
+    },
+    {
+      "eventId": "evt-1794145980747-f76e",
+      "timestamp": "2026-11-08T13:53:00.747Z",
+      "email": "cli-tester@company.com",
+      "action": "USER_CREATED",
+      "actor": "cli-admin",
+      "source": "cli",
+      "metadata": {
+        "role": "Staff Edge SRE",
+        "account": "B-C-1AKAMAI-ENT (Enterprise Production)"
+      }
+    },
+    {
+      "eventId": "evt-init-1",
+      "timestamp": "2026-11-08T04:15:00.000Z",
+      "email": "release-bot@company.com",
+      "action": "SYNTHETIC_RUN_TRIGGERED",
+      "target": "api.prod.staging",
+      "actor": "release-bot@company.com",
+      "source": "cli",
+      "metadata": {
+        "engine": "aws-lambda-adhoc",
+        "passRatePct": 100
+      }
+    },
+    {
+      "eventId": "evt-init-2",
+      "timestamp": "2026-11-08T04:00:00.000Z",
+      "email": "satishkumardhule@gmail.com",
+      "action": "COMPARISON_EVALUATED",
+      "target": "www.prod.staging vs www.prod.prod",
+      "actor": "satishkumardhule@gmail.com",
+      "source": "rest-api",
+      "metadata": {
+        "verdict": "NO-GO",
+        "functionalDiffs": 2
+      }
+    },
+    {
+      "eventId": "evt-init-3",
+      "timestamp": "2026-11-08T03:45:00.000Z",
+      "email": "sre-oncall@company.com",
+      "action": "VISUAL_JUDGE_INVOKED",
+      "target": "T03 (www.prod.staging)",
+      "actor": "sre-oncall@company.com",
+      "source": "mcp",
+      "metadata": {
+        "model": "amazon.nova-lite-v1:0",
+        "pixelDiffPct": 1.8
+      }
+    }
+  ]
+}

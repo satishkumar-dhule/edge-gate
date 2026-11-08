@@ -509,13 +509,14 @@ resource "aws_iam_role_policy" "synthetics_bedrock_s3_policy" {
         Resource = [aws_sns_topic.release_gate_alerts.arn]
       },
       {
-        Sid    = "CloudWatchSyntheticsControlAndMetrics"
+        Sid    = "CloudWatchSyntheticsAndLambdaControl"
         Effect = "Allow"
         Action = [
           "cloudwatch:PutMetricData",
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
           "logs:PutLogEvents",
+          "lambda:InvokeFunction",
           "synthetics:StartCanary",
           "synthetics:StopCanary",
           "synthetics:GetCanary",
@@ -531,7 +532,7 @@ resource "aws_iam_role_policy" "synthetics_bedrock_s3_policy" {
 }
 
 # ============================================================================
-# 8. AWS CLOUDWATCH SYNTHETICS CANARIES, LOG GROUPS & METRIC ALARMS
+# 8. AD-HOC / RUN-ONCE CLOUDWATCH SYNTHETICS CANARIES, LOG GROUPS & ALARMS
 # ============================================================================
 resource "aws_cloudwatch_log_group" "canary_logs" {
   for_each          = { for t in local.canary_targets : t.key => t }
@@ -623,9 +624,373 @@ resource "aws_cloudwatch_metric_alarm" "canary_failed_alarm" {
 }
 
 # ============================================================================
-# 9. AMAZON ECR REPOSITORY & AWS APP RUNNER CONTROL PLANE SERVICE
+# 9. SCALE-TO-ZERO AWS LAMBDA FUNCTIONS & API GATEWAY V2 ($0/IDLE AD-HOC MODE)
+# ============================================================================
+data "archive_file" "adhoc_runner_lambda_zip" {
+  type        = "zip"
+  output_path = "${path.module}/.terraform/tmp/adhoc-edge-runner.zip"
+
+  source {
+    content  = file("${path.module}/../../aws-lambda/adhoc-edge-runner.js")
+    filename = "adhoc-edge-runner.js"
+  }
+}
+
+data "archive_file" "control_plane_lambda_zip" {
+  type        = "zip"
+  output_path = "${path.module}/.terraform/tmp/control-plane-handler.zip"
+
+  source {
+    content  = file("${path.module}/../../aws-lambda/control-plane-handler.js")
+    filename = "control-plane-handler.js"
+  }
+}
+
+resource "aws_cloudwatch_log_group" "adhoc_runner_logs" {
+  count             = var.deploy_serverless_lambda ? 1 : 0
+  name              = "/aws/lambda/${var.project_name}-adhoc-runner-${var.environment}"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_lambda_function" "adhoc_edge_runner" {
+  count            = var.deploy_serverless_lambda ? 1 : 0
+  function_name    = "${var.project_name}-adhoc-runner-${var.environment}"
+  description      = "Scale-to-zero ($0/idle) on-demand Akamai Staging vs Prod edge synthetic runner"
+  role             = aws_iam_role.synthetics_canary_role.arn
+  handler          = "adhoc-edge-runner.handler"
+  runtime          = var.lambda_runtime
+  architectures    = [var.lambda_architecture]
+  filename         = data.archive_file.adhoc_runner_lambda_zip.output_path
+  source_code_hash = data.archive_file.adhoc_runner_lambda_zip.output_base64sha256
+  memory_size      = var.adhoc_runner_lambda_memory_mb
+  timeout          = var.adhoc_runner_lambda_timeout_seconds
+
+  environment {
+    variables = {
+      ENVIRONMENT                = var.environment
+      S3_ARTIFACT_BUCKET         = aws_s3_bucket.synthetics_artifacts.id
+      DYNAMODB_RUNS_TABLE        = aws_dynamodb_table.release_gate_runs.name
+      DEFAULT_DOMAIN             = var.default_domain
+      AKAMAI_STAGING_EDGE_SUFFIX = var.staging_edge_suffix
+      AKAMAI_STAGING_EDGE_IP     = var.staging_edge_ip
+      AKAMAI_PROD_EDGE_SUFFIX    = var.prod_edge_suffix
+      AKAMAI_PROD_EDGE_IP        = var.prod_edge_ip
+      AKAMAI_PRAGMA_HEADERS      = join(",", var.akamai_pragma_headers)
+      CANARY_USER_AGENT          = var.canary_user_agent
+      NAVIGATION_TIMEOUT_MS      = tostring(var.navigation_timeout_ms)
+      SUITE_CHECKS_JSON          = jsonencode(local.enabled_test_suite)
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.synthetics_bedrock_s3_policy,
+    aws_cloudwatch_log_group.adhoc_runner_logs
+  ]
+}
+
+resource "aws_cloudwatch_log_group" "control_plane_logs" {
+  count             = var.deploy_serverless_lambda ? 1 : 0
+  name              = "/aws/lambda/${var.project_name}-control-plane-${var.environment}"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_lambda_function" "control_plane_api" {
+  count            = var.deploy_serverless_lambda ? 1 : 0
+  function_name    = "${var.project_name}-control-plane-${var.environment}"
+  description      = "Scale-to-zero ($0/idle) Control Plane REST API, OpenAPI 3.1 & MCP JSON-RPC Server"
+  role             = aws_iam_role.synthetics_canary_role.arn
+  handler          = "control-plane-handler.handler"
+  runtime          = var.lambda_runtime
+  architectures    = [var.lambda_architecture]
+  filename         = data.archive_file.control_plane_lambda_zip.output_path
+  source_code_hash = data.archive_file.control_plane_lambda_zip.output_base64sha256
+  memory_size      = var.control_plane_lambda_memory_mb
+  timeout          = var.control_plane_lambda_timeout_seconds
+
+  environment {
+    variables = {
+      NODE_ENV                         = "production"
+      ENVIRONMENT                      = var.environment
+      COMPUTE_ARCHITECTURE             = "aws-lambda-scale-to-zero"
+      SYNTHETICS_S3_BUCKET             = aws_s3_bucket.synthetics_artifacts.id
+      SYNTHETICS_DYNAMODB_TABLE        = aws_dynamodb_table.release_gate_runs.name
+      PORTAL_CONFIG_S3_KEY             = aws_s3_object.portal_runtime_config.key
+      SSM_CONFIG_PARAMETER             = aws_ssm_parameter.portal_runtime_config.name
+      ADHOC_RUNNER_LAMBDA_NAME         = aws_lambda_function.adhoc_edge_runner[0].function_name
+      BEDROCK_VISUAL_JUDGE_MODEL_ID    = var.bedrock_nova_lite_model_id
+      BEDROCK_VISUAL_JUDGE_MODEL_ARN   = local.bedrock_model_arn
+      VISUAL_JUDGE_COST_GATE_PCT       = tostring(var.visual_judge_pixel_cost_gate_pct)
+      VISUAL_JUDGE_MINOR_THRESHOLD_PCT = tostring(var.visual_judge_minor_threshold_pct)
+      DEFAULT_DOMAIN                   = var.default_domain
+      AKAMAI_STAGING_EDGE_SUFFIX       = var.staging_edge_suffix
+      AKAMAI_STAGING_EDGE_IP           = var.staging_edge_ip
+      AKAMAI_PROD_EDGE_SUFFIX          = var.prod_edge_suffix
+      AKAMAI_PROD_EDGE_IP              = var.prod_edge_ip
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.synthetics_bedrock_s3_policy,
+    aws_cloudwatch_log_group.control_plane_logs,
+    aws_lambda_function.adhoc_edge_runner
+  ]
+}
+
+resource "aws_lambda_function_url" "control_plane_url" {
+  count              = var.deploy_serverless_lambda && var.enable_lambda_function_url ? 1 : 0
+  function_name      = aws_lambda_function.control_plane_api[0].function_name
+  authorization_type = "NONE"
+
+  cors {
+    allow_credentials = false
+    allow_origins     = ["*"]
+    allow_methods     = ["*"]
+    allow_headers     = ["content-type", "authorization"]
+    max_age           = 86400
+  }
+}
+
+resource "aws_apigatewayv2_api" "control_plane_http_api" {
+  count         = var.deploy_serverless_lambda && var.enable_apigateway_http_api ? 1 : 0
+  name          = "${var.project_name}-http-api-${var.environment}"
+  protocol_type = "HTTP"
+  description   = "Scale-to-zero ($0/idle) HTTP API v2 fronting the Akamai Release Gate Control Plane & MCP Lambda"
+
+  cors_configuration {
+    allow_origins = ["*"]
+    allow_methods = ["GET", "POST", "OPTIONS"]
+    allow_headers = ["content-type", "authorization"]
+    max_age       = 86400
+  }
+}
+
+resource "aws_apigatewayv2_integration" "lambda_integration" {
+  count                  = var.deploy_serverless_lambda && var.enable_apigateway_http_api ? 1 : 0
+  api_id                 = aws_apigatewayv2_api.control_plane_http_api[0].id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.control_plane_api[0].invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "default_route" {
+  count     = var.deploy_serverless_lambda && var.enable_apigateway_http_api ? 1 : 0
+  api_id    = aws_apigatewayv2_api.control_plane_http_api[0].id
+  route_key = "$default"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration[0].id}"
+}
+
+resource "aws_apigatewayv2_stage" "default_stage" {
+  count       = var.deploy_serverless_lambda && var.enable_apigateway_http_api ? 1 : 0
+  api_id      = aws_apigatewayv2_api.control_plane_http_api[0].id
+  name        = "$default"
+  auto_deploy = true
+}
+
+resource "aws_lambda_permission" "apigw_invoke" {
+  count         = var.deploy_serverless_lambda && var.enable_apigateway_http_api ? 1 : 0
+  statement_id  = "AllowExecutionFromAPIGatewayV2"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.control_plane_api[0].function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.control_plane_http_api[0].execution_arn}/*/*"
+}
+
+# ============================================================================
+# 9B. AMAZON CLOUDFRONT DISTRIBUTION (S3 SPA ORIGIN + /api/* LAMBDA ORIGIN)
+# ============================================================================
+resource "aws_s3_object" "portal_index_fallback" {
+  bucket       = aws_s3_bucket.synthetics_artifacts.id
+  key          = "${trimprefix(var.cloudfront_spa_origin_path, "/")}/index.html"
+  content_type = "text/html"
+  content      = <<-EOT
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <title>Akamai Synthetic Release Gate — CloudFront Edge Portal</title>
+      </head>
+      <body style="background:#07090e;color:#f8fafc;font-family:monospace;padding:2rem;">
+        <h1>Akamai Synthetic Release Gate — CloudFront Distribution Active</h1>
+        <p>Run <code>make sync-ui</code> or <code>make deploy-cloudfront</code> to upload the compiled Vite SPA bundle to <code>s3://${aws_s3_bucket.synthetics_artifacts.id}${var.cloudfront_spa_origin_path}/</code>.</p>
+      </body>
+    </html>
+  EOT
+}
+
+resource "aws_cloudfront_origin_access_control" "portal_oac" {
+  count                             = var.deploy_cloudfront_distribution ? 1 : 0
+  name                              = "${var.project_name}-s3-oac-${var.environment}-${var.aws_region}"
+  description                       = "Origin Access Control (SigV4) for Akamai Release Gate S3 SPA Origin"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+resource "aws_cloudfront_distribution" "portal_cdn" {
+  count               = var.deploy_cloudfront_distribution && var.deploy_serverless_lambda && var.enable_apigateway_http_api ? 1 : 0
+  enabled             = true
+  is_ipv6_enabled     = true
+  comment             = "Akamai Synthetic Release Gate — Scale-to-Zero SPA + Serverless API/MCP Distribution (${var.environment})"
+  default_root_object = "index.html"
+  price_class         = var.cloudfront_price_class
+  http_version        = "http2and3"
+
+  # Origin 1: S3 Bucket (React SPA static assets under /portal-ui)
+  origin {
+    domain_name              = aws_s3_bucket.synthetics_artifacts.bucket_regional_domain_name
+    origin_id                = "S3PortalSpaOrigin"
+    origin_path              = var.cloudfront_spa_origin_path
+    origin_access_control_id = aws_cloudfront_origin_access_control.portal_oac[0].id
+  }
+
+  # Origin 2: Scale-to-Zero API Gateway v2 HTTP API -> Control Plane & MCP Lambda
+  origin {
+    domain_name = replace(aws_apigatewayv2_api.control_plane_http_api[0].api_endpoint, "https://", "")
+    origin_id   = "ControlPlaneApiOrigin"
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  # Default Behavior: Serve React SPA from S3 with OAC
+  default_cache_behavior {
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "S3PortalSpaOrigin"
+    viewer_protocol_policy = "redirect-to-https"
+    compress               = true
+    min_ttl                = 0
+    default_ttl            = 300
+    max_ttl                = 86400
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+  }
+
+  # Ordered Behavior: Route all /api/* requests (REST, OpenAPI, MCP, Synthetics, Users) to Lambda
+  ordered_cache_behavior {
+    path_pattern           = "/api/*"
+    allowed_methods        = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "ControlPlaneApiOrigin"
+    viewer_protocol_policy = "redirect-to-https"
+    compress               = true
+    min_ttl                = 0
+    default_ttl            = 0
+    max_ttl                = 0
+
+    forwarded_values {
+      query_string = true
+      headers      = ["Accept", "Authorization", "Content-Type", "X-Operator-Email"]
+      cookies {
+        forward = "all"
+      }
+    }
+  }
+
+  # SPA Client-Side Routing Fallback (403/404 -> /index.html)
+  custom_error_response {
+    error_code            = 403
+    response_code         = 200
+    response_page_path    = "/index.html"
+    error_caching_min_ttl = 0
+  }
+
+  custom_error_response {
+    error_code            = 404
+    response_code         = 200
+    response_page_path    = "/index.html"
+    error_caching_min_ttl = 0
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+
+  depends_on = [
+    aws_s3_object.portal_index_fallback,
+    aws_apigatewayv2_stage.default_stage
+  ]
+}
+
+resource "aws_s3_bucket_policy" "allow_cloudfront_oac" {
+  count  = var.deploy_cloudfront_distribution && var.deploy_serverless_lambda && var.enable_apigateway_http_api ? 1 : 0
+  bucket = aws_s3_bucket.synthetics_artifacts.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AllowCloudFrontServicePrincipalReadSpaAssets"
+        Effect    = "Allow"
+        Principal = { Service = "cloudfront.amazonaws.com" }
+        Action    = "s3:GetObject"
+        Resource  = "${aws_s3_bucket.synthetics_artifacts.arn}${var.cloudfront_spa_origin_path}/*"
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = aws_cloudfront_distribution.portal_cdn[0].arn
+          }
+        }
+      }
+    ]
+  })
+}
+
+# Seed initial operator user records in DynamoDB for CLI/API user management & tracking
+resource "aws_dynamodb_table_item" "seeded_operator_users" {
+  for_each   = var.seed_accepted_rules_in_dynamodb ? { for u in var.initial_operator_users : u.email => u } : {}
+  table_name = aws_dynamodb_table.release_gate_runs.name
+  hash_key   = aws_dynamodb_table.release_gate_runs.hash_key
+  range_key  = aws_dynamodb_table.release_gate_runs.range_key
+
+  item = jsonencode({
+    target      = { S = "__USER__" }
+    startTime   = { S = each.value.email }
+    userEmail   = { S = each.value.email }
+    payloadJson = {
+      S = jsonencode({
+        userId             = "usr-${substr(sha256(each.value.email), 0, 8)}"
+        email              = each.value.email
+        displayName        = each.value.display_name
+        role               = each.value.role
+        status             = "active"
+        createdAt          = "2026-03-01T00:00:00.000Z"
+        passwordUpdatedAt  = "2026-03-01T00:00:00.000Z"
+        passwordResetCount = 0
+        stats = {
+          totalActions          = 1
+          runsTriggered         = 1
+          comparisonsEvaluated  = 0
+          visualJudgesInvoked   = 0
+          mcpCallsExecuted      = 0
+          cliCommandsRun        = 0
+          lastActiveAt          = "2026-03-01T00:00:00.000Z"
+          lastActionName        = "trigger_run"
+        }
+      })
+    }
+  })
+}
+
+# ============================================================================
+# 10. OPTIONAL ECR & APP RUNNER (DISABLED BY DEFAULT FOR $0/IDLE LAMBDA MODE)
 # ============================================================================
 resource "aws_ecr_repository" "control_plane" {
+  count                = var.deploy_apprunner_service ? 1 : 0
   name                 = var.ecr_repository_name
   image_tag_mutability = "MUTABLE"
   force_delete         = true
@@ -665,7 +1030,7 @@ resource "aws_apprunner_service" "control_plane" {
       access_role_arn = aws_iam_role.apprunner_ecr_access_role[0].arn
     }
     image_repository {
-      image_identifier      = "${aws_ecr_repository.control_plane.repository_url}:${var.container_image_tag}"
+      image_identifier      = "${aws_ecr_repository.control_plane[0].repository_url}:${var.container_image_tag}"
       image_repository_type = "ECR"
       image_configuration {
         port = var.apprunner_port
@@ -720,7 +1085,7 @@ resource "aws_apprunner_service" "control_plane" {
 }
 
 # ============================================================================
-# 10. AUTOMATIC .ENV.TERRAFORM GENERATION FOR LOCAL / CI-CD SYNC
+# 11. AUTOMATIC .ENV.TERRAFORM GENERATION FOR LOCAL / CI-CD SYNC
 # ============================================================================
 resource "local_file" "dotenv_terraform" {
   count    = var.generate_local_dotenv ? 1 : 0
@@ -731,9 +1096,17 @@ resource "local_file" "dotenv_terraform" {
     NODE_ENV=production
     ENVIRONMENT=${var.environment}
     AWS_REGION=${var.aws_region}
+    COMPUTE_ARCHITECTURE=aws-lambda-scale-to-zero
+    DEPLOYMENT_TOPOLOGY=cloudfront-s3-oac-plus-lambda-apigw-v2
+    CLOUDFRONT_DISTRIBUTION_ID=${var.deploy_cloudfront_distribution && var.deploy_serverless_lambda && var.enable_apigateway_http_api ? aws_cloudfront_distribution.portal_cdn[0].id : "disabled"}
+    CLOUDFRONT_PORTAL_URL=${var.deploy_cloudfront_distribution && var.deploy_serverless_lambda && var.enable_apigateway_http_api ? "https://${aws_cloudfront_distribution.portal_cdn[0].domain_name}" : "disabled"}
     DATA_SOURCE_MODE=remote-api
-    SYNTHETICS_RUNNER_ENGINE=AWS CloudWatch Synthetics
+    CONTROL_PLANE_LAMBDA_NAME=${var.deploy_serverless_lambda ? aws_lambda_function.control_plane_api[0].function_name : "disabled"}
+    ADHOC_RUNNER_LAMBDA_NAME=${var.deploy_serverless_lambda ? aws_lambda_function.adhoc_edge_runner[0].function_name : "disabled"}
+    SYNTHETICS_RUNNER_ENGINE=AWS Lambda Ad-Hoc + CloudWatch Synthetics (Run-Once)
     SYNTHETICS_RUNTIME_VERSION=${var.synthetics_runtime_version}
+    CANARY_SCHEDULE_EXPRESSION=${var.canary_schedule_expression}
+    START_CANARIES_ON_APPLY=${var.start_canaries_on_apply}
     SYNTHETICS_S3_BUCKET=s3://${aws_s3_bucket.synthetics_artifacts.id}
     SYNTHETICS_DYNAMODB_TABLE=${aws_dynamodb_table.release_gate_runs.name}
     PORTAL_CONFIG_S3_KEY=${aws_s3_object.portal_runtime_config.key}

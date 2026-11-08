@@ -9,7 +9,19 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx --test src/engine/rules.test.ts",
+    "user:list": "tsx scripts/user-admin-cli.ts list",
+    "user:add": "tsx scripts/user-admin-cli.ts add",
+    "user:reset-password": "tsx scripts/user-admin-cli.ts reset-password",
+    "user:disable": "tsx scripts/user-admin-cli.ts status --status=disabled",
+    "user:enable": "tsx scripts/user-admin-cli.ts status --status=active",
+    "user:delete": "tsx scripts/user-admin-cli.ts delete",
+    "user:auth": "tsx scripts/user-admin-cli.ts auth",
+    "user:stats": "tsx scripts/user-admin-cli.ts stats",
+    "user:audit": "tsx scripts/user-admin-cli.ts audit",
+    "run:adhoc": "tsx scripts/user-admin-cli.ts run-adhoc",
+    "compare": "tsx scripts/user-admin-cli.ts compare"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
