@@ -31,6 +31,7 @@ export interface TestCaseDefinition {
   domSelector?: string;
   requiredHeaders?: string[];
   requiredCookies?: string[];
+  critical?: boolean;
   enabled?: boolean;
 }
 
@@ -81,11 +82,15 @@ export interface TemplateConfig {
     awsRegion: string;
     availableRegions: { id: string; label: string }[];
     s3Bucket: string;
+    dynamodbTable: string;
     mcpEndpoint: string;
     mcpNpmPackage: string;
     iamRoleArn: string;
     pragmaHeaders: string[];
     visualJudgeModel: string;
+    visualJudgeProvider: string;
+    bedrockModelArn: string;
+    openApiSpecPath: string;
   };
   properties: AppConfig[];
   testSuite: TestCaseDefinition[];
@@ -97,7 +102,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
     logoMark: 'A',
     controlPlaneTitle: 'Akamai Control Center',
     productSubtitle:
-      'Synthetic Release Gate · AWS CloudWatch Synthetics & MCP Plane',
+      'Synthetic Release Gate · AWS CloudWatch Synthetics, Bedrock Nova Lite & MCP Plane',
     defaultDomain: 'company.com',
     defaultOperator: {
       email: 'satishkumardhule@gmail.com',
@@ -139,6 +144,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
       { id: 'ap-southeast-1', label: 'ap-southeast-1 (Singapore)' },
     ],
     s3Bucket: 's3://akamai-synthetics-gate-prod',
+    dynamodbTable: 'akamai-synthetics-release-gate-runs',
     mcpEndpoint: 'mcp://akamai-synthetics-gate/v1',
     mcpNpmPackage: '@company/akamai-synthetics-mcp-server',
     iamRoleArn: 'arn:aws:iam::582036321695:role/AkamaiSyntheticsMcpRole',
@@ -150,7 +156,11 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
       'akamai-x-get-true-cache-key',
       'akamai-x-get-request-id',
     ],
-    visualJudgeModel: 'gemini-2.5-flash-vision',
+    visualJudgeModel: 'amazon.nova-lite-v1:0',
+    visualJudgeProvider: 'Amazon Bedrock (AWS Nova Lite)',
+    bedrockModelArn:
+      'arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0',
+    openApiSpecPath: '/api/v1/openapi.json',
   },
 
   properties: [

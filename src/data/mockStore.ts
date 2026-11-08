@@ -321,11 +321,26 @@ export function calculateCookieDiffs(
   return diffs;
 }
 
+export interface BuildComparisonOptions {
+  acceptedCookies?: string[];
+  acceptedVisualTests?: string[];
+  ignoreAcceptedDiffs?: boolean;
+  aiJudgeOverrides?: Record<
+    string,
+    {
+      verdict: 'same' | 'minor' | 'different';
+      summary: string;
+      pixelDiffPercent?: number;
+    }
+  >;
+}
+
 export function buildInitialComparison(
   candidateRun: RunRecord,
   baselineRun: RunRecord,
   kind: ComparisonKind,
-  rules: AcceptedRule[] = []
+  rules: AcceptedRule[] = [],
+  options: BuildComparisonOptions = {}
 ): ComparisonRecord {
   const candidateResultsMap = new Map(
     candidateRun.results.map((r) => [r.id, r])
@@ -337,13 +352,27 @@ export function buildInitialComparison(
 
   const isSameRun = candidateRun.key === baselineRun.key;
 
+  const candidateProp = DEFAULT_TEMPLATE_CONFIG.properties.find(
+    (p) => p.id === candidateRun.appId
+  );
+  const baselineProp = DEFAULT_TEMPLATE_CONFIG.properties.find(
+    (p) => p.id === baselineRun.appId
+  );
+  const candidateHostMap =
+    candidateProp?.envs.find((e) => e.id === candidateRun.envId)?.hostMap || {};
+  const baselineHostMap =
+    baselineProp?.envs.find((e) => e.id === baselineRun.envId)?.hostMap || {};
+
   const items: ComparisonItem[] = allIds.map((testId, index) => {
     const cand = candidateResultsMap.get(testId);
     const base = baselineResultsMap.get(testId);
     const name = cand?.name || base?.name || testId;
     const url = cand?.url || base?.url || '';
 
-    const diffs = calculateFunctionalDiffs(cand, base);
+    const diffs = calculateFunctionalDiffs(cand, base, {
+      candidateHostMap,
+      baselineHostMap,
+    });
     const cookieDiffs = calculateCookieDiffs(cand, base);
 
     let visualResult = undefined;
@@ -359,7 +388,7 @@ export function buildInitialComparison(
           costGateSkippedAi: false,
           pixelDiffPercent: 1.8,
           summary:
-            'AI Visual Judge detected a 14px hero callout spacing shift and updated badge contrast on Staging.',
+            'AWS Bedrock Nova Lite (amazon.nova-lite-v1:0) detected a 14px hero callout spacing shift and updated badge contrast on Staging.',
           differences: [
             {
               description:
@@ -376,9 +405,23 @@ export function buildInitialComparison(
           costGate: 'pixel-identical' as const,
           costGateSkippedAi: true,
           pixelDiffPercent: 0.0,
-          summary: 'Screenshots are pixel-identical (0.0% pixel delta).',
+          summary:
+            'AWS Bedrock Nova Lite (amazon.nova-lite-v1:0): Screenshots are pixel-identical (0.0% pixel delta).',
           differences: [],
           primaryModel: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
+        };
+      }
+
+      const override = options.aiJudgeOverrides?.[testId];
+      if (override && visualResult) {
+        visualResult = {
+          ...visualResult,
+          verdict: override.verdict,
+          costGate: 'ai-judged' as const,
+          costGateSkippedAi: false,
+          pixelDiffPercent:
+            override.pixelDiffPercent ?? visualResult.pixelDiffPercent,
+          summary: override.summary,
         };
       }
     }
@@ -406,9 +449,14 @@ export function buildInitialComparison(
     };
 
     const compId = `${candidateRun.target}-vs-${baselineRun.target}`;
-    return applyRulesToItem(rawItem, compId, rules, kind);
+    return applyRulesToItem(rawItem, compId, rules, kind, {
+      acceptedCookies: options.acceptedCookies,
+      acceptedVisualTests: options.acceptedVisualTests,
+      ignoreAcceptedDiffs: options.ignoreAcceptedDiffs,
+    });
   });
 
+  const ignoreAccepted = options.ignoreAcceptedDiffs ?? true;
   const counts = {
     different: items.filter((i) => i.itemVerdict === 'different').length,
     error: items.filter((i) => i.itemVerdict === 'error').length,
@@ -417,12 +465,16 @@ export function buildInitialComparison(
   };
 
   const rollup = {
-    functional: items.filter((i) =>
-      i.functionalDiffs.some((d) => !d.accepted)
+    functional: items.filter(
+      (i) =>
+        i.functionalDiffs.some((d) => (ignoreAccepted ? !d.accepted : true)) ||
+        (i.cookieDiffs || []).some((d) => (ignoreAccepted ? !d.accepted : true))
     ).length,
     critical: items.filter((i) =>
       i.functionalDiffs.some(
-        (d) => !d.accepted && (d.kind === 'status' || d.kind === 'assertions')
+        (d) =>
+          (ignoreAccepted ? !d.accepted : true) &&
+          (d.kind === 'status' || d.kind === 'assertions')
       )
     ).length,
     visual: items.filter(

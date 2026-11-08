@@ -7,6 +7,22 @@ import {
   resolvePropertyHostname,
 } from '../config/template.config';
 import {
+  buildOpenApiSpec,
+  evaluateNovaLiteVisualDiff,
+  generateArchitectureMarkdown,
+  generateBedrockNovaJudgeScript,
+  generateEnvConfigFile,
+  generateSyntheticsCanaryScript,
+  generateTerraformBundle,
+  getOpenApiEndpointCatalog,
+} from '../engine/awsBlueprint';
+import {
+  BUILTIN_GATE_PLUGINS,
+  evaluatePluginPipeline,
+  generateAiAgentAdaptationBundle,
+  generateOneShotAdaptationPrompt,
+} from '../engine/pluginRegistry';
+import {
   Card,
   CardHeader,
   CardTitle,
@@ -836,46 +852,410 @@ export const BackgroundJobsPopover: React.FC<{
 };
 
 // ============================================================================
-// 2. MCP SERVER & AWS SYNTHETICS BACKEND SCREEN
+// 2. MCP SERVER, OPENAPI 3.1 SWAGGER UI & AWS TERRAFORM / SYNTHETICS BACKEND
 // ============================================================================
 export const McpAndAwsBackendView: React.FC<{
   config?: TemplateConfig;
   apps: AppConfig[];
+  testSuite?: TestCaseDefinition[];
   runs: RunRecord[];
   onTriggerMcpSuite: (targetId: string) => void;
   onTriggerMcpCompare: (targetA: string, targetB: string) => void;
 }> = ({
   config = DEFAULT_TEMPLATE_CONFIG,
   apps,
+  testSuite = DEFAULT_TEMPLATE_CONFIG.testSuite,
   runs,
   onTriggerMcpSuite,
   onTriggerMcpCompare,
 }) => {
-  const [selectedTool, setSelectedTool] = useState<string>('compare_akamai_runs');
-  const [copiedConfig, setCopiedConfig] = useState<boolean>(false);
+  const effectiveConfig: TemplateConfig = {
+    ...config,
+    properties: apps,
+    testSuite,
+  };
+
+  const [activeSubTab, setActiveSubTab] = useState<
+    'swagger' | 'terraform' | 'mcp' | 'plugins_skills'
+  >('swagger');
   const firstApp = apps[0]?.id || 'www';
+
+  // --- Sub-tab 4: AI Skills, Plugins & Clone-Adapt Studio State ---
+  const aiSkillBundle = generateAiAgentAdaptationBundle(effectiveConfig);
+  const [selectedSkillFileId, setSelectedSkillFileId] = useState<string>(
+    aiSkillBundle[0].id
+  );
+  const activeSkillFile =
+    aiSkillBundle.find((s) => s.id === selectedSkillFileId) || aiSkillBundle[0];
+  const [copiedSkillFile, setCopiedSkillFile] = useState<boolean>(false);
+  const [copiedOneShotPrompt, setCopiedOneShotPrompt] = useState<boolean>(false);
+
+  const [adaptOrgName, setAdaptOrgName] = useState<string>('GlobalFin Edge');
+  const [adaptDomain, setAdaptDomain] = useState<string>(
+    effectiveConfig.branding.defaultDomain
+  );
+  const [adaptCdnProvider, setAdaptCdnProvider] = useState<
+    'Akamai Edge' | 'AWS CloudFront' | 'Fastly' | 'Cloudflare'
+  >('Akamai Edge');
+  const [adaptAwsRegion, setAdaptAwsRegion] = useState<string>(
+    effectiveConfig.infrastructure.awsRegion
+  );
+  const [adaptS3Bucket, setAdaptS3Bucket] = useState<string>(
+    effectiveConfig.infrastructure.s3Bucket
+  );
+  const [adaptPropsCsv, setAdaptPropsCsv] = useState<string>(
+    apps.map((a) => a.id).join(', ')
+  );
+  const [adaptEnvsCsv, setAdaptEnvsCsv] = useState<string>('prod, uat');
+
+  const [enabledPluginIds, setEnabledPluginIds] = useState<string[]>(() =>
+    BUILTIN_GATE_PLUGINS.filter((p) => p.enabledByDefault).map((p) => p.id)
+  );
+  const [selectedPluginScenario, setSelectedPluginScenario] = useState<
+    'T02_CACHE_DRIFT' | 'T03_VISUAL_MINOR' | 'T05_COOKIE_DRIFT' | 'T01_CLEAN'
+  >('T02_CACHE_DRIFT');
+
+  const togglePluginId = (pluginId: string) => {
+    setEnabledPluginIds((prev) =>
+      prev.includes(pluginId)
+        ? prev.filter((id) => id !== pluginId)
+        : [...prev, pluginId]
+    );
+  };
+
+  const scenarioInputMap = {
+    T02_CACHE_DRIFT: {
+      testId: 'T02',
+      testName: 'Product Catalog Page (Cacheability Drift)',
+      path: '/products/cloud-security',
+      candidateTarget: `${firstApp}.prod.staging`,
+      baselineTarget: `${firstApp}.prod.prod`,
+      candidateStatus: 200,
+      baselineStatus: 200,
+      candidateLatencyMs: 118,
+      baselineLatencyMs: 64,
+      candidateHeaders: {
+        'x-check-cacheable': 'NO',
+        'cache-control': 'max-age=1800',
+      },
+      baselineHeaders: {
+        'x-check-cacheable': 'YES',
+        'cache-control': 'max-age=3600',
+      },
+      candidateCookies: { geo_region: 'US-EAST' },
+      baselineCookies: { geo_region: 'US-EAST' },
+      pixelDiffPercent: 0.02,
+      enabledPluginIds,
+    },
+    T03_VISUAL_MINOR: {
+      testId: 'T03',
+      testName: 'Hero Carousel Banner (Nova Lite Minor Jitter)',
+      path: '/campaigns/hero-spotlight',
+      candidateTarget: `${firstApp}.prod.staging`,
+      baselineTarget: `${firstApp}.prod.prod`,
+      candidateStatus: 200,
+      baselineStatus: 200,
+      candidateLatencyMs: 92,
+      baselineLatencyMs: 74,
+      candidateHeaders: {
+        'x-check-cacheable': 'YES',
+        'cache-control': 'max-age=3600',
+      },
+      baselineHeaders: {
+        'x-check-cacheable': 'YES',
+        'cache-control': 'max-age=3600',
+      },
+      candidateCookies: { geo_region: 'US-EAST' },
+      baselineCookies: { geo_region: 'US-EAST' },
+      pixelDiffPercent: 1.8,
+      enabledPluginIds,
+    },
+    T05_COOKIE_DRIFT: {
+      testId: 'T05',
+      testName: 'Edge Auth Session Handshake (Cookie Drift)',
+      path: '/auth/session-init',
+      candidateTarget: `${firstApp}.prod.staging`,
+      baselineTarget: `${firstApp}.prod.prod`,
+      candidateStatus: 200,
+      baselineStatus: 200,
+      candidateLatencyMs: 215,
+      baselineLatencyMs: 70,
+      candidateHeaders: {
+        'x-check-cacheable': 'YES',
+        'cache-control': 'max-age=3600',
+      },
+      baselineHeaders: {
+        'x-check-cacheable': 'YES',
+        'cache-control': 'max-age=3600',
+      },
+      candidateCookies: {
+        geo_region: 'US-EAST',
+        ak_bmsc: 'stg-token-9981',
+      },
+      baselineCookies: {
+        geo_region: 'US-EAST',
+        ak_bmsc: 'prd-token-4410',
+      },
+      pixelDiffPercent: 0.0,
+      enabledPluginIds,
+    },
+    T01_CLEAN: {
+      testId: 'T01',
+      testName: 'Global Landing Page (100% Parity)',
+      path: '/',
+      candidateTarget: `${firstApp}.prod.staging`,
+      baselineTarget: `${firstApp}.prod.prod`,
+      candidateStatus: 200,
+      baselineStatus: 200,
+      candidateLatencyMs: 68,
+      baselineLatencyMs: 62,
+      candidateHeaders: {
+        'x-check-cacheable': 'YES',
+        'cache-control': 'max-age=1800',
+      },
+      baselineHeaders: {
+        'x-check-cacheable': 'YES',
+        'cache-control': 'max-age=3600',
+      },
+      candidateCookies: { geo_region: 'US-EAST' },
+      baselineCookies: { geo_region: 'US-EAST' },
+      pixelDiffPercent: 0.0,
+      enabledPluginIds,
+    },
+  };
+
+  const livePluginReport = evaluatePluginPipeline(
+    scenarioInputMap[selectedPluginScenario],
+    effectiveConfig
+  );
+
+  const generatedOneShotPrompt = generateOneShotAdaptationPrompt({
+    organizationName: adaptOrgName,
+    primaryDomain: adaptDomain,
+    cdnProvider: adaptCdnProvider,
+    stagingEdgeSuffix: effectiveConfig.networks.staging.edgeSuffix,
+    stagingEdgeIp: effectiveConfig.networks.staging.defaultEdgeIp,
+    prodEdgeSuffix: effectiveConfig.networks.prod.edgeSuffix,
+    prodEdgeIp: effectiveConfig.networks.prod.defaultEdgeIp,
+    awsRegion: adaptAwsRegion,
+    s3Bucket: adaptS3Bucket,
+    propertiesCsv: adaptPropsCsv,
+    environmentsCsv: adaptEnvsCsv,
+  });
+
+  // --- Sub-tab 1: OpenAPI 3.1 / Swagger UI Interactive Explorer State ---
+  const endpoints = getOpenApiEndpointCatalog(effectiveConfig);
+  const [selectedEndpointId, setSelectedEndpointId] = useState<string>(endpoints[0].id);
+  const activeEndpoint =
+    endpoints.find((e) => e.id === selectedEndpointId) || endpoints[0];
+
+  const formatQueryRecord = (q?: Record<string, string>) =>
+    q ? new URLSearchParams(q).toString() : '';
+
+  const buildPreviewResponse = (ep: typeof activeEndpoint) => ({
+    status: 'READY_TO_EXECUTE',
+    endpoint: `${ep.method} ${ep.path}`,
+    tag: ep.tag,
+    summary: ep.summary,
+    bedrockJudgeModel: effectiveConfig.infrastructure.visualJudgeModel,
+    awsRegion: effectiveConfig.infrastructure.awsRegion,
+    note: 'Click "Execute (Try it out)" to send a live HTTP request to server.ts.',
+  });
+
+  const [customRequestBody, setCustomRequestBody] = useState<string>(() =>
+    activeEndpoint.sampleBody
+      ? JSON.stringify(activeEndpoint.sampleBody, null, 2)
+      : ''
+  );
+  const [customQueryString, setCustomQueryString] = useState<string>(() =>
+    formatQueryRecord(activeEndpoint.sampleQuery)
+  );
+  const [swaggerResponse, setSwaggerResponse] = useState<{
+    status: number;
+    latencyMs: number;
+    url: string;
+    body: string;
+  }>(() => ({
+    status: 200,
+    latencyMs: 12,
+    url: activeEndpoint.path,
+    body: JSON.stringify(buildPreviewResponse(activeEndpoint), null, 2),
+  }));
+  const [isExecutingSwagger, setIsExecutingSwagger] = useState<boolean>(false);
+  const [showRawOpenApiSpec, setShowRawOpenApiSpec] = useState<boolean>(false);
+  const [copiedOpenApi, setCopiedOpenApi] = useState<boolean>(false);
+
+  const handleSelectEndpoint = (epId: string) => {
+    setSelectedEndpointId(epId);
+    const found = endpoints.find((e) => e.id === epId) || endpoints[0];
+    const qStr = formatQueryRecord(found.sampleQuery);
+    setCustomQueryString(qStr);
+    setCustomRequestBody(
+      found.sampleBody ? JSON.stringify(found.sampleBody, null, 2) : ''
+    );
+    setSwaggerResponse({
+      status: 200,
+      latencyMs: 14,
+      url: found.path + (qStr ? `?${qStr}` : ''),
+      body: JSON.stringify(buildPreviewResponse(found), null, 2),
+    });
+  };
+
+  const handleExecuteSwaggerRequest = async () => {
+    setIsExecutingSwagger(true);
+    const started = performance.now();
+    const querySuffix =
+      activeEndpoint.method === 'GET' && customQueryString.trim()
+        ? `?${customQueryString.trim().replace(/^\?/, '')}`
+        : '';
+    const requestUrl = `${activeEndpoint.path}${querySuffix}`;
+
+    try {
+      const fetchInit: RequestInit = {
+        method: activeEndpoint.method,
+        headers: { 'Content-Type': 'application/json' },
+      };
+      if (activeEndpoint.method === 'POST' && customRequestBody.trim()) {
+        fetchInit.body = customRequestBody;
+      }
+
+      const res = await fetch(requestUrl, fetchInit);
+      const elapsed = Math.max(4, Math.round(performance.now() - started));
+      const json = await res.json();
+      setSwaggerResponse({
+        status: res.status,
+        latencyMs: elapsed,
+        url: requestUrl,
+        body: JSON.stringify(json, null, 2),
+      });
+
+      // Also sync portal state if user triggered a suite or comparison from Swagger UI
+      if (activeEndpoint.id === 'post-trigger-run') {
+        try {
+          const parsed = JSON.parse(customRequestBody || '{}');
+          if (parsed.targetId) onTriggerMcpSuite(parsed.targetId);
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      const elapsed = Math.max(5, Math.round(performance.now() - started));
+      setSwaggerResponse({
+        status: 200,
+        latencyMs: elapsed,
+        url: requestUrl,
+        body: JSON.stringify(buildPreviewResponse(activeEndpoint), null, 2),
+      });
+    } finally {
+      setIsExecutingSwagger(false);
+    }
+  };
+
+  // --- Sub-tab 2: Terraform IaC & AWS Synthetics / Bedrock Nova Lite Files ---
+  const tfBundle = generateTerraformBundle(effectiveConfig);
+  const canaryScript = generateSyntheticsCanaryScript(effectiveConfig);
+  const bedrockJudgeScript = generateBedrockNovaJudgeScript(effectiveConfig);
+  const envFileContent = generateEnvConfigFile(effectiveConfig);
+
+  const iacFiles = [
+    {
+      id: 'main.tf',
+      label: 'infra/terraform/main.tf',
+      badge: 'Terraform HCL',
+      description:
+        'Provisions S3 Artifact Bucket, DynamoDB Run Store, IAM Roles (Synthetics + Bedrock Nova Lite), and CloudWatch Synthetics Canaries across Staging & Prod Edge Networks.',
+      content: tfBundle.mainTf,
+    },
+    {
+      id: 'variables.tf',
+      label: 'infra/terraform/variables.tf',
+      badge: 'Terraform Vars',
+      description:
+        'Input variables for AWS region, S3 bucket, DynamoDB table, Bedrock Nova Lite model ID (amazon.nova-lite-v1:0), Akamai edge networks, and property matrix.',
+      content: tfBundle.variablesTf,
+    },
+    {
+      id: 'terraform.tfvars',
+      label: 'infra/terraform/terraform.tfvars',
+      badge: 'Live Topology Vars',
+      description:
+        'Auto-generated tfvars synced with your current Portal Properties, Staging/Prod Edge Networks, and AWS Nova Lite judge configuration.',
+      content: tfBundle.tfvars,
+    },
+    {
+      id: 'outputs.tf',
+      label: 'infra/terraform/outputs.tf',
+      badge: 'Terraform Outputs',
+      description:
+        'Outputs S3 bucket name/ARN, DynamoDB table ARN, IAM Role ARN, Bedrock Nova Lite ARN, ECR repo URL, and App Runner HTTPS URL.',
+      content: tfBundle.outputsTf,
+    },
+    {
+      id: 'canary-har-runner.js',
+      label: 'aws-synthetics/canary-har-runner.js',
+      badge: 'CloudWatch Canary',
+      description:
+        'Node.js Puppeteer CloudWatch Synthetics handler using --host-resolver-rules to pin Akamai Staging (.edgekey-staging.net) vs Prod (.edgekey.net), injecting Pragma headers and writing to S3 + DynamoDB.',
+      content: canaryScript,
+    },
+    {
+      id: 'bedrock-nova-lite-judge.ts',
+      label: 'aws-synthetics/bedrock-nova-lite-judge.ts',
+      badge: 'Bedrock Nova Lite',
+      description:
+        'Multimodal AI Visual Regression Judge invoking Amazon Bedrock Nova Lite (amazon.nova-lite-v1:0) via ConverseCommand with deterministic local fallback.',
+      content: bedrockJudgeScript,
+    },
+    {
+      id: '.env.production',
+      label: '.env.example / .env.production',
+      badge: 'Env & Networks',
+      description:
+        'Environment configuration for Staging & Prod Akamai edge networks, AWS Synthetics S3/DynamoDB, Amazon Bedrock Nova Lite, and OpenAPI/MCP server endpoints.',
+      content: envFileContent,
+    },
+    {
+      id: 'deploy-aws.sh',
+      label: 'scripts/deploy-aws.sh',
+      badge: 'Deploy Script',
+      description:
+        'One-command deployment script running terraform init, terraform validate, terraform apply, and optional Docker ECR push + AWS App Runner rollout.',
+      content: tfBundle.deployScript,
+    },
+    {
+      id: 'ARCHITECTURE.md',
+      label: 'ARCHITECTURE.md',
+      badge: 'System Design',
+      description:
+        'Complete system design & architecture documentation covering data flow, 3-dimension diff rules, AWS Terraform IaC, CloudWatch Synthetics, and Bedrock Nova Lite.',
+      content: generateArchitectureMarkdown(effectiveConfig),
+    },
+  ];
+  const [selectedIacFileId, setSelectedIacFileId] = useState<string>('main.tf');
+  const [copiedIacFile, setCopiedIacFile] = useState<boolean>(false);
+  const activeIacFile =
+    iacFiles.find((f) => f.id === selectedIacFileId) || iacFiles[0];
+
+  // --- Sub-tab 3: MCP Server Tool Inspector State ---
+  const [selectedTool, setSelectedTool] = useState<string>(
+    'evaluate_visual_diff_nova_lite'
+  );
+  const [copiedConfig, setCopiedConfig] = useState<boolean>(false);
 
   const [toolOutput, setToolOutput] = useState<string>(() =>
     JSON.stringify(
       {
         jsonrpc: '2.0',
         id: 1,
-        result: {
-          status: 'READY',
-          awsSyntheticsRegion: config.infrastructure.awsRegion,
-          canaryRuntime: config.infrastructure.runtimeVersion,
-          s3ArtifactBucket: config.infrastructure.s3Bucket,
-          evaluatedTargets: [
-            `${firstApp}.prod.staging`,
-            `${firstApp}.prod.prod`,
-          ],
-          summary: {
-            totalTests: config.testSuite.length,
-            headerDiffs: 1,
-            cookieDiffs: 1,
-            visualAiDiffs: 1,
+        result: evaluateNovaLiteVisualDiff(
+          {
+            testId: 'T03',
+            candidateTarget: `${firstApp}.prod.staging`,
+            baselineTarget: `${firstApp}.prod.prod`,
+            pixelDiffPercent: 1.8,
           },
-        },
+          effectiveConfig
+        ),
       },
       null,
       2
@@ -884,10 +1264,30 @@ export const McpAndAwsBackendView: React.FC<{
 
   const mcpTools = [
     {
-      name: 'list_akamai_properties',
+      name: 'evaluate_visual_diff_nova_lite',
       description:
-        'List all configured properties, environments (prod, uat), and staging/prod network targets.',
-      samplePayload: { filter: 'all' },
+        'Invoke AWS Bedrock Nova Lite (amazon.nova-lite-v1:0) Vision Judge on S3-captured DOM screenshots.',
+      samplePayload: {
+        testId: 'T03',
+        model: effectiveConfig.infrastructure.visualJudgeModel,
+        provider: effectiveConfig.infrastructure.visualJudgeProvider,
+        candidateTarget: `${firstApp}.prod.staging`,
+        baselineTarget: `${firstApp}.prod.prod`,
+        pixelDiffPercent: 1.8,
+        s3CandidateUri: `s3://${effectiveConfig.infrastructure.s3Bucket}/runs/${firstApp}.prod.staging/T03.png`,
+        s3BaselineUri: `s3://${effectiveConfig.infrastructure.s3Bucket}/runs/${firstApp}.prod.prod/T03.png`,
+      },
+    },
+    {
+      name: 'compare_akamai_runs',
+      description:
+        'Compare Functional Headers, Set-Cookie values, and AWS Nova Lite Visual DOM snapshots across any two runs.',
+      samplePayload: {
+        candidateTarget: `${firstApp}.prod.staging`,
+        baselineTarget: `${firstApp}.prod.prod`,
+        dimensions: ['headers', 'cookies', 'image_ai'],
+        judgeModel: effectiveConfig.infrastructure.visualJudgeModel,
+      },
     },
     {
       name: 'run_aws_synthetics_suite',
@@ -895,29 +1295,32 @@ export const McpAndAwsBackendView: React.FC<{
         'Dispatch an AWS CloudWatch Synthetics canary run against a Staging or Prod edge endpoint.',
       samplePayload: {
         target: `${firstApp}.prod.staging`,
-        edgeResolve: `${firstApp}.${config.branding.defaultDomain}${config.networks.staging.edgeSuffix}`,
-        pragmaHeaders: config.infrastructure.pragmaHeaders.slice(0, 2),
+        edgeResolve: `${firstApp}.${effectiveConfig.branding.defaultDomain}${effectiveConfig.networks.staging.edgeSuffix}`,
+        edgeIp: effectiveConfig.networks.staging.defaultEdgeIp,
+        pragmaHeaders: effectiveConfig.infrastructure.pragmaHeaders.slice(0, 2),
       },
     },
     {
-      name: 'compare_akamai_runs',
+      name: 'list_akamai_properties',
       description:
-        'Compare Functional Headers, Set-Cookie values, and AI Visual DOM snapshots across any two runs.',
+        'List all configured properties, environments (prod, uat), and staging/prod network targets.',
+      samplePayload: { filter: 'all' },
+    },
+    {
+      name: 'list_ai_skills_and_plugins',
+      description:
+        'Discover all repository AI Agent Skills (/skills/*/SKILL.md, CLAUDE.md, AGENTS.md) and Release Gate Evaluator Plugins.',
+      samplePayload: { includeContent: false },
+    },
+    {
+      name: 'run_gate_plugin_pipeline',
+      description:
+        'Execute the modular Release Gate Plugin Pipeline (Cache Physics, Security Headers, Cookies, Latency Budget, Bedrock Nova Lite).',
       samplePayload: {
+        testId: 'T02',
         candidateTarget: `${firstApp}.prod.staging`,
         baselineTarget: `${firstApp}.prod.prod`,
-        dimensions: ['headers', 'cookies', 'image_ai'],
-      },
-    },
-    {
-      name: 'evaluate_visual_diff_ai',
-      description:
-        'Invoke Gemini Vision Judge on S3-captured DOM screenshots to classify layout shifts.',
-      samplePayload: {
-        testId: 'T03',
-        model: config.infrastructure.visualJudgeModel,
-        s3CandidateUri: `${config.infrastructure.s3Bucket}/runs/${firstApp}.prod.staging/T03.png`,
-        s3BaselineUri: `${config.infrastructure.s3Bucket}/runs/${firstApp}.prod.prod/T03.png`,
+        enabledPluginIds,
       },
     },
   ];
@@ -925,60 +1328,44 @@ export const McpAndAwsBackendView: React.FC<{
   const activeToolObj =
     mcpTools.find((t) => t.name === selectedTool) || mcpTools[0];
 
-  const handleExecuteMcpTool = () => {
+  const handleExecuteMcpTool = async () => {
     if (selectedTool === 'run_aws_synthetics_suite') {
       onTriggerMcpSuite(`${firstApp}.prod.staging`);
-      setToolOutput(
-        JSON.stringify(
-          {
-            jsonrpc: '2.0',
-            id: Date.now(),
-            result: {
-              dispatched: true,
-              awsCanaryArn: `arn:aws:synthetics:${config.infrastructure.awsRegion}:582036321695:canary:akamai-edge-runner`,
-              target: `${firstApp}.prod.staging`,
-              status: 'RUNNING_IN_BACKGROUND',
-            },
-          },
-          null,
-          2
-        )
-      );
     } else if (selectedTool === 'compare_akamai_runs') {
       onTriggerMcpCompare(`${firstApp}.prod.staging`, `${firstApp}.prod.prod`);
-    } else if (selectedTool === 'list_akamai_properties') {
-      setToolOutput(
-        JSON.stringify(
-          {
-            jsonrpc: '2.0',
-            id: Date.now(),
-            result: {
-              properties: apps.map((a) => ({
-                id: a.id,
-                name: a.name,
-                environments: a.envs.map((e) => e.id),
-                networks: ['staging', 'prod'],
-              })),
-              totalStoredRuns: runs.length,
-            },
+    }
+
+    try {
+      const res = await fetch('/api/v1/mcp/rpc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(),
+          method: 'tools/call',
+          params: {
+            name: selectedTool,
+            arguments: activeToolObj.samplePayload,
           },
-          null,
-          2
-        )
-      );
-    } else {
+        }),
+      });
+      const data = await res.json();
+      setToolOutput(JSON.stringify(data, null, 2));
+    } catch {
       setToolOutput(
         JSON.stringify(
           {
             jsonrpc: '2.0',
             id: Date.now(),
-            result: {
-              testId: 'T03',
-              verdict: 'MINOR',
-              pixelDiffPercent: 1.8,
-              explanation:
-                'AI Visual Judge detected a 14px hero callout spacing shift on Staging.',
-            },
+            result: evaluateNovaLiteVisualDiff(
+              {
+                testId: 'T03',
+                candidateTarget: `${firstApp}.prod.staging`,
+                baselineTarget: `${firstApp}.prod.prod`,
+                pixelDiffPercent: 1.8,
+              },
+              effectiveConfig
+            ),
           },
           null,
           2
@@ -992,10 +1379,14 @@ export const McpAndAwsBackendView: React.FC<{
       mcpServers: {
         'akamai-aws-synthetics': {
           command: 'npx',
-          args: ['-y', config.infrastructure.mcpNpmPackage],
+          args: ['-y', effectiveConfig.infrastructure.mcpNpmPackage],
           env: {
-            AWS_REGION: config.infrastructure.awsRegion,
-            SYNTHETICS_S3_BUCKET: config.infrastructure.s3Bucket,
+            AWS_REGION: effectiveConfig.infrastructure.awsRegion,
+            SYNTHETICS_S3_BUCKET: effectiveConfig.infrastructure.s3Bucket,
+            DYNAMODB_RUNS_TABLE: effectiveConfig.infrastructure.dynamodbTable,
+            BEDROCK_MODEL_ID: effectiveConfig.infrastructure.visualJudgeModel,
+            AKAMAI_STAGING_EDGE_IP: effectiveConfig.networks.staging.defaultEdgeIp,
+            AKAMAI_PROD_EDGE_IP: effectiveConfig.networks.prod.defaultEdgeIp,
           },
         },
       },
@@ -1004,187 +1395,1025 @@ export const McpAndAwsBackendView: React.FC<{
     2
   );
 
+  const openApiSpecJson = JSON.stringify(
+    buildOpenApiSpec(effectiveConfig),
+    null,
+    2
+  );
+
   return (
     <main className="px-4 py-3 space-y-3 w-full">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      {/* Top Architecture Telemetry Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5">
         <Card>
-          <CardHeader className="py-2.5 px-4 pb-1.5">
+          <CardHeader className="py-2 px-3.5 pb-1">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <CardTitle className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                 <Cpu className="w-3.5 h-3.5 text-sky-500" />
-                {config.infrastructure.runnerEngine}
+                AWS CloudWatch Synthetics
               </CardTitle>
-              <Badge variant="success" className="font-mono text-[10px]">
-                HEALTHY
+              <Badge variant="success" className="font-mono text-[9px] px-1 py-0">
+                {effectiveConfig.infrastructure.awsRegion}
               </Badge>
             </div>
           </CardHeader>
-          <CardContent className="px-4 pb-3 space-y-1 text-xs">
-            <div className="font-mono text-foreground font-semibold">
-              {config.infrastructure.runtimeVersion}
+          <CardContent className="px-3.5 pb-2.5 space-y-0.5 text-xs">
+            <div className="font-mono text-foreground font-semibold truncate">
+              {effectiveConfig.infrastructure.runtimeVersion}
             </div>
             <p className="text-muted-foreground text-[11px]">
-              Headless Chromium canaries in{' '}
-              <code className="font-mono">{config.infrastructure.awsRegion}</code>{' '}
-              with DNS <code className="font-mono">--resolve</code> against{' '}
-              <code className="font-mono">
-                {config.networks.staging.edgeSuffix}
-              </code>{' '}
-              and{' '}
-              <code className="font-mono">{config.networks.prod.edgeSuffix}</code>.
+              Staging <code className="font-mono">{effectiveConfig.networks.staging.defaultEdgeIp}</code>{' '}
+              ↔ Prod <code className="font-mono">{effectiveConfig.networks.prod.defaultEdgeIp}</code>
             </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="py-2.5 px-4 pb-1.5">
+          <CardHeader className="py-2 px-3.5 pb-1">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <CardTitle className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                AI Visual Judge (AWS)
+              </CardTitle>
+              <Badge variant="warning" className="font-mono text-[9px] px-1 py-0">
+                Bedrock Nova Lite
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="px-3.5 pb-2.5 space-y-0.5 text-xs">
+            <div className="font-mono text-foreground font-semibold truncate">
+              {effectiveConfig.infrastructure.visualJudgeModel}
+            </div>
+            <p className="text-muted-foreground text-[11px]">
+              Multimodal DOM diff judge via Bedrock <code className="font-mono">ConverseCommand</code>
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="py-2 px-3.5 pb-1">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                 <Database className="w-3.5 h-3.5 text-emerald-500" />
-                S3 Artifact & Run Store
+                S3 & DynamoDB Store
               </CardTitle>
-              <Badge variant="secondary" className="font-mono text-[10px]">
-                {runs.length} runs indexed
+              <Badge variant="secondary" className="font-mono text-[9px] px-1 py-0">
+                {runs.length} runs
               </Badge>
             </div>
           </CardHeader>
-          <CardContent className="px-4 pb-3 space-y-1 text-xs">
-            <div className="font-mono text-foreground font-semibold">
-              {config.infrastructure.s3Bucket}
+          <CardContent className="px-3.5 pb-2.5 space-y-0.5 text-xs">
+            <div className="font-mono text-foreground font-semibold truncate">
+              {effectiveConfig.infrastructure.s3Bucket}
             </div>
-            <p className="text-muted-foreground text-[11px]">
-              Persists response headers, <code className="font-mono">Set-Cookie</code>{' '}
-              jars, HAR traces, and 1440×900 DOM screenshots for every run.
+            <p className="text-muted-foreground text-[11px] truncate">
+              Table: <code className="font-mono">{effectiveConfig.infrastructure.dynamodbTable}</code>
             </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="py-2.5 px-4 pb-1.5">
+          <CardHeader className="py-2 px-3.5 pb-1">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <CardTitle className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                 <Server className="w-3.5 h-3.5 text-indigo-500" />
-                MCP Protocol Endpoint
+                OpenAPI 3.1 & MCP RPC
               </CardTitle>
-              <Badge variant="success" className="font-mono text-[10px]">
-                4 TOOLS ACTIVE
+              <Badge variant="success" className="font-mono text-[9px] px-1 py-0">
+                {endpoints.length} ROUTES LIVE
               </Badge>
             </div>
           </CardHeader>
-          <CardContent className="px-4 pb-3 space-y-1 text-xs">
-            <div className="font-mono text-foreground font-semibold">
-              {config.infrastructure.mcpEndpoint}
+          <CardContent className="px-3.5 pb-2.5 space-y-0.5 text-xs">
+            <div className="font-mono text-foreground font-semibold truncate">
+              {effectiveConfig.infrastructure.openApiSpecPath}
             </div>
-            <p className="text-muted-foreground text-[11px]">
-              Exposes synthetic suite execution, header/cookie diffing, and AI
-              visual evaluation to IDE agents and CI/CD gates.
+            <p className="text-muted-foreground text-[11px] truncate">
+              MCP JSON-RPC: <code className="font-mono">/api/v1/mcp/rpc</code>
             </p>
           </CardContent>
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
-        <Card className="lg:col-span-7">
-          <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row items-center justify-between space-y-0">
-            <div>
-              <CardTitle className="text-sm">MCP Server Tool Inspector</CardTitle>
-              <CardDescription>
-                Test MCP tool calls directly against the AWS Synthetics backend.
-              </CardDescription>
-            </div>
-            <Button size="xs" onClick={handleExecuteMcpTool}>
-              <Play className="fill-current !size-2.5" />
-              Invoke MCP Tool
-            </Button>
-          </CardHeader>
+      {/* Sub-navigation bar for Swagger UI, Terraform IaC, MCP Inspector, and AI Skills & Plugins */}
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-card border border-border rounded-lg px-3 py-2">
+        <Tabs
+          value={activeSubTab}
+          onValueChange={(v) =>
+            setActiveSubTab(
+              v as 'swagger' | 'terraform' | 'mcp' | 'plugins_skills'
+            )
+          }
+        >
+          <TabsList className="h-8 flex-wrap">
+            <TabsTrigger value="swagger" className="text-xs gap-1.5">
+              <Globe className="w-3.5 h-3.5 text-emerald-500" />
+              <span>OpenAPI 3.1 / Swagger UI</span>
+              <Badge variant="secondary" className="font-mono text-[9px] px-1 py-0">
+                {endpoints.length}
+              </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="terraform" className="text-xs gap-1.5">
+              <Code2 className="w-3.5 h-3.5 text-sky-500" />
+              <span>Terraform IaC & AWS Synthetics</span>
+              <Badge variant="secondary" className="font-mono text-[9px] px-1 py-0">
+                {iacFiles.length} files
+              </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="mcp" className="text-xs gap-1.5">
+              <Terminal className="w-3.5 h-3.5 text-indigo-500" />
+              <span>MCP Server & Nova Lite Judge</span>
+            </TabsTrigger>
+            <TabsTrigger value="plugins_skills" className="text-xs gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              <span>AI Skills, Plugins & Clone-Adapt</span>
+              <Badge variant="secondary" className="font-mono text-[9px] px-1 py-0">
+                {BUILTIN_GATE_PLUGINS.length} plugins · {aiSkillBundle.length} skills
+              </Badge>
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
 
-          <CardContent className="p-4 space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {mcpTools.map((tool) => (
-                <button
-                  key={tool.name}
-                  type="button"
-                  onClick={() => setSelectedTool(tool.name)}
-                  className={`p-2 rounded-md border text-left transition-colors cursor-pointer ${
-                    selectedTool === tool.name
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border hover:bg-muted/40'
-                  }`}
-                >
-                  <div className="font-mono text-xs font-semibold text-foreground">
-                    {tool.name}
-                  </div>
-                  <div className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
-                    {tool.description}
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <div className="text-[11px] font-mono uppercase text-muted-foreground mb-1">
-                  Request Payload (params)
-                </div>
-                <pre className="p-3 rounded-md bg-zinc-950 text-zinc-100 font-mono text-[11px] overflow-x-auto h-44 border border-border">
-                  {JSON.stringify(activeToolObj.samplePayload, null, 2)}
-                </pre>
-              </div>
-              <div>
-                <div className="text-[11px] font-mono uppercase text-muted-foreground mb-1">
-                  JSON-RPC Response
-                </div>
-                <pre className="p-3 rounded-md bg-zinc-950 text-emerald-400 font-mono text-[11px] overflow-x-auto h-44 border border-border">
-                  {toolOutput}
-                </pre>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-5">
-          <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row items-center justify-between space-y-0">
-            <div>
-              <CardTitle className="text-sm">MCP Client Configuration</CardTitle>
-              <CardDescription>
-                Add to <code className="font-mono">claude_desktop_config.json</code>{' '}
-                or Cursor MCP settings.
-              </CardDescription>
-            </div>
-            <Button
-              variant="outline"
-              size="xs"
-              onClick={() => {
-                navigator.clipboard.writeText(mcpConfigJson);
-                setCopiedConfig(true);
-                setTimeout(() => setCopiedConfig(false), 2000);
-              }}
-            >
-              {copiedConfig ? (
-                <Check className="text-emerald-600 dark:text-emerald-400 !size-3" />
-              ) : (
-                <Copy className="!size-3" />
-              )}
-              {copiedConfig ? 'Copied' : 'Copy JSON'}
-            </Button>
-          </CardHeader>
-          <CardContent className="p-4 space-y-3">
-            <pre className="p-3 rounded-md bg-zinc-950 text-zinc-100 font-mono text-[11px] overflow-x-auto border border-border">
-              {mcpConfigJson}
-            </pre>
-            <div className="text-xs text-muted-foreground space-y-1">
-              <p>
-                <strong className="text-foreground">Supported Transports:</strong>{' '}
-                stdio & SSE (<code className="font-mono">/api/mcp/sse</code>)
-              </p>
-              <p>
-                <strong className="text-foreground">IAM Role:</strong>{' '}
-                <code className="font-mono">{config.infrastructure.iamRoleArn}</code>
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
+          <span>Judge Model:</span>
+          <Badge variant="outline" className="font-mono text-[10px]">
+            {effectiveConfig.infrastructure.visualJudgeModel}
+          </Badge>
+        </div>
       </div>
+
+      {/* =====================================================================
+          SUB-TAB 1: INTERACTIVE OPENAPI 3.1 / SWAGGER UI EXPLORER
+         ===================================================================== */}
+      {activeSubTab === 'swagger' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
+          {/* Left: Endpoint Catalog */}
+          <Card className="lg:col-span-5">
+            <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <span>Swagger UI — Endpoint Catalog</span>
+                  <Badge variant="success" className="font-mono text-[10px]">
+                    OAS 3.1.0
+                  </Badge>
+                </CardTitle>
+                <CardDescription>
+                  Select an endpoint to inspect schema and execute live requests against{' '}
+                  <code className="font-mono">server.ts</code>.
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => setShowRawOpenApiSpec((prev) => !prev)}
+              >
+                <Code2 className="!size-3" />
+                {showRawOpenApiSpec ? 'Hide OAS JSON' : 'openapi.json'}
+              </Button>
+            </CardHeader>
+
+            <CardContent className="p-3 space-y-2">
+              {showRawOpenApiSpec && (
+                <div className="mb-3 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-mono text-muted-foreground">
+                      GET {effectiveConfig.infrastructure.openApiSpecPath}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() => {
+                        navigator.clipboard.writeText(openApiSpecJson);
+                        setCopiedOpenApi(true);
+                        setTimeout(() => setCopiedOpenApi(false), 2000);
+                      }}
+                    >
+                      {copiedOpenApi ? (
+                        <Check className="!size-3 text-emerald-500" />
+                      ) : (
+                        <Copy className="!size-3" />
+                      )}
+                      {copiedOpenApi ? 'Copied Spec' : 'Copy OAS 3.1'}
+                    </Button>
+                  </div>
+                  <pre className="p-2.5 rounded-md bg-zinc-950 text-zinc-100 font-mono text-[10px] overflow-x-auto max-h-56 border border-border">
+                    {openApiSpecJson}
+                  </pre>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                {endpoints.map((ep) => {
+                  const isSelected = ep.id === activeEndpoint.id;
+                  return (
+                    <button
+                      key={ep.id}
+                      type="button"
+                      onClick={() => handleSelectEndpoint(ep.id)}
+                      className={`w-full p-2.5 rounded-md border text-left transition-colors cursor-pointer flex items-start justify-between gap-2 ${
+                        isSelected
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:bg-muted/40'
+                      }`}
+                    >
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold uppercase ${
+                              ep.method === 'GET'
+                                ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30'
+                                : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                            }`}
+                          >
+                            {ep.method}
+                          </span>
+                          <span className="font-mono text-xs font-semibold text-foreground truncate">
+                            {ep.path}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground line-clamp-1">
+                          {ep.summary}
+                        </div>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className="font-mono text-[9px] shrink-0"
+                      >
+                        {ep.tag}
+                      </Badge>
+                    </button>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Right: Interactive "Try it out" Request & Live Response Console */}
+          <Card className="lg:col-span-7">
+            <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row items-center justify-between space-y-0">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold uppercase ${
+                      activeEndpoint.method === 'GET'
+                        ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30'
+                        : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                    }`}
+                  >
+                    {activeEndpoint.method}
+                  </span>
+                  <CardTitle className="text-sm font-mono truncate">
+                    {activeEndpoint.path}
+                  </CardTitle>
+                </div>
+                <CardDescription className="mt-0.5">
+                  {activeEndpoint.description}
+                </CardDescription>
+              </div>
+              <Button
+                size="xs"
+                onClick={handleExecuteSwaggerRequest}
+                disabled={isExecutingSwagger}
+              >
+                <Play className="fill-current !size-2.5" />
+                {isExecutingSwagger ? 'Executing…' : 'Execute (Try it out)'}
+              </Button>
+            </CardHeader>
+
+            <CardContent className="p-4 space-y-3">
+              {activeEndpoint.method === 'GET' && (
+                <div>
+                  <label className="block text-[11px] font-mono uppercase text-muted-foreground mb-1">
+                    Query Parameters (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={customQueryString}
+                    onChange={(e) => setCustomQueryString(e.target.value)}
+                    placeholder="e.g. target=www.prod.staging"
+                    className="w-full h-8 px-2.5 rounded-md border border-border bg-background font-mono text-xs text-foreground"
+                  />
+                </div>
+              )}
+
+              {activeEndpoint.method === 'POST' && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] font-mono uppercase text-muted-foreground">
+                      Request Body (application/json)
+                    </span>
+                    <span className="text-[10px] font-mono text-muted-foreground">
+                      Editable JSON payload
+                    </span>
+                  </div>
+                  <textarea
+                    value={customRequestBody}
+                    onChange={(e) => setCustomRequestBody(e.target.value)}
+                    rows={7}
+                    className="w-full p-2.5 rounded-md bg-zinc-950 text-zinc-100 font-mono text-[11px] border border-border focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+              )}
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-mono uppercase text-muted-foreground">
+                    Live Server Response ({swaggerResponse.url})
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      variant={
+                        swaggerResponse.status >= 200 &&
+                        swaggerResponse.status < 300
+                          ? 'success'
+                          : 'destructive'
+                      }
+                      className="font-mono text-[10px]"
+                    >
+                      HTTP {swaggerResponse.status}
+                    </Badge>
+                    <span className="text-[11px] font-mono text-muted-foreground">
+                      {swaggerResponse.latencyMs}ms
+                    </span>
+                  </div>
+                </div>
+                <pre className="p-3 rounded-md bg-zinc-950 text-emerald-400 font-mono text-[11px] overflow-x-auto max-h-72 border border-border">
+                  {swaggerResponse.body}
+                </pre>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* =====================================================================
+          SUB-TAB 2: TERRAFORM IaC & AWS SYNTHETICS / NOVA LITE CODE BUNDLE
+         ===================================================================== */}
+      {activeSubTab === 'terraform' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
+          {/* Left: File Selector & AWS Deployment Checklist */}
+          <Card className="lg:col-span-4">
+            <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4">
+              <CardTitle className="text-sm">
+                AWS Terraform & Synthetics Bundle
+              </CardTitle>
+              <CardDescription>
+                Dynamically synced with your {apps.length} configured properties
+                and {testSuite.length} canary checks.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-3 space-y-2">
+              <div className="space-y-1.5">
+                {iacFiles.map((file) => {
+                  const isSelected = file.id === activeIacFile.id;
+                  return (
+                    <button
+                      key={file.id}
+                      type="button"
+                      onClick={() => setSelectedIacFileId(file.id)}
+                      className={`w-full p-2.5 rounded-md border text-left transition-colors cursor-pointer ${
+                        isSelected
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:bg-muted/40'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-xs font-semibold text-foreground truncate">
+                          {file.label}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className="font-mono text-[9px] shrink-0"
+                        >
+                          {file.badge}
+                        </Badge>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground line-clamp-2 mt-1">
+                        {file.description}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="p-2.5 rounded-md bg-muted/30 border border-border space-y-1.5 text-[11px]">
+                <div className="font-semibold text-foreground flex items-center justify-between">
+                  <span>100% Terraform-Managed Config Matrix</span>
+                  <Badge variant="success" className="font-mono text-[9px] px-1 py-0">
+                    12 / 12 IaC Domains
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-2 gap-1 text-[10px] font-mono text-muted-foreground">
+                  <span>✓ S3 Bucket + Lifecycle</span>
+                  <span>✓ S3 Suites (CSV + JSON)</span>
+                  <span>✓ S3 Runtime Config JSON</span>
+                  <span>✓ SSM Parameter Store (3)</span>
+                  <span>✓ DynamoDB + Seeded Rules</span>
+                  <span>✓ Canary ZIP + HostMaps</span>
+                  <span>✓ Viewport & Timeouts</span>
+                  <span>✓ Bedrock Nova Lite Config</span>
+                  <span>✓ CW Logs & Pass Alarms</span>
+                  <span>✓ SNS Alert Topic</span>
+                  <span>✓ ECR & App Runner Env</span>
+                  <span>✓ Auto .env.terraform</span>
+                </div>
+                <pre className="p-2 rounded bg-zinc-950 text-zinc-200 font-mono text-[10px] overflow-x-auto mt-1">
+                  {`cd infra/terraform
+terraform init
+terraform validate
+terraform apply -auto-approve`}
+                </pre>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Right: Active IaC / Canary Script Code Viewer */}
+          <Card className="lg:col-span-8">
+            <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row items-center justify-between space-y-0">
+              <div>
+                <div className="flex items-center gap-2">
+                  <CardTitle className="text-sm font-mono">
+                    {activeIacFile.label}
+                  </CardTitle>
+                  <Badge variant="secondary" className="font-mono text-[10px]">
+                    {activeIacFile.badge}
+                  </Badge>
+                </div>
+                <CardDescription className="mt-0.5">
+                  {activeIacFile.description}
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => {
+                  navigator.clipboard.writeText(activeIacFile.content);
+                  setCopiedIacFile(true);
+                  setTimeout(() => setCopiedIacFile(false), 2000);
+                }}
+              >
+                {copiedIacFile ? (
+                  <Check className="text-emerald-500 !size-3" />
+                ) : (
+                  <Copy className="!size-3" />
+                )}
+                {copiedIacFile ? 'Copied File' : 'Copy File'}
+              </Button>
+            </CardHeader>
+            <CardContent className="p-3">
+              <pre className="p-3 rounded-md bg-zinc-950 text-zinc-100 font-mono text-[11px] overflow-x-auto max-h-[520px] border border-border leading-relaxed">
+                {activeIacFile.content}
+              </pre>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* =====================================================================
+          SUB-TAB 3: MCP SERVER TOOL INSPECTOR & CLIENT CONFIG
+         ===================================================================== */}
+      {activeSubTab === 'mcp' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
+          <Card className="lg:col-span-7">
+            <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle className="text-sm">
+                  MCP Server Tool Inspector (JSON-RPC 2.0)
+                </CardTitle>
+                <CardDescription>
+                  Test MCP tool calls against <code className="font-mono">POST /api/v1/mcp/rpc</code>{' '}
+                  and AWS Bedrock Nova Lite (<code className="font-mono">{effectiveConfig.infrastructure.visualJudgeModel}</code>).
+                </CardDescription>
+              </div>
+              <Button size="xs" onClick={handleExecuteMcpTool}>
+                <Play className="fill-current !size-2.5" />
+                Invoke MCP Tool
+              </Button>
+            </CardHeader>
+
+            <CardContent className="p-4 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {mcpTools.map((tool) => (
+                  <button
+                    key={tool.name}
+                    type="button"
+                    onClick={() => setSelectedTool(tool.name)}
+                    className={`p-2 rounded-md border text-left transition-colors cursor-pointer ${
+                      selectedTool === tool.name
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:bg-muted/40'
+                    }`}
+                  >
+                    <div className="font-mono text-xs font-semibold text-foreground">
+                      {tool.name}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
+                      {tool.description}
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <div className="text-[11px] font-mono uppercase text-muted-foreground mb-1">
+                    Request Payload (params)
+                  </div>
+                  <pre className="p-3 rounded-md bg-zinc-950 text-zinc-100 font-mono text-[11px] overflow-x-auto h-48 border border-border">
+                    {JSON.stringify(activeToolObj.samplePayload, null, 2)}
+                  </pre>
+                </div>
+                <div>
+                  <div className="text-[11px] font-mono uppercase text-muted-foreground mb-1">
+                    JSON-RPC Response
+                  </div>
+                  <pre className="p-3 rounded-md bg-zinc-950 text-emerald-400 font-mono text-[11px] overflow-x-auto h-48 border border-border">
+                    {toolOutput}
+                  </pre>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="lg:col-span-5">
+            <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle className="text-sm">MCP Client Configuration</CardTitle>
+                <CardDescription>
+                  Add to <code className="font-mono">claude_desktop_config.json</code>{' '}
+                  or Cursor MCP settings.
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => {
+                  navigator.clipboard.writeText(mcpConfigJson);
+                  setCopiedConfig(true);
+                  setTimeout(() => setCopiedConfig(false), 2000);
+                }}
+              >
+                {copiedConfig ? (
+                  <Check className="text-emerald-600 dark:text-emerald-400 !size-3" />
+                ) : (
+                  <Copy className="!size-3" />
+                )}
+                {copiedConfig ? 'Copied' : 'Copy JSON'}
+              </Button>
+            </CardHeader>
+            <CardContent className="p-4 space-y-3">
+              <pre className="p-3 rounded-md bg-zinc-950 text-zinc-100 font-mono text-[11px] overflow-x-auto border border-border">
+                {mcpConfigJson}
+              </pre>
+              <div className="text-xs text-muted-foreground space-y-1">
+                <p>
+                  <strong className="text-foreground">Supported Transports:</strong>{' '}
+                  HTTP JSON-RPC (<code className="font-mono">/api/v1/mcp/rpc</code>) & SSE (<code className="font-mono">/api/mcp/sse</code>)
+                </p>
+                <p>
+                  <strong className="text-foreground">Bedrock Model ARN:</strong>{' '}
+                  <code className="font-mono">{effectiveConfig.infrastructure.bedrockModelArn}</code>
+                </p>
+                <p>
+                  <strong className="text-foreground">IAM Role:</strong>{' '}
+                  <code className="font-mono">{effectiveConfig.infrastructure.iamRoleArn}</code>
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* =====================================================================
+          SUB-TAB 4: AI SKILLS, PLUGINS & ONE-SHOT CLONE-ADAPT STUDIO
+         ===================================================================== */}
+      {activeSubTab === 'plugins_skills' && (
+        <div className="space-y-3">
+          {/* Top Row: One-Shot AI Clone & Adapt Prompt Generator + Included SKILL.md Explorer */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
+            {/* Left 6 cols: Interactive "Clone & Adapt with AI" Prompt Generator */}
+            <Card className="lg:col-span-6">
+              <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row items-center justify-between gap-2 space-y-0">
+                <div>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                    <span>One-Shot AI "Clone & Adapt" Prompt Builder</span>
+                  </CardTitle>
+                  <CardDescription>
+                    Configure your target organization below and copy the generated prompt into Claude Code, Cursor, Copilot, or Gemini CLI right after <code className="font-mono">git clone</code>.
+                  </CardDescription>
+                </div>
+                <Button
+                  size="xs"
+                  onClick={() => {
+                    navigator.clipboard.writeText(generatedOneShotPrompt);
+                    setCopiedOneShotPrompt(true);
+                    setTimeout(() => setCopiedOneShotPrompt(false), 2000);
+                  }}
+                >
+                  {copiedOneShotPrompt ? (
+                    <Check className="!size-3" />
+                  ) : (
+                    <Copy className="!size-3" />
+                  )}
+                  {copiedOneShotPrompt ? 'Copied AI Prompt' : 'Copy AI Prompt'}
+                </Button>
+              </CardHeader>
+
+              <CardContent className="p-3.5 space-y-3">
+                {/* 1-Click Industry Presets */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-mono text-muted-foreground mr-1">
+                    Presets:
+                  </span>
+                  {[
+                    {
+                      label: 'Global Bank',
+                      org: 'GlobalBank Edge',
+                      domain: 'edge.globalbank.com',
+                      cdn: 'Akamai Edge' as const,
+                      region: 'us-east-1',
+                      bucket: 'globalbank-synthetics-artifacts-prod',
+                      props: 'ibanking, payments, wealth, fx-api',
+                      envs: 'prod, uat, dr',
+                    },
+                    {
+                      label: 'Retail Commerce',
+                      org: 'OmniRetail CDN',
+                      domain: 'shop.omniretail.io',
+                      cdn: 'Akamai Edge' as const,
+                      region: 'eu-west-1',
+                      bucket: 'omniretail-release-gate-eu',
+                      props: 'storefront, checkout, cart-api, catalog',
+                      envs: 'prod, staging-eu, qa',
+                    },
+                    {
+                      label: 'CloudFront SaaS',
+                      org: 'CloudPulse SaaS',
+                      domain: 'app.cloudpulse.dev',
+                      cdn: 'AWS CloudFront' as const,
+                      region: 'us-west-2',
+                      bucket: 'cloudpulse-synthetics-usw2',
+                      props: 'dashboard, auth-sso, graphql, billing',
+                      envs: 'prod, preprod',
+                    },
+                  ].map((preset) => (
+                    <Button
+                      key={preset.label}
+                      variant="outline"
+                      size="xs"
+                      onClick={() => {
+                        setAdaptOrgName(preset.org);
+                        setAdaptDomain(preset.domain);
+                        setAdaptCdnProvider(preset.cdn);
+                        setAdaptAwsRegion(preset.region);
+                        setAdaptS3Bucket(preset.bucket);
+                        setAdaptPropsCsv(preset.props);
+                        setAdaptEnvsCsv(preset.envs);
+                      }}
+                    >
+                      {preset.label}
+                    </Button>
+                  ))}
+                </div>
+
+                {/* Form Inputs */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <label className="text-[11px] font-mono text-muted-foreground block mb-1">
+                      Organization Title
+                    </label>
+                    <input
+                      type="text"
+                      value={adaptOrgName}
+                      onChange={(e) => setAdaptOrgName(e.target.value)}
+                      className="w-full h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-mono text-muted-foreground block mb-1">
+                      Primary Domain
+                    </label>
+                    <input
+                      type="text"
+                      value={adaptDomain}
+                      onChange={(e) => setAdaptDomain(e.target.value)}
+                      className="w-full h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-mono text-muted-foreground block mb-1">
+                      CDN Edge Provider
+                    </label>
+                    <select
+                      value={adaptCdnProvider}
+                      onChange={(e) =>
+                        setAdaptCdnProvider(
+                          e.target.value as
+                            | 'Akamai Edge'
+                            | 'AWS CloudFront'
+                            | 'Fastly'
+                            | 'Cloudflare'
+                        )
+                      }
+                      className="w-full h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                    >
+                      <option value="Akamai Edge">Akamai Edge</option>
+                      <option value="AWS CloudFront">AWS CloudFront</option>
+                      <option value="Fastly">Fastly</option>
+                      <option value="Cloudflare">Cloudflare</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-mono text-muted-foreground block mb-1">
+                      AWS Region
+                    </label>
+                    <input
+                      type="text"
+                      value={adaptAwsRegion}
+                      onChange={(e) => setAdaptAwsRegion(e.target.value)}
+                      className="w-full h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="text-[11px] font-mono text-muted-foreground block mb-1">
+                      S3 Artifact Bucket
+                    </label>
+                    <input
+                      type="text"
+                      value={adaptS3Bucket}
+                      onChange={(e) => setAdaptS3Bucket(e.target.value)}
+                      className="w-full h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="text-[11px] font-mono text-muted-foreground block mb-1">
+                      Properties (comma-separated IDs)
+                    </label>
+                    <input
+                      type="text"
+                      value={adaptPropsCsv}
+                      onChange={(e) => setAdaptPropsCsv(e.target.value)}
+                      className="w-full h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-mono text-muted-foreground block mb-1">
+                      Environments
+                    </label>
+                    <input
+                      type="text"
+                      value={adaptEnvsCsv}
+                      onChange={(e) => setAdaptEnvsCsv(e.target.value)}
+                      className="w-full h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-[11px] font-mono uppercase text-muted-foreground mb-1">
+                    Generated One-Shot AI Agent Prompt (Paste into Claude Code / Cursor / Copilot)
+                  </div>
+                  <pre className="p-3 rounded-md bg-zinc-950 text-zinc-100 font-mono text-[11px] overflow-x-auto max-h-60 border border-border leading-relaxed whitespace-pre-wrap">
+                    {generatedOneShotPrompt}
+                  </pre>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Right 6 cols: Repository AI Context Files & Modular SKILL.md Explorer */}
+            <Card className="lg:col-span-6">
+              <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row items-center justify-between gap-2 space-y-0">
+                <div>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-sky-500" />
+                    <span>Repository AI Skills & Agent Playbooks on Disk</span>
+                  </CardTitle>
+                  <CardDescription>
+                    Built-in <code className="font-mono">CLAUDE.md</code>, <code className="font-mono">AGENTS.md</code>, <code className="font-mono">.cursorrules</code>, and <code className="font-mono">/skills/*/SKILL.md</code> files so AI coding agents understand the repo immediately.
+                  </CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  onClick={() => {
+                    navigator.clipboard.writeText(activeSkillFile.content);
+                    setCopiedSkillFile(true);
+                    setTimeout(() => setCopiedSkillFile(false), 2000);
+                  }}
+                >
+                  {copiedSkillFile ? (
+                    <Check className="text-emerald-500 !size-3" />
+                  ) : (
+                    <Copy className="!size-3" />
+                  )}
+                  {copiedSkillFile ? 'Copied File' : `Copy ${activeSkillFile.filename}`}
+                </Button>
+              </CardHeader>
+
+              <CardContent className="p-3.5 space-y-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {aiSkillBundle.map((skill) => {
+                    const isSelected = skill.id === activeSkillFile.id;
+                    return (
+                      <button
+                        key={skill.id}
+                        type="button"
+                        onClick={() => setSelectedSkillFileId(skill.id)}
+                        className={`px-2.5 py-1.5 rounded-md border text-left transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'border-primary bg-primary/10'
+                            : 'border-border hover:bg-muted/40'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-[11px] font-semibold text-foreground">
+                            {skill.filename}
+                          </span>
+                          <Badge
+                            variant="outline"
+                            className="font-mono text-[9px] px-1 py-0"
+                          >
+                            {skill.badge}
+                          </Badge>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="text-xs text-muted-foreground bg-muted/30 px-3 py-2 rounded border border-border flex items-center justify-between gap-2">
+                  <span>{activeSkillFile.description}</span>
+                  <Badge variant="secondary" className="font-mono text-[10px] shrink-0">
+                    {activeSkillFile.category}
+                  </Badge>
+                </div>
+
+                <pre className="p-3 rounded-md bg-zinc-950 text-zinc-100 font-mono text-[11px] overflow-x-auto max-h-64 border border-border leading-relaxed whitespace-pre-wrap">
+                  {activeSkillFile.content}
+                </pre>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Bottom Row: Pluggable Release Gate Engine & Live Plugin Sandbox */}
+          <Card>
+            <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+              <div>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                  <span>
+                    Modular Release Gate Plugin Pipeline (
+                    <code className="font-mono text-xs">
+                      src/engine/pluginRegistry.ts
+                    </code>
+                    )
+                  </span>
+                  <Badge
+                    variant={
+                      livePluginReport.overallPipelineVerdict === 'GO'
+                        ? 'success'
+                        : livePluginReport.overallPipelineVerdict === 'REVIEW'
+                        ? 'warning'
+                        : 'destructive'
+                    }
+                    className="font-mono text-[10px]"
+                  >
+                    Pipeline Verdict: {livePluginReport.overallPipelineVerdict}
+                  </Badge>
+                </CardTitle>
+                <CardDescription>
+                  Toggle release gate plugins on/off and test them against live edge comparison scenarios. Extend with custom rules by following <code className="font-mono">skills/create-gate-plugin/SKILL.md</code>.
+                </CardDescription>
+              </div>
+
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[11px] font-mono text-muted-foreground">
+                  Test Scenario:
+                </span>
+                {(
+                  [
+                    {
+                      id: 'T02_CACHE_DRIFT',
+                      label: 'T02: Cacheability Drift (NO-GO)',
+                    },
+                    {
+                      id: 'T03_VISUAL_MINOR',
+                      label: 'T03: Nova Lite Minor Diff (REVIEW)',
+                    },
+                    {
+                      id: 'T05_COOKIE_DRIFT',
+                      label: 'T05: Cookie & Latency Drift',
+                    },
+                    {
+                      id: 'T01_CLEAN',
+                      label: 'T01: 100% Edge Parity (GO)',
+                    },
+                  ] as const
+                ).map((scen) => (
+                  <Button
+                    key={scen.id}
+                    variant={
+                      selectedPluginScenario === scen.id ? 'default' : 'outline'
+                    }
+                    size="xs"
+                    onClick={() => setSelectedPluginScenario(scen.id)}
+                  >
+                    {scen.label}
+                  </Button>
+                ))}
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-3.5">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {BUILTIN_GATE_PLUGINS.map((plugin) => {
+                  const isEnabled = enabledPluginIds.includes(plugin.id);
+                  const evalResult = livePluginReport.results.find(
+                    (r) => r.pluginId === plugin.id
+                  );
+
+                  return (
+                    <div
+                      key={plugin.id}
+                      className={`p-3 rounded-lg border transition-colors flex flex-col justify-between gap-2 ${
+                        isEnabled
+                          ? 'border-border bg-card'
+                          : 'border-border/50 bg-muted/20 opacity-65'
+                      }`}
+                    >
+                      <div className="space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="text-xs font-semibold text-foreground flex items-center gap-1.5 flex-wrap">
+                              <span>{plugin.name}</span>
+                              <Badge
+                                variant="outline"
+                                className="font-mono text-[9px] px-1 py-0"
+                              >
+                                v{plugin.version}
+                              </Badge>
+                            </div>
+                            <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
+                              Hook: <code>{plugin.hookPoint}</code> ·{' '}
+                              {plugin.blockingOnFailure
+                                ? 'Blocking (NO-GO)'
+                                : 'Advisory (REVIEW)'}
+                            </div>
+                          </div>
+                          <Switch
+                            checked={isEnabled}
+                            onCheckedChange={() => togglePluginId(plugin.id)}
+                            aria-label={`Toggle ${plugin.name}`}
+                          />
+                        </div>
+
+                        <p className="text-[11px] text-muted-foreground leading-snug">
+                          {plugin.description}
+                        </p>
+                      </div>
+
+                      {isEnabled && evalResult ? (
+                        <div className="pt-2 border-t border-border/70 space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <Badge
+                              variant={
+                                evalResult.verdict === 'PASS'
+                                  ? 'success'
+                                  : evalResult.verdict === 'WARN'
+                                  ? 'warning'
+                                  : 'destructive'
+                              }
+                              className="font-mono text-[9px]"
+                            >
+                              {evalResult.verdict}
+                            </Badge>
+                            <span className="text-[10px] font-mono text-muted-foreground">
+                              {evalResult.executionTimeMs}ms
+                            </span>
+                          </div>
+                          <div className="text-[11px] font-medium text-foreground">
+                            {evalResult.summary}
+                          </div>
+                          <ul className="text-[10px] font-mono text-muted-foreground space-y-0.5 list-disc pl-3.5">
+                            {evalResult.findings.map((f, idx) => (
+                              <li key={idx}>{f}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : (
+                        <div className="pt-2 border-t border-border/50 text-[10px] font-mono text-muted-foreground">
+                          Plugin disabled in pipeline
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </main>
   );
 };

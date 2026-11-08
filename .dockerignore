@@ -1,0 +1,9 @@
+node_modules
+dist
+.git
+.env
+.playwright-cli
+infra/terraform/.terraform
+infra/terraform/*.tfstate*
+infra/terraform/tfplan
+*.log

@@ -238,7 +238,8 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
   const isVisualAccepted = acceptedVisualTests.includes(item.testId);
   const rawVisualDiff =
     item.visualResult?.verdict === 'minor' ||
-    item.visualResult?.verdict === 'different';
+    item.visualResult?.verdict === 'different' ||
+    (item.visualResult?.differences?.length ?? 0) > 0;
   const hasVisualDiff =
     rawVisualDiff && !(ignoreAcceptedDiffs && isVisualAccepted);
 
@@ -573,6 +574,13 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                       AI Verdict: {item.visualResult?.verdict.toUpperCase() || 'SAME'}
                     </span>
                     <Badge
+                      variant="outline"
+                      className="font-mono text-[10px]"
+                      title="Evaluated by Amazon Bedrock Nova Lite multimodal judge (arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0)"
+                    >
+                      AWS Nova Lite · amazon.nova-lite-v1:0
+                    </Badge>
+                    <Badge
                       variant={
                         rawVisualDiff && !isVisualAccepted ? 'warning' : 'secondary'
                       }
@@ -621,9 +629,10 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                   size="xs"
                   onClick={() => onRunAiVisualJudge(item.testId)}
                   disabled={isRunningAi}
+                  title="Invoke Amazon Bedrock Nova Lite (amazon.nova-lite-v1:0) visual diff judge via POST /api/v1/judge/nova-lite"
                 >
                   <Sparkles className="!size-3" />
-                  {isRunningAi ? 'Analyzing…' : 'Run AI Judge'}
+                  {isRunningAi ? 'Analyzing…' : 'Run Nova Lite Judge'}
                 </Button>
               </div>
             </div>

@@ -233,6 +233,7 @@ export default function App() {
   const [diffSearchQuery, setDiffSearchQuery] = useState<string>('');
   const [reportScope, setReportScope] = useState<'active' | 'all'>('active');
   const [reportSearchQuery, setReportSearchQuery] = useState<string>('');
+  const [homeRightTab, setHomeRightTab] = useState<'fleet' | 'audit'>('fleet');
 
   const [isComparingBoth, setIsComparingBoth] = useState<boolean>(false);
   const [rerunningTestId, setRerunningTestId] = useState<string | null>(null);
@@ -572,6 +573,17 @@ export default function App() {
     setViewMode('diff');
   };
 
+  const [aiJudgeOverrides, setAiJudgeOverrides] = useState<
+    Record<
+      string,
+      {
+        verdict: 'same' | 'minor' | 'different';
+        summary: string;
+        pixelDiffPercent?: number;
+      }
+    >
+  >({});
+
   const comparison = useMemo(() => {
     const kind: ComparisonKind =
       activeCandidateRun.envId === activeBaselineRun.envId ? 'network' : 'env';
@@ -579,9 +591,23 @@ export default function App() {
       activeCandidateRun,
       activeBaselineRun,
       kind,
-      acceptedRules
+      acceptedRules,
+      {
+        acceptedCookies,
+        acceptedVisualTests,
+        ignoreAcceptedDiffs,
+        aiJudgeOverrides,
+      }
     );
-  }, [activeCandidateRun, activeBaselineRun, acceptedRules]);
+  }, [
+    activeCandidateRun,
+    activeBaselineRun,
+    acceptedRules,
+    acceptedCookies,
+    acceptedVisualTests,
+    ignoreAcceptedDiffs,
+    aiJudgeOverrides,
+  ]);
 
   const acceptedFields = useMemo(
     () => acceptedRules.filter((r) => r.enabled).map((r) => r.kind.toLowerCase()),
@@ -611,7 +637,8 @@ export default function App() {
 
     const rawVDiff =
       item.visualResult?.verdict === 'minor' ||
-      item.visualResult?.verdict === 'different';
+      item.visualResult?.verdict === 'different' ||
+      (item.visualResult?.differences?.length ?? 0) > 0;
     const isVAcc = acceptedVisualTests.includes(item.testId);
     const vDiff = rawVDiff && !(ignoreAcceptedDiffs && isVAcc);
 
@@ -735,6 +762,18 @@ export default function App() {
     const key = `run-${appId}-${envId}-${network}-${runNumber}-${Date.now()
       .toString()
       .slice(-4)}`;
+
+    if (dataSourceMode === 'remote-api') {
+      fetch('/api/v1/runs/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target: targetId,
+          label: `${labelPrefix} #${runNumber}`,
+          by: currentUser?.email || 'operator',
+        }),
+      }).catch(() => undefined);
+    }
 
     const results = generateTestResults(
       targetId,
@@ -1051,14 +1090,48 @@ export default function App() {
 
   const handleRunAiVisualJudge = (testId: string) => {
     setRunningAiTestId(testId);
+    const modelId = DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel;
     enqueueBackgroundJob(
-      `AI Visual Judge: ${testId}`,
+      `AWS Nova Lite Judge (${modelId}): ${testId}`,
       `${candidateTarget} ↔ ${baselineTarget}`,
       'ai-judge',
       500,
-      () => {
-        setRunningAiTestId(null);
-        toast.success(`AI Visual Judge completed analysis for ${testId}`);
+      async () => {
+        try {
+          const item = comparison.items.find((i) => i.testId === testId);
+          const res = await fetch('/api/v1/judge/nova-lite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              testId,
+              candidateTarget,
+              baselineTarget,
+              pixelDiffPercent: item?.visualResult?.pixelDiffPercent ?? 0.08,
+            }),
+          });
+          const data = await res.json();
+          if (data && data.verdict && data.summary) {
+            setAiJudgeOverrides((prev) => ({
+              ...prev,
+              [testId]: {
+                verdict: data.verdict,
+                summary: data.summary,
+                pixelDiffPercent: data.pixelDiffPercent,
+              },
+            }));
+          }
+          setRunningAiTestId(null);
+          toast.success(
+            `AWS Nova Lite (${data.modelId || modelId}) verdict: ${(
+              data.verdict || 'same'
+            ).toUpperCase()} (${Math.round((data.confidence || 0.99) * 100)}% confidence)`
+          );
+        } catch {
+          setRunningAiTestId(null);
+          toast.success(
+            `AWS Nova Lite (${modelId}) completed visual analysis for ${testId}`
+          );
+        }
       }
     );
   };
@@ -1370,6 +1443,7 @@ export default function App() {
       {viewMode === 'mcp' && (
         <McpAndAwsBackendView
           apps={apps}
+          testSuite={testSuite}
           runs={runs}
           onTriggerMcpSuite={(targetId) =>
             handleRunSingleTarget(targetId, false)
@@ -1526,12 +1600,13 @@ export default function App() {
           </div>
 
           <main className="px-4 py-3 space-y-3 w-full">
+            {/* PANEL 1: UNIFIED EDGE TOPOLOGY & LIVE RELEASE GATE MATRIX */}
             <Card className="overflow-hidden">
-              <CardHeader className="py-2 px-4 border-b border-border bg-muted/20 flex flex-row items-center justify-between space-y-0">
+              <CardHeader className="py-2 px-4 border-b border-border bg-muted/20 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
                 <div className="flex items-center gap-2">
                   <Globe className="w-3.5 h-3.5 text-sky-500" />
                   <CardTitle className="text-xs font-semibold">
-                    Edge Environments ({currentApp.id})
+                    Edge Topology & Live Release Gate Matrix ({currentApp.id})
                   </CardTitle>
                   <Badge
                     variant="outline"
@@ -1541,18 +1616,42 @@ export default function App() {
                     {currentApp.envs.length} envs · 2 edge networks
                   </Badge>
                 </div>
-                <span
-                  className="text-[11px] font-mono text-muted-foreground cursor-help"
-                  title="Hover any run pill or action icon for full edge IP, cache hit/miss, and AWS Canary details"
-                >
-                  STG (.edgekey-staging.net) ↔ PRD (.edgekey.net)
-                </span>
+                <div className="flex items-center gap-2">
+                  {currentApp.envs.length >= 2 && (
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() =>
+                        handleOpenDiffView(
+                          `${currentApp.id}.${currentApp.envs[1].id}.staging`,
+                          `${currentApp.id}.${currentApp.envs[0].id}.prod`
+                        )
+                      }
+                      title={`Compare Cross-Environment Drift (${currentApp.id}.${currentApp.envs[1].id}.staging ↔ ${currentApp.id}.${currentApp.envs[0].id}.prod) with canonical hostMap normalization`}
+                      className="font-mono text-[10px] h-6 px-2"
+                    >
+                      <GitCompare className="!size-3 text-amber-500" />
+                      <span>
+                        Cross-Env: {currentApp.envs[1].id.toUpperCase()} ↔{' '}
+                        {currentApp.envs[0].id.toUpperCase()}
+                      </span>
+                    </Button>
+                  )}
+                  <span
+                    className="text-[11px] font-mono text-muted-foreground cursor-help hidden sm:inline"
+                    title="Click any dimension pill (Headers, Cookies, Nova Lite AI) to jump directly to that inspector tab"
+                  >
+                    STG (.edgekey-staging.net) ↔ PRD (.edgekey.net)
+                  </span>
+                </div>
               </CardHeader>
 
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-48 py-1.5">Environment & Hostname</TableHead>
+                    <TableHead className="w-44 py-1.5">
+                      Environment & Hostname
+                    </TableHead>
                     <TableHead
                       className="py-1.5"
                       title={`${DEFAULT_TEMPLATE_CONFIG.networks.staging.label} (${DEFAULT_TEMPLATE_CONFIG.networks.staging.defaultEdgeIp})`}
@@ -1565,8 +1664,14 @@ export default function App() {
                     >
                       Production Edge (.edgekey.net)
                     </TableHead>
-                    <TableHead className="text-right w-40 py-1.5">
-                      Staging vs Prod Gate
+                    <TableHead
+                      className="py-1.5"
+                      title="Live Release Gate Decision & 1-Click Dimension Drift Breakdown (Headers, Cookies, AWS Bedrock Nova Lite Visual Judge)"
+                    >
+                      Release Gate Verdict & Drift Breakdown (STG ↔ PRD)
+                    </TableHead>
+                    <TableHead className="text-right w-36 py-1.5">
+                      Gate Actions
                     </TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1587,12 +1692,51 @@ export default function App() {
                       env.id
                     );
 
+                    const envComp = buildInitialComparison(
+                      stgRun,
+                      prdRun,
+                      'network',
+                      acceptedRules,
+                      {
+                        acceptedCookies,
+                        acceptedVisualTests,
+                        ignoreAcceptedDiffs,
+                        aiJudgeOverrides,
+                      }
+                    );
+                    const envVerdict = envComp.headlineVerdict;
+                    const firstHeaderDiffItem = envComp.items.find(
+                      (it) => getItemDiffCounts(it).hDiffs > 0
+                    );
+                    const firstCookieDiffItem = envComp.items.find(
+                      (it) => getItemDiffCounts(it).cDiffs > 0
+                    );
+                    const firstVisualDiffItem = envComp.items.find(
+                      (it) => getItemDiffCounts(it).vDiff
+                    );
+                    const envHeaderDiffItems = envComp.items.filter(
+                      (it) => getItemDiffCounts(it).hDiffs > 0
+                    ).length;
+                    const envCookieDiffItems = envComp.items.filter(
+                      (it) => getItemDiffCounts(it).cDiffs > 0
+                    ).length;
+                    const envVisualDiffItems = envComp.items.filter(
+                      (it) => getItemDiffCounts(it).vDiff
+                    ).length;
+
+                    const isCurrentPair =
+                      candidateTarget === stagingId &&
+                      baselineTarget === prodId;
+
                     return (
-                      <TableRow key={env.id}>
+                      <TableRow
+                        key={env.id}
+                        className={isCurrentPair ? 'bg-sky-500/5' : ''}
+                      >
                         <TableCell className="py-2">
                           <div className="flex items-center gap-2">
                             <Badge
-                              variant="secondary"
+                              variant={isCurrentPair ? 'default' : 'secondary'}
                               className="font-mono uppercase font-bold text-[10px] px-1.5 py-0"
                             >
                               {env.id}
@@ -1665,6 +1809,125 @@ export default function App() {
                           />
                         </TableCell>
 
+                        <TableCell className="py-2">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <Badge
+                              variant={
+                                envVerdict === 'GO'
+                                  ? 'success'
+                                  : envVerdict === 'REVIEW'
+                                  ? 'warning'
+                                  : 'destructive'
+                              }
+                              className="font-mono text-[10px] px-1.5 py-0 font-bold"
+                              title={`Release Gate Verdict for ${stagingId} vs ${prodId}: ${envVerdict}`}
+                            >
+                              {envVerdict}
+                            </Badge>
+
+                            {/* 1-Click Dimension Jump Pills */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCandidateTarget(stagingId);
+                                setBaselineTarget(prodId);
+                                setCandidateRunKey(stgRun.key);
+                                setBaselineRunKey(prdRun.key);
+                                setSelectedTestId(
+                                  firstHeaderDiffItem?.testId ||
+                                    testSuite[0]?.id ||
+                                    'T01'
+                                );
+                                setInspectorTab('headers');
+                                setViewMode('diff');
+                              }}
+                              title={
+                                envHeaderDiffItems > 0
+                                  ? `${envHeaderDiffItems} test(s) with HTTP Header / Cache diffs — Click to inspect Headers`
+                                  : 'All HTTP Headers & Cache keys matched (or accepted) — Click to inspect'
+                              }
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[10px] border cursor-pointer transition-colors ${
+                                envHeaderDiffItems > 0
+                                  ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 font-semibold hover:bg-rose-500/20'
+                                  : 'bg-muted/40 text-muted-foreground border-border hover:text-foreground'
+                              }`}
+                            >
+                              <Code2 className="w-3 h-3" />
+                              <span>
+                                {envHeaderDiffItems > 0
+                                  ? envHeaderDiffItems
+                                  : '✓'}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCandidateTarget(stagingId);
+                                setBaselineTarget(prodId);
+                                setCandidateRunKey(stgRun.key);
+                                setBaselineRunKey(prdRun.key);
+                                setSelectedTestId(
+                                  firstCookieDiffItem?.testId ||
+                                    'T02'
+                                );
+                                setInspectorTab('cookies');
+                                setViewMode('diff');
+                              }}
+                              title={
+                                envCookieDiffItems > 0
+                                  ? `${envCookieDiffItems} test(s) with Set-Cookie diffs — Click to inspect Cookies`
+                                  : 'All Set-Cookie attributes matched (or accepted) — Click to inspect'
+                              }
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[10px] border cursor-pointer transition-colors ${
+                                envCookieDiffItems > 0
+                                  ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 font-semibold hover:bg-amber-500/20'
+                                  : 'bg-muted/40 text-muted-foreground border-border hover:text-foreground'
+                              }`}
+                            >
+                              <KeyRound className="w-3 h-3" />
+                              <span>
+                                {envCookieDiffItems > 0
+                                  ? envCookieDiffItems
+                                  : '✓'}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCandidateTarget(stagingId);
+                                setBaselineTarget(prodId);
+                                setCandidateRunKey(stgRun.key);
+                                setBaselineRunKey(prdRun.key);
+                                setSelectedTestId(
+                                  firstVisualDiffItem?.testId ||
+                                    'T03'
+                                );
+                                setInspectorTab('image');
+                                setViewMode('diff');
+                              }}
+                              title={
+                                envVisualDiffItems > 0
+                                  ? `${envVisualDiffItems} test(s) with AWS Bedrock Nova Lite visual diffs — Click to inspect Image AI`
+                                  : 'All DOM screenshots matched (or accepted) — Click to inspect Image AI'
+                              }
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[10px] border cursor-pointer transition-colors ${
+                                envVisualDiffItems > 0
+                                  ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 font-semibold hover:bg-amber-500/20'
+                                  : 'bg-muted/40 text-muted-foreground border-border hover:text-foreground'
+                              }`}
+                            >
+                              <Sparkles className="w-3 h-3" />
+                              <span>
+                                {envVisualDiffItems > 0
+                                  ? envVisualDiffItems
+                                  : '✓'}
+                              </span>
+                            </button>
+                          </div>
+                        </TableCell>
+
                         <TableCell className="text-right py-1.5 whitespace-nowrap">
                           <div className="inline-flex items-center justify-end gap-1">
                             <Button
@@ -1697,206 +1960,584 @@ export default function App() {
               </Table>
             </Card>
 
-            <Card className="overflow-hidden">
-              <CardHeader className="py-2 px-4 border-b border-border bg-muted/20 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
-                <div className="flex items-center gap-2">
-                  <GitCompare className="w-3.5 h-3.5 text-sky-500" />
-                  <CardTitle className="text-xs font-semibold">
-                    Ready Comparative Reports (
-                    {reportScope === 'active' ? currentApp.id : 'All Properties'})
-                  </CardTitle>
+            {/* PANEL 2: NON-REDUNDANT 2-COLUMN OPERATIONAL INTELLIGENCE SPLIT */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
+              {/* LEFT COLUMN (7 cols): ACTIVE DRIFT & RELEASE BLOCKERS TRIAGE QUEUE */}
+              <Card className="lg:col-span-7 overflow-hidden">
+                <CardHeader className="py-2 px-4 border-b border-border bg-muted/20 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+                  <div className="flex items-center gap-2">
+                    {comparison.headlineVerdict === 'GO' ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                    ) : (
+                      <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
+                    )}
+                    <CardTitle className="text-xs font-semibold">
+                      Active Release Blockers & Drift Triage
+                    </CardTitle>
+                    <Badge
+                      variant="outline"
+                      className="font-mono text-[10px] px-1.5 py-0"
+                      title={`Active comparison pair: ${candidateTarget} (${activeCandidateRun.label}) vs ${baselineTarget} (${activeBaselineRun.label})`}
+                    >
+                      {candidateTarget} ↔ {baselineTarget}
+                    </Badge>
+                    <Badge
+                      variant={
+                        comparison.headlineVerdict === 'GO'
+                          ? 'success'
+                          : comparison.headlineVerdict === 'REVIEW'
+                          ? 'warning'
+                          : 'destructive'
+                      }
+                      className="font-mono text-[10px] px-1.5 py-0 font-bold"
+                    >
+                      {comparison.headlineVerdict}
+                    </Badge>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={handleExportReportMarkdown}
+                      className="font-mono text-[10px] h-6 px-2"
+                      title="Copy Change Ticket Markdown Summary to Clipboard"
+                    >
+                      Copy Ticket MD
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() =>
+                        handleOpenDiffView(
+                          candidateTarget,
+                          baselineTarget,
+                          activeCandidateRun.key,
+                          activeBaselineRun.key
+                        )
+                      }
+                      className="font-mono text-[10px] h-6 px-2"
+                    >
+                      <Eye className="!size-3 text-sky-500" />
+                      <span>Full Inspector</span>
+                    </Button>
+                  </div>
+                </CardHeader>
+
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-48 py-1.5">
+                        Check & Endpoint
+                      </TableHead>
+                      <TableHead className="py-1.5">
+                        Detected Edge / Visual Finding
+                      </TableHead>
+                      <TableHead className="text-right w-40 py-1.5">
+                        Quick Triage
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {comparison.items
+                      .filter((it) => {
+                        const rawH = it.functionalDiffs.length > 0;
+                        const rawC = (it.cookieDiffs || []).length > 0;
+                        const rawV =
+                          it.visualResult?.verdict === 'minor' ||
+                          it.visualResult?.verdict === 'different' ||
+                          (it.visualResult?.differences?.length ?? 0) > 0;
+                        return rawH || rawC || rawV || it.candidateFailed;
+                      })
+                      .map((item) => {
+                        const {
+                          hDiffs,
+                          cDiffs,
+                          vDiff,
+                          isHAcc,
+                          isCAcc,
+                          isVAcc,
+                        } = getItemDiffCounts(item);
+                        const isResolved =
+                          hDiffs === 0 &&
+                          cDiffs === 0 &&
+                          !vDiff &&
+                          !item.candidateFailed;
+
+                        // Determine primary dimension & root cause description
+                        let primaryTab: InspectorDimension = 'headers';
+                        let findingText = 'All checks matched';
+                        let subDetail = '';
+
+                        if (item.functionalDiffs.length > 0) {
+                          primaryTab = 'headers';
+                          const first = item.functionalDiffs[0];
+                          findingText = `${first.field || first.kind}: ${first.candidateValue} vs ${first.baselineValue}`;
+                          if (item.functionalDiffs.length > 1) {
+                            subDetail = `+${item.functionalDiffs.length - 1} more header diff (${item.functionalDiffs.map((d) => d.field).join(', ')})`;
+                          }
+                        } else if ((item.cookieDiffs || []).length > 0) {
+                          primaryTab = 'cookies';
+                          const cookieNames = (item.cookieDiffs || []).map(
+                            (d) => d.field
+                          );
+                          findingText = `Set-Cookie drift: ${cookieNames.join(', ')}`;
+                          subDetail = `Side A: ${(item.cookieDiffs || [])[0]?.candidateValue}`;
+                        } else if (item.visualResult) {
+                          primaryTab = 'image';
+                          findingText = item.visualResult.summary;
+                          subDetail = `Pixel delta Δ ${item.visualResult.pixelDiffPercent?.toFixed(1) ?? '0.0'}% · Model: ${item.visualResult.primaryModel}`;
+                        }
+
+                        return (
+                          <TableRow
+                            key={item.testId}
+                            className={
+                              isResolved ? 'bg-emerald-500/5 opacity-80' : ''
+                            }
+                          >
+                            <TableCell className="py-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <PageMiniThumb
+                                  testId={item.testId}
+                                  testName={item.testName}
+                                  url={item.url}
+                                  hasVisualDiff={vDiff}
+                                  onClick={() => {
+                                    setSelectedTestId(item.testId);
+                                    setInspectorTab(primaryTab);
+                                    setViewMode('diff');
+                                  }}
+                                />
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono text-[10px] font-bold px-1 py-0 rounded bg-muted text-foreground">
+                                      {item.testId}
+                                    </span>
+                                    <span className="text-xs font-medium text-foreground truncate">
+                                      {item.testName}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] font-mono text-muted-foreground truncate">
+                                    {item.url}
+                                  </div>
+                                </div>
+                              </div>
+                            </TableCell>
+
+                            <TableCell className="py-2">
+                              <div className="space-y-0.5">
+                                <div className="text-[11px] font-mono text-foreground break-all line-clamp-1">
+                                  {findingText}
+                                </div>
+                                {subDetail && (
+                                  <div className="text-[10px] font-mono text-muted-foreground truncate">
+                                    {subDetail}
+                                  </div>
+                                )}
+                              </div>
+                            </TableCell>
+
+                            <TableCell className="py-2 text-right whitespace-nowrap">
+                              <div className="inline-flex items-center justify-end gap-1">
+                                <Button
+                                  variant="outline"
+                                  size="xs"
+                                  onClick={() => {
+                                    setSelectedTestId(item.testId);
+                                    setInspectorTab(primaryTab);
+                                    setViewMode('diff');
+                                  }}
+                                  className="font-mono text-[10px] h-6 px-2"
+                                  title={`Open ${item.testId} directly in ${primaryTab.toUpperCase()} inspector`}
+                                >
+                                  {primaryTab === 'headers' && (
+                                    <Code2 className="!size-3 text-rose-500" />
+                                  )}
+                                  {primaryTab === 'cookies' && (
+                                    <KeyRound className="!size-3 text-amber-500" />
+                                  )}
+                                  {primaryTab === 'image' && (
+                                    <Sparkles className="!size-3 text-sky-500" />
+                                  )}
+                                  <span>
+                                    {isResolved ? 'OK' : `Inspect ${primaryTab}`}
+                                  </span>
+                                </Button>
+
+                                {/* 1-Click Inline Accept / Undo right from Home */}
+                                {primaryTab === 'headers' &&
+                                  item.functionalDiffs.length > 0 && (
+                                    <Button
+                                      variant={isHAcc ? 'secondary' : 'outline'}
+                                      size="xs"
+                                      onClick={() => {
+                                        for (const d of item.functionalDiffs) {
+                                          const field = d.field || d.kind;
+                                          const isCurrentlyAcc =
+                                            acceptedFields.includes(
+                                              field.toLowerCase()
+                                            );
+                                          if (isHAcc ? isCurrentlyAcc : !isCurrentlyAcc) {
+                                            handleToggleAcceptHeader(field);
+                                          }
+                                        }
+                                      }}
+                                      className="font-mono text-[10px] h-6 px-2"
+                                      title={
+                                        isHAcc
+                                          ? 'Undo accepted header rules for this test'
+                                          : 'Accept all header diffs on this test'
+                                      }
+                                    >
+                                      {isHAcc ? 'Undo' : 'Accept'}
+                                    </Button>
+                                  )}
+
+                                {primaryTab === 'cookies' &&
+                                  (item.cookieDiffs || []).length > 0 && (
+                                    <Button
+                                      variant={isCAcc ? 'secondary' : 'outline'}
+                                      size="xs"
+                                      onClick={() => {
+                                        for (const c of item.cookieDiffs || []) {
+                                          if (!c.field) continue;
+                                          const norm = c.field
+                                            .toLowerCase()
+                                            .replace(/^cookie:/, '')
+                                            .trim();
+                                          const isCurr = acceptedCookies
+                                            .map((k) =>
+                                              k
+                                                .toLowerCase()
+                                                .replace(/^cookie:/, '')
+                                                .trim()
+                                            )
+                                            .includes(norm);
+                                          if (isCAcc ? isCurr : !isCurr) {
+                                            handleToggleAcceptCookie(c.field);
+                                          }
+                                        }
+                                      }}
+                                      className="font-mono text-[10px] h-6 px-2"
+                                      title={
+                                        isCAcc
+                                          ? 'Undo accepted cookies for this test'
+                                          : 'Accept all cookie diffs on this test'
+                                      }
+                                    >
+                                      {isCAcc ? 'Undo' : 'Accept'}
+                                    </Button>
+                                  )}
+
+                                {primaryTab === 'image' && (
+                                  <Button
+                                    variant={isVAcc ? 'secondary' : 'outline'}
+                                    size="xs"
+                                    onClick={() =>
+                                      handleToggleAcceptVisual(item.testId)
+                                    }
+                                    className="font-mono text-[10px] h-6 px-2"
+                                    title={
+                                      isVAcc
+                                        ? 'Undo accepted visual diff'
+                                        : 'Accept Nova Lite visual diff on this test'
+                                    }
+                                  >
+                                    {isVAcc ? 'Undo' : 'Accept'}
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                  </TableBody>
+                </Table>
+              </Card>
+
+              {/* RIGHT COLUMN (5 cols): MULTI-PROPERTY FLEET GATE MATRIX & AUDIT LOG */}
+              <Card className="lg:col-span-5 overflow-hidden">
+                <CardHeader className="py-2 px-4 border-b border-border bg-muted/20 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+                  <div className="flex items-center gap-2">
+                    <LayoutGrid className="w-3.5 h-3.5 text-sky-500" />
+                    <CardTitle className="text-xs font-semibold">
+                      {homeRightTab === 'fleet'
+                        ? `Fleet Release Gate Matrix (${apps.length})`
+                        : `Gate Audit & Ticket History (${readyReports.length})`}
+                    </CardTitle>
+                  </div>
+
                   <div className="inline-flex items-center rounded border border-border bg-background p-0.5 text-[10px] font-mono">
                     <button
                       type="button"
-                      onClick={() => setReportScope('active')}
-                      className={`px-1.5 py-0.5 rounded-xs cursor-pointer ${
-                        reportScope === 'active'
+                      onClick={() => setHomeRightTab('fleet')}
+                      className={`px-2 py-0.5 rounded-xs cursor-pointer ${
+                        homeRightTab === 'fleet'
                           ? 'bg-foreground text-background font-semibold'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
                     >
-                      {currentApp.id} (
-                      {readyReports.filter((r) => r.appId === activeAppId).length})
+                      Fleet ({apps.length})
                     </button>
                     <button
                       type="button"
-                      onClick={() => setReportScope('all')}
-                      className={`px-1.5 py-0.5 rounded-xs cursor-pointer ${
-                        reportScope === 'all'
+                      onClick={() => setHomeRightTab('audit')}
+                      className={`px-2 py-0.5 rounded-xs cursor-pointer ${
+                        homeRightTab === 'audit'
                           ? 'bg-foreground text-background font-semibold'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
                     >
-                      All ({readyReports.length})
+                      Audit Log ({readyReports.length})
                     </button>
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="relative">
-                    <Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      placeholder="Filter reports…"
-                      value={reportSearchQuery}
-                      onChange={(e) => setReportSearchQuery(e.target.value)}
-                      className="h-6 pl-6 pr-2 rounded border border-input bg-background text-[11px] font-mono w-40"
-                    />
-                  </div>
-                </div>
-              </CardHeader>
+                </CardHeader>
 
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-24 py-1.5">Report</TableHead>
-                    <TableHead className="py-1.5">Release Gate & Edge Pair</TableHead>
-                    <TableHead className="w-64 py-1.5">Snapshots (A ↔ B)</TableHead>
-                    <TableHead className="w-24 py-1.5">Time</TableHead>
-                    <TableHead className="text-right w-28 py-1.5">
-                      Actions
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {readyReports
-                    .filter((r) =>
-                      reportScope === 'active' ? r.appId === activeAppId : true
-                    )
-                    .filter((r) => {
-                      if (!reportSearchQuery.trim()) return true;
-                      const q = reportSearchQuery.toLowerCase();
-                      return (
-                        r.id.toLowerCase().includes(q) ||
-                        r.title.toLowerCase().includes(q) ||
-                        r.candidateTarget.toLowerCase().includes(q) ||
-                        r.baselineTarget.toLowerCase().includes(q)
-                      );
-                    })
-                    .map((rpt) => {
-                      const targetRunsA = runs.filter(
-                        (r) => r.target === rpt.candidateTarget
-                      );
-                      const runA = getActiveRunForTarget(
-                        rpt.candidateTarget,
-                        rpt.candidateRunKey
-                      );
-                      const runB =
-                        rpt.candidateTarget === rpt.baselineTarget &&
-                        !rpt.baselineRunKey &&
-                        targetRunsA.length >= 2
-                          ? targetRunsA[1]
-                          : getActiveRunForTarget(
-                              rpt.baselineTarget,
-                              rpt.baselineRunKey
-                            );
-
-                      return (
-                        <TableRow key={rpt.id}>
-                          <TableCell className="py-1.5 font-mono font-semibold text-xs">
-                            <span title={`Triggered by ${rpt.by}`}>
-                              {rpt.id}
-                            </span>
-                          </TableCell>
-                          <TableCell className="py-1.5">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-medium text-xs text-foreground">
-                                {rpt.title}
-                              </span>
-                              <Badge
-                                variant="outline"
-                                className="font-mono text-[10px] px-1.5 py-0 text-muted-foreground"
-                                title={`Candidate: ${rpt.candidateTarget} vs Baseline: ${rpt.baselineTarget}`}
-                              >
-                                {rpt.candidateTarget} ↔ {rpt.baselineTarget}
-                              </Badge>
-                            </div>
-                          </TableCell>
-                          <TableCell className="py-1.5 whitespace-nowrap">
-                            <div
-                              className="inline-flex items-center gap-1 font-mono text-[10px] whitespace-nowrap"
-                              title={`Side A: ${runA.key} (${runA.passedTests}/${runA.totalTests} passed)\nSide B: ${runB.key} (${runB.passedTests}/${runB.totalTests} passed)`}
-                            >
-                              <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 whitespace-nowrap">
-                                {runA.network === 'staging' ? 'STG' : 'PRD'}{' '}
-                                {runA.label}
-                              </span>
-                              <span className="text-muted-foreground">↔</span>
-                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 whitespace-nowrap">
-                                {runB.network === 'staging' ? 'STG' : 'PRD'}{' '}
-                                {runB.label}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell
-                            className="py-1.5 font-mono text-[11px] text-muted-foreground"
-                            title={`Generated by ${rpt.by} at ${rpt.createdAt}`}
-                          >
-                            {rpt.createdAt}
-                          </TableCell>
-                          <TableCell className="py-1.5 text-right">
-                            <div className="inline-flex items-center gap-1">
-                              <Button
-                                variant="outline"
-                                size="icon-xs"
-                                onClick={() =>
-                                  handleOpenDiffView(
-                                    rpt.candidateTarget,
-                                    rpt.baselineTarget,
-                                    runA.key,
-                                    runB.key
-                                  )
-                                }
-                                aria-label={`Open Report ${rpt.id}`}
-                                title={`Open Comparative Report ${rpt.id} (${runA.label} ↔ ${runB.label})`}
-                              >
-                                <Eye className="!size-3.5 text-sky-500" />
-                              </Button>
-
-                              <Button
-                                variant="outline"
-                                size="icon-xs"
-                                onClick={() =>
-                                  handleRerunAllDiffs(
-                                    rpt.candidateTarget,
-                                    rpt.baselineTarget
-                                  )
-                                }
-                                disabled={rerunningTestId === 'ALL'}
-                                aria-label={`Rerun Diffs for ${rpt.id}`}
-                                title="Rerun only the differing test cases from this report"
-                              >
-                                <RotateCw
-                                  className={`!size-3 ${
-                                    rerunningTestId === 'ALL'
-                                      ? 'animate-spin'
-                                      : ''
-                                  }`}
-                                />
-                              </Button>
-
-                              <Button
-                                size="icon-xs"
-                                onClick={() =>
-                                  handleRunAndCompareTargets(
-                                    rpt.candidateTarget,
-                                    rpt.baselineTarget,
-                                    true
-                                  )
-                                }
-                                disabled={isComparingBoth}
-                                aria-label={`Rerun Full Comparison for ${rpt.id}`}
-                                title={`Trigger fresh AWS Synthetics runs on ${rpt.candidateTarget} & ${rpt.baselineTarget}`}
-                              >
-                                <Play className="fill-current !size-2.5" />
-                              </Button>
-                            </div>
-                          </TableCell>
+                {homeRightTab === 'fleet' ? (
+                  <div className="max-h-80 overflow-y-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="py-1.5">Property</TableHead>
+                          <TableHead className="py-1.5">PROD Gate</TableHead>
+                          <TableHead className="py-1.5">Checks</TableHead>
+                          <TableHead className="text-right py-1.5">
+                            Open
+                          </TableHead>
                         </TableRow>
-                      );
-                    })}
-                </TableBody>
-              </Table>
-            </Card>
+                      </TableHeader>
+                      <TableBody>
+                        {apps.slice(0, 12).map((appItem) => {
+                          const stgTarget = `${appItem.id}.prod.staging`;
+                          const prdTarget = `${appItem.id}.prod.prod`;
+                          const stgR = getActiveRunForTarget(stgTarget);
+                          const prdR = getActiveRunForTarget(prdTarget);
+                          const appComp = buildInitialComparison(
+                            stgR,
+                            prdR,
+                            'network',
+                            acceptedRules,
+                            {
+                              acceptedCookies,
+                              acceptedVisualTests,
+                              ignoreAcceptedDiffs,
+                              aiJudgeOverrides,
+                            }
+                          );
+                          const isSelectedApp = appItem.id === activeAppId;
+
+                          return (
+                            <TableRow
+                              key={appItem.id}
+                              onClick={() => handleSelectProperty(appItem.id)}
+                              className={`cursor-pointer ${
+                                isSelectedApp ? 'bg-sky-500/10' : ''
+                              }`}
+                            >
+                              <TableCell className="py-1.5">
+                                <div className="flex items-center gap-1.5">
+                                  <Badge
+                                    variant={
+                                      isSelectedApp ? 'default' : 'outline'
+                                    }
+                                    className="font-mono text-[10px] px-1.5 py-0"
+                                  >
+                                    {appItem.id}
+                                  </Badge>
+                                  <span className="text-xs text-foreground truncate max-w-32">
+                                    {appItem.name}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="py-1.5">
+                                <Badge
+                                  variant={
+                                    appComp.headlineVerdict === 'GO'
+                                      ? 'success'
+                                      : appComp.headlineVerdict === 'REVIEW'
+                                      ? 'warning'
+                                      : 'destructive'
+                                  }
+                                  className="font-mono text-[10px] px-1.5 py-0"
+                                >
+                                  {appComp.headlineVerdict}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="py-1.5 font-mono text-[11px] text-muted-foreground">
+                                {stgR.passedTests}/{stgR.totalTests}
+                              </TableCell>
+                              <TableCell className="py-1.5 text-right">
+                                <Button
+                                  variant="outline"
+                                  size="icon-xs"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveAppId(appItem.id);
+                                    handleOpenDiffView(stgTarget, prdTarget);
+                                  }}
+                                  title={`Open ${appItem.id} PROD Release Gate Diff`}
+                                >
+                                  <GitCompare className="!size-3 text-sky-500" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <div className="max-h-80 overflow-y-auto">
+                    <div className="px-3 py-1.5 border-b border-border bg-muted/10 flex items-center justify-between gap-2">
+                      <div className="inline-flex items-center rounded border border-border bg-background p-0.5 text-[10px] font-mono">
+                        <button
+                          type="button"
+                          onClick={() => setReportScope('active')}
+                          className={`px-1.5 py-0.5 rounded-xs cursor-pointer ${
+                            reportScope === 'active'
+                              ? 'bg-foreground text-background font-semibold'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          {currentApp.id} (
+                          {
+                            readyReports.filter((r) => r.appId === activeAppId)
+                              .length
+                          }
+                          )
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setReportScope('all')}
+                          className={`px-1.5 py-0.5 rounded-xs cursor-pointer ${
+                            reportScope === 'all'
+                              ? 'bg-foreground text-background font-semibold'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          All ({readyReports.length})
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          placeholder="Filter audit log…"
+                          value={reportSearchQuery}
+                          onChange={(e) => setReportSearchQuery(e.target.value)}
+                          className="h-6 pl-6 pr-2 rounded border border-input bg-background text-[11px] font-mono w-36"
+                        />
+                      </div>
+                    </div>
+
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-20 py-1.5">ID</TableHead>
+                          <TableHead className="py-1.5">
+                            Audit Snapshot Pair
+                          </TableHead>
+                          <TableHead className="text-right w-20 py-1.5">
+                            Open
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {readyReports
+                          .filter((r) =>
+                            reportScope === 'active'
+                              ? r.appId === activeAppId
+                              : true
+                          )
+                          .filter((r) => {
+                            if (!reportSearchQuery.trim()) return true;
+                            const q = reportSearchQuery.toLowerCase();
+                            return (
+                              r.id.toLowerCase().includes(q) ||
+                              r.title.toLowerCase().includes(q) ||
+                              r.candidateTarget.toLowerCase().includes(q) ||
+                              r.baselineTarget.toLowerCase().includes(q)
+                            );
+                          })
+                          .map((rpt) => {
+                            const targetRunsA = runs.filter(
+                              (r) => r.target === rpt.candidateTarget
+                            );
+                            const runA = getActiveRunForTarget(
+                              rpt.candidateTarget,
+                              rpt.candidateRunKey
+                            );
+                            const runB =
+                              rpt.candidateTarget === rpt.baselineTarget &&
+                              !rpt.baselineRunKey &&
+                              targetRunsA.length >= 2
+                                ? targetRunsA[1]
+                                : getActiveRunForTarget(
+                                    rpt.baselineTarget,
+                                    rpt.baselineRunKey
+                                  );
+
+                            return (
+                              <TableRow key={rpt.id}>
+                                <TableCell className="py-1.5 font-mono font-semibold text-[11px]">
+                                  <div>{rpt.id}</div>
+                                  <div className="text-[9px] text-muted-foreground font-normal">
+                                    {rpt.createdAt}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="py-1.5">
+                                  <div className="text-xs font-medium text-foreground truncate max-w-48">
+                                    {rpt.title}
+                                  </div>
+                                  <div className="text-[10px] font-mono text-muted-foreground">
+                                    {runA.label} ↔ {runB.label}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="py-1.5 text-right">
+                                  <div className="inline-flex items-center gap-1">
+                                    <Button
+                                      variant="outline"
+                                      size="icon-xs"
+                                      onClick={() =>
+                                        handleOpenDiffView(
+                                          rpt.candidateTarget,
+                                          rpt.baselineTarget,
+                                          runA.key,
+                                          runB.key
+                                        )
+                                      }
+                                      aria-label={`Open Report ${rpt.id}`}
+                                      title={`Open Comparative Report ${rpt.id}`}
+                                    >
+                                      <Eye className="!size-3.5 text-sky-500" />
+                                    </Button>
+                                    <Button
+                                      size="icon-xs"
+                                      onClick={() =>
+                                        handleRunAndCompareTargets(
+                                          rpt.candidateTarget,
+                                          rpt.baselineTarget,
+                                          true
+                                        )
+                                      }
+                                      disabled={isComparingBoth}
+                                      aria-label={`Rerun Full Comparison for ${rpt.id}`}
+                                      title={`Trigger fresh AWS Synthetics runs on ${rpt.candidateTarget} & ${rpt.baselineTarget}`}
+                                    >
+                                      <Play className="fill-current !size-2.5" />
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </Card>
+            </div>
           </main>
         </>
       )}

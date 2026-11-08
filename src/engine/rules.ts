@@ -294,6 +294,15 @@ export function matchesAcceptedRule(
     }
   }
 
+  // Cookie rule (e.g. "edge_region" or "cookie:edge_region")
+  if (diff.kind === 'cookie' && diff.field) {
+    const cleanField = diff.field.toLowerCase().replace(/^cookie:/, '').trim();
+    const cleanRule = kind.toLowerCase().replace(/^cookie:/, '').trim();
+    if (cleanField === cleanRule) {
+      return true;
+    }
+  }
+
   // Assertion error by exact message: rule kind is "error: <message>"
   if (kind.toLowerCase().startsWith('error:') && diff.kind === 'assertions') {
     const targetMsg = kind.slice(6).trim();
@@ -305,6 +314,12 @@ export function matchesAcceptedRule(
   return false;
 }
 
+export interface ApplyRulesOptions {
+  acceptedCookies?: string[];
+  acceptedVisualTests?: string[];
+  ignoreAcceptedDiffs?: boolean;
+}
+
 /**
  * FR-RULE-4, 5, 6: Applies accepted rules dynamically on an item during read.
  * Excludes matching differences from affecting item verdict and Go/No-Go.
@@ -313,8 +328,19 @@ export function applyRulesToItem(
   item: ComparisonItem,
   comparisonId: string,
   rules: AcceptedRule[],
-  kind: ComparisonKind
+  kind: ComparisonKind,
+  options: ApplyRulesOptions = {}
 ): ComparisonItem {
+  const ignoreAccepted = options.ignoreAcceptedDiffs ?? true;
+  const normalizeCookieKey = (raw: string) =>
+    raw.toLowerCase().replace(/^cookie:/, '').trim();
+  const normalizedAcceptedCookies = (options.acceptedCookies || []).map(
+    normalizeCookieKey
+  );
+  const isVisualTestAccepted = (options.acceptedVisualTests || []).includes(
+    item.testId
+  );
+
   // Deep clone functional diffs to not mutate source
   const updatedDiffs: DifferenceItem[] = item.functionalDiffs.map((d) => {
     let accepted = false;
@@ -340,11 +366,40 @@ export function applyRulesToItem(
     };
   });
 
+  // Deep clone cookie diffs and apply acceptedCookies + cookie rules
+  const updatedCookieDiffs: DifferenceItem[] = (item.cookieDiffs || []).map(
+    (d) => {
+      let accepted = Boolean(d.accepted);
+      let acceptedRuleId: string | undefined = d.acceptedRuleId;
+
+      if (
+        d.field &&
+        normalizedAcceptedCookies.includes(normalizeCookieKey(d.field))
+      ) {
+        accepted = true;
+      }
+
+      for (const rule of rules) {
+        if (matchesAcceptedRule(d, item.testId, comparisonId, rule)) {
+          accepted = true;
+          acceptedRuleId = rule.id;
+          break;
+        }
+      }
+
+      return {
+        ...d,
+        accepted,
+        acceptedRuleId,
+      };
+    }
+  );
+
   // Visual differences handling (FR-RULE-6)
   let updatedVisual = item.visualResult ? { ...item.visualResult } : undefined;
   if (updatedVisual && updatedVisual.differences) {
     const updatedDifferences = updatedVisual.differences.map((vDiff) => {
-      let isAccepted = vDiff.accepted || false;
+      let isAccepted = Boolean(vDiff.accepted) || isVisualTestAccepted;
       const vDesc = vDiff.description.toLowerCase();
 
       for (const rule of rules) {
@@ -368,7 +423,9 @@ export function applyRulesToItem(
     });
 
     // Recompute visual verdict based on remaining unaccepted differences
-    const unaccepted = updatedDifferences.filter((d) => !d.accepted);
+    const unaccepted = ignoreAccepted
+      ? updatedDifferences.filter((d) => !d.accepted)
+      : updatedDifferences;
     let newVerdict = updatedVisual.verdict;
     if (updatedVisual.verdict !== 'error') {
       if (unaccepted.length === 0) {
@@ -387,8 +444,14 @@ export function applyRulesToItem(
     };
   }
 
-  // Compute recalculated item verdict with unaccepted diffs only
-  const activeDiffs = updatedDiffs.filter((d) => !d.accepted);
+  // Compute recalculated item verdict with unaccepted functional + cookie diffs
+  const activeFunctionalDiffs = ignoreAccepted
+    ? updatedDiffs.filter((d) => !d.accepted)
+    : updatedDiffs;
+  const activeCookieDiffs = ignoreAccepted
+    ? updatedCookieDiffs.filter((d) => !d.accepted)
+    : updatedCookieDiffs;
+  const activeDiffs = [...activeFunctionalDiffs, ...activeCookieDiffs];
   const activeVisualVerdict = updatedVisual?.verdict ?? 'same';
 
   const recalculatedVerdict = calculateItemVerdict(activeDiffs, activeVisualVerdict, kind);
@@ -396,6 +459,7 @@ export function applyRulesToItem(
   return {
     ...item,
     functionalDiffs: updatedDiffs,
+    cookieDiffs: updatedCookieDiffs,
     visualResult: updatedVisual,
     itemVerdict: recalculatedVerdict,
   };
@@ -779,9 +843,14 @@ export function generateComparisonMarkdownSummary(
 
     for (const item of worstItems) {
       let diffSummary = '—';
-      if (item.functionalDiffs.length > 0) {
-        const first = item.functionalDiffs[0];
+      const unacceptedFunc = item.functionalDiffs.filter((d) => !d.accepted);
+      const unacceptedCookies = (item.cookieDiffs || []).filter((d) => !d.accepted);
+      if (unacceptedFunc.length > 0) {
+        const first = unacceptedFunc[0];
         diffSummary = `${first.field || first.kind}: ${first.candidateValue} vs ${first.baselineValue}`;
+      } else if (unacceptedCookies.length > 0) {
+        const first = unacceptedCookies[0];
+        diffSummary = `cookie ${first.field}: ${first.candidateValue} vs ${first.baselineValue}`;
       } else if (item.visualResult) {
         diffSummary = item.visualResult.summary;
       }

@@ -1,0 +1,7 @@
+# .cursorrules — Cursor IDE Rules for Akamai & AWS Synthetics Release Gate
+
+- Always read `src/config/template.config.ts` first when asked to customize properties, environments, edge IPs, or test suites.
+- Keep `infra/terraform/variables.tf` and `infra/terraform/terraform.tfvars.example` synchronized with any schema changes in `src/config/template.config.ts`.
+- Extend release gate checks by adding modular plugins in `src/engine/pluginRegistry.ts` rather than coupling custom rules into UI components.
+- Write pure, deterministic TypeScript functions in `src/engine/` and add unit tests in `src/engine/rules.test.ts`.
+- Verify every change with `npx --yes tsx --test src/engine/rules.test.ts` and `npm run lint`.

@@ -393,7 +393,7 @@ import {
 } from '../data/mockStore';
 import { generateEnterpriseScaleTopology } from '../adapters/syntheticsAdapter';
 
-test('Cookie diffs use clean unprefixed cookie names so acceptedCookies turns badge to OK', () => {
+test('Cookie diffs use clean unprefixed cookie names and preserve itemVerdict until acceptedCookies turns verdict to GO', () => {
   const runs = seedRunsFromConfig();
   const stgRun = runs.find((r) => r.key === 'run-www-prod-staging-1')!;
   const prdRun = runs.find((r) => r.key === 'run-www-prod-prod-1')!;
@@ -406,6 +406,64 @@ test('Cookie diffs use clean unprefixed cookie names so acceptedCookies turns ba
     cookieDiffs.map((d) => d.field).sort(),
     ['edge_cache_bypass', 'edge_region']
   );
+
+  // Initial comparison: T01 (2 header diffs -> different), T02 (2 cookie diffs -> different), T03 (1 visual minor diff -> minor)
+  const initialComp = buildInitialComparison(stgRun, prdRun, 'network', []);
+  assert.equal(initialComp.headlineVerdict, 'NO-GO');
+  const t02Item = initialComp.items.find((i) => i.testId === 'T02')!;
+  assert.equal(t02Item.itemVerdict, 'different');
+
+  // Accept T01 headers and T02 cookies -> only T03 minor visual diff remains -> headlineVerdict becomes REVIEW
+  const headerRules: AcceptedRule[] = [
+    {
+      id: 'r1',
+      appId: 'www',
+      comparisonId: 'all',
+      kind: 'cache-control',
+      enabled: true,
+      by: 'ops',
+      at: new Date().toISOString(),
+    },
+    {
+      id: 'r2',
+      appId: 'www',
+      comparisonId: 'all',
+      kind: 'x-check-cacheable',
+      enabled: true,
+      by: 'ops',
+      at: new Date().toISOString(),
+    },
+  ];
+  const reviewComp = buildInitialComparison(stgRun, prdRun, 'network', headerRules, {
+    acceptedCookies: ['edge_region', 'edge_cache_bypass'],
+    ignoreAcceptedDiffs: true,
+  });
+  assert.equal(reviewComp.items.find((i) => i.testId === 'T01')!.itemVerdict, 'same');
+  assert.equal(reviewComp.items.find((i) => i.testId === 'T02')!.itemVerdict, 'same');
+  assert.equal(reviewComp.items.find((i) => i.testId === 'T03')!.itemVerdict, 'minor');
+  assert.equal(reviewComp.headlineVerdict, 'REVIEW');
+
+  // Also accept T03 visual diff -> all 8 items become 'same' and headlineVerdict becomes GO
+  const goComp = buildInitialComparison(stgRun, prdRun, 'network', headerRules, {
+    acceptedCookies: ['edge_region', 'edge_cache_bypass'],
+    acceptedVisualTests: ['T03'],
+    ignoreAcceptedDiffs: true,
+  });
+  assert.equal(goComp.items.find((i) => i.testId === 'T03')!.itemVerdict, 'same');
+  assert.equal(goComp.headlineVerdict, 'GO');
+});
+
+test('Cross-environment buildInitialComparison normalizes Location redirect headers via hostMap', () => {
+  const runs = seedRunsFromConfig();
+  const uatRun = runs.find((r) => r.key === 'run-www-uat-staging-1')!;
+  const prdRun = runs.find((r) => r.key === 'run-www-prod-prod-1')!;
+
+  const envComp = buildInitialComparison(uatRun, prdRun, 'env', []);
+  const t04 = envComp.items.find((i) => i.testId === 'T04')!;
+  const locDiff = t04.functionalDiffs.find((d) => d.field === 'location')!;
+  assert.ok(locDiff);
+  assert.equal(locDiff.isHostNormalizedMatch, true);
+  assert.equal(locDiff.accepted, true);
 });
 
 test('Each target seeds both Latest Run and Previous Run for default Run-over-Run comparison', () => {
@@ -431,4 +489,194 @@ test('Enterprise scale generator scales cleanly to 50 properties with multi-run 
   assert.ok(scaled.runs.length >= 100);
   assert.ok(scaled.readyReports.length >= 15);
 });
+
+// ---------------------------------------------------------------------------
+// 8. AWS Bedrock Nova Lite, OpenAPI 3.1 & Terraform IaC Blueprint Tests
+// ---------------------------------------------------------------------------
+import {
+  evaluateNovaLiteVisualDiff,
+  buildOpenApiSpec,
+  getOpenApiEndpointCatalog,
+  generateTerraformBundle,
+  generateSyntheticsCanaryScript,
+  generateBedrockNovaJudgeScript,
+  generateEnvConfigFile,
+} from './awsBlueprint';
+import { DEFAULT_TEMPLATE_CONFIG } from '../config/template.config';
+
+test('AWS Bedrock Nova Lite judge defaults to amazon.nova-lite-v1:0 and classifies T03 as minor visual diff', () => {
+  assert.equal(
+    DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
+    'amazon.nova-lite-v1:0'
+  );
+
+  const minorRes = evaluateNovaLiteVisualDiff({
+    testId: 'T03',
+    candidateTarget: 'www.prod.staging',
+    baselineTarget: 'www.prod.prod',
+    pixelDiffPercent: 1.8,
+  });
+  assert.equal(minorRes.modelId, 'amazon.nova-lite-v1:0');
+  assert.equal(minorRes.verdict, 'minor');
+  assert.ok(minorRes.confidence >= 0.9);
+  assert.match(minorRes.summary, /amazon\.nova-lite-v1:0/);
+
+  const sameRes = evaluateNovaLiteVisualDiff({
+    testId: 'T01',
+    candidateTarget: 'www.prod.staging',
+    baselineTarget: 'www.prod.prod',
+    pixelDiffPercent: 0.04,
+  });
+  assert.equal(sameRes.verdict, 'same');
+  assert.equal(sameRes.differences.length, 0);
+});
+
+test('OpenAPI 3.1.0 specification and catalog expose all 8 REST + MCP + Nova Lite endpoints', () => {
+  const catalog = getOpenApiEndpointCatalog();
+  assert.equal(catalog.length, 8);
+
+  const spec = buildOpenApiSpec() as {
+    openapi: string;
+    paths: Record<string, unknown>;
+  };
+  assert.equal(spec.openapi, '3.1.0');
+  assert.ok(spec.paths['/api/v1/health']);
+  assert.ok(spec.paths['/api/v1/judge/nova-lite']);
+  assert.ok(spec.paths['/api/v1/mcp/rpc']);
+});
+
+test('Terraform IaC & AWS Synthetics generators produce valid clone-and-apply HCL, Canary zip packaging, SSM/S3/DynamoDB config seeding, alarms, and env config', () => {
+  const tf = generateTerraformBundle();
+  assert.match(tf.mainTf, /aws_synthetics_canary/);
+  assert.match(tf.mainTf, /data "archive_file" "canary_zip"/);
+  assert.match(tf.mainTf, /resource "aws_s3_object" "canary_bundle"/);
+  assert.match(tf.mainTf, /resource "aws_s3_object" "portal_runtime_config"/);
+  assert.match(tf.mainTf, /resource "aws_s3_object" "property_suite_json"/);
+  assert.match(tf.mainTf, /resource "aws_ssm_parameter" "portal_runtime_config"/);
+  assert.match(tf.mainTf, /resource "aws_dynamodb_table_item" "seeded_accepted_rules"/);
+  assert.match(tf.mainTf, /resource "aws_cloudwatch_metric_alarm" "canary_failed_alarm"/);
+  assert.match(tf.mainTf, /resource "aws_sns_topic" "release_gate_alerts"/);
+  assert.match(tf.mainTf, /resource "local_file" "dotenv_terraform"/);
+  assert.match(tf.mainTf, /nodejs\/node_modules\/canary-har-runner\.js/);
+  assert.match(tf.mainTf, /data\.aws_caller_identity\.current\.account_id/);
+  assert.match(tf.mainTf, /amazon\.nova-lite-v1:0/);
+  assert.match(tf.variablesTf, /variable "bedrock_nova_lite_model_id"/);
+  assert.match(tf.variablesTf, /variable "test_suite"/);
+  assert.match(tf.variablesTf, /variable "accepted_diff_rules"/);
+  assert.match(tf.tfvars, /bedrock_nova_lite_model_id\s*=\s*"amazon\.nova-lite-v1:0"/);
+  assert.match(tf.tfvars, /test_suite\s*=/);
+  assert.match(tf.outputsTf, /output "s3_artifact_bucket_name"/);
+  assert.match(tf.outputsTf, /output "ssm_parameter_names"/);
+
+  const canary = generateSyntheticsCanaryScript();
+  assert.match(canary, /--host-resolver-rules=MAP/);
+  assert.match(canary, /SUITE_CHECKS_JSON/);
+  assert.match(canary, /HOST_MAP_JSON/);
+  assert.match(canary, /DynamoDBClient/);
+  assert.match(canary, /PutItemCommand/);
+
+  const judgeScript = generateBedrockNovaJudgeScript();
+  assert.match(judgeScript, /BedrockRuntimeClient/);
+  assert.match(judgeScript, /ConverseCommand/);
+  assert.match(judgeScript, /amazon\.nova-lite-v1:0/);
+
+  const envFile = generateEnvConfigFile();
+  assert.match(envFile, /BEDROCK_VISUAL_JUDGE_MODEL_ID=amazon\.nova-lite-v1:0/);
+  assert.match(envFile, /AKAMAI_STAGING_EDGE_SUFFIX=\.edgekey-staging\.net/);
+  assert.match(envFile, /AKAMAI_PROD_EDGE_SUFFIX=\.edgekey\.net/);
+});
+
+// ---------------------------------------------------------------------------
+// 9. Extensible Release Gate Plugin Pipeline & AI Agent Skills Registry
+// ---------------------------------------------------------------------------
+import {
+  BUILTIN_GATE_PLUGINS,
+  evaluatePluginPipeline,
+  generateAiAgentAdaptationBundle,
+  generateOneShotAdaptationPrompt,
+} from './pluginRegistry';
+
+test('Release Gate Plugin Pipeline & AI Agent Skills Registry evaluate plugins and generate clone-adapt prompts', () => {
+  assert.equal(BUILTIN_GATE_PLUGINS.length, 6);
+
+  // 1. Clean parity scenario -> GO
+  const cleanReport = evaluatePluginPipeline({
+    testId: 'T01',
+    testName: 'Global Landing Page',
+    path: '/',
+    candidateTarget: 'www.prod.staging',
+    baselineTarget: 'www.prod.prod',
+    candidateStatus: 200,
+    baselineStatus: 200,
+    candidateLatencyMs: 65,
+    baselineLatencyMs: 60,
+    candidateHeaders: {
+      'x-check-cacheable': 'YES',
+      'cache-control': 'max-age=1800',
+    },
+    baselineHeaders: {
+      'x-check-cacheable': 'YES',
+      'cache-control': 'max-age=3600',
+    },
+    candidateCookies: { geo_region: 'US-EAST' },
+    baselineCookies: { geo_region: 'US-EAST' },
+    pixelDiffPercent: 0.0,
+  });
+  assert.equal(cleanReport.overallPipelineVerdict, 'GO');
+  assert.equal(cleanReport.failedCount, 0);
+
+  // 2. Cacheability drift scenario -> NO-GO (blocking plugin fails)
+  const driftReport = evaluatePluginPipeline({
+    testId: 'T02',
+    testName: 'Product Catalog Page',
+    path: '/products/cloud-security',
+    candidateTarget: 'www.prod.staging',
+    baselineTarget: 'www.prod.prod',
+    candidateStatus: 200,
+    baselineStatus: 200,
+    candidateLatencyMs: 110,
+    baselineLatencyMs: 65,
+    candidateHeaders: {
+      'x-check-cacheable': 'NO',
+      'cache-control': 'max-age=1800',
+    },
+    baselineHeaders: {
+      'x-check-cacheable': 'YES',
+      'cache-control': 'max-age=3600',
+    },
+    candidateCookies: { geo_region: 'US-EAST' },
+    baselineCookies: { geo_region: 'US-EAST' },
+    pixelDiffPercent: 0.02,
+  });
+  assert.equal(driftReport.overallPipelineVerdict, 'NO-GO');
+  assert.ok(driftReport.failedCount >= 1);
+
+  // 3. AI Agent Skills Bundle & One-Shot Prompt Generator
+  const skillBundle = generateAiAgentAdaptationBundle();
+  assert.equal(skillBundle.length, 7);
+  assert.ok(skillBundle.some((s) => s.filename === 'CLAUDE.md'));
+  assert.ok(skillBundle.some((s) => s.filename === 'AGENTS.md'));
+  assert.ok(
+    skillBundle.some((s) => s.filename === 'skills/adapt-organization/SKILL.md')
+  );
+
+  const prompt = generateOneShotAdaptationPrompt({
+    organizationName: 'GlobalBank Edge',
+    primaryDomain: 'edge.globalbank.com',
+    cdnProvider: 'Akamai Edge',
+    stagingEdgeSuffix: '.edgesuite-staging.net',
+    stagingEdgeIp: '23.54.18.92',
+    prodEdgeSuffix: '.edgesuite.net',
+    prodEdgeIp: '104.86.112.44',
+    awsRegion: 'us-east-1',
+    s3Bucket: 'globalbank-synthetics-prod',
+    propertiesCsv: 'ibanking, payments',
+    environmentsCsv: 'prod, uat',
+  });
+  assert.match(prompt, /GlobalBank Edge Release Gate/);
+  assert.match(prompt, /src\/config\/template\.config\.ts/);
+  assert.match(prompt, /infra\/terraform\/terraform\.tfvars\.example/);
+});
+
+
 
