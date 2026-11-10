@@ -646,11 +646,16 @@ export const ComparisonTargetBar: React.FC<{
 
             <Button
               size="xs"
+              data-testid="toolbar-rerun-btn"
               onClick={onRunBothAndCompare}
               disabled={isComparingBoth}
               title={`Re-execute AWS Synthetics Canary on ${candidateTarget} and ${baselineTarget}`}
             >
-              <Play className="fill-current !size-2.5" />
+              {isComparingBoth ? (
+                <Loader2 className="!size-3 animate-spin" />
+              ) : (
+                <Play className="fill-current !size-2.5" />
+              )}
               {isComparingBoth ? 'Running…' : 'Rerun'}
             </Button>
           </>

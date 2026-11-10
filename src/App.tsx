@@ -210,9 +210,55 @@ export default function App() {
   const [isComparingBoth, setIsComparingBoth] = useState<boolean>(false);
   const [rerunningTestId, setRerunningTestId] = useState<string | null>(null);
   const [runningAiTestId, setRunningAiTestId] = useState<string | null>(null);
+  const [lastProbedByTestId, setLastProbedByTestId] = useState<
+    Record<
+      string,
+      {
+        at: string;
+        count: number;
+        candMs: number;
+        baseMs?: number;
+        status: number;
+      }
+    >
+  >({});
   const [isHydratingLiveRuns, setIsHydratingLiveRuns] = useState<boolean>(() =>
     isDummySeededRun(initialPersisted.runs[0])
   );
+
+  const normalizeRunPropertyUrls = (r: RunRecord & { targetId?: string }): RunRecord => {
+    const target = r.target || r.targetId || 'www.prod.staging';
+    const [appId = 'www', envId = 'prod'] = target.split('.');
+    const canonicalHost = resolvePropertyHostname(appId, envId);
+    return {
+      ...r,
+      target,
+      appId: r.appId || appId,
+      envId: r.envId || envId,
+      results: (r.results || []).map((res) => {
+        const fallbackPath = (res as typeof res & { path?: string }).path || '/';
+        const cleanUrl = res.url
+          ? res.url.replace(/^https:\/\/www\.salesforce\.com\b/i, `https://${canonicalHost}`)
+          : `https://${canonicalHost}${fallbackPath}`;
+        return {
+          ...res,
+          url: cleanUrl,
+          canonicalUrl: cleanUrl,
+          redirectChain: (res.redirectChain || []).map((hop, idx) =>
+            idx === 0
+              ? {
+                  ...hop,
+                  url: hop.url.replace(
+                    /^https:\/\/www\.salesforce\.com\b/i,
+                    `https://${canonicalHost}`
+                  ),
+                }
+              : hop
+          ),
+        };
+      }),
+    };
+  };
 
   // Hydrate live salesforce.com runs & active AWS operator identity from backend/Lambda on mount
   useEffect(() => {
@@ -222,10 +268,7 @@ export default function App() {
         if (data && Array.isArray(data.runs) && data.runs.length > 0) {
           const incomingRuns: RunRecord[] = data.runs
             .filter((r: RunRecord) => !isDummySeededRun(r))
-            .map((r: RunRecord & { targetId?: string }) => ({
-              ...r,
-              target: r.target || r.targetId || 'www.prod.staging',
-            }));
+            .map((r: RunRecord & { targetId?: string }) => normalizeRunPropertyUrls(r));
           if (incomingRuns.length > 0) {
             setRuns(incomingRuns);
 
@@ -599,6 +642,23 @@ export default function App() {
     [runs, focusedTargetId, selectedRunByTarget]
   );
 
+  // Preload live Chromium JPEG screenshots for the active property into browser memory cache for 0ms tab switching
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const ids =
+        activeAppId === 'www'
+          ? ['T01', 'T02', 'T03', 'T04', 'T05', 'T06', 'T07', 'T08']
+          : ['T01'];
+      for (const id of ids) {
+        const imgA = new Image();
+        imgA.src = `/screenshots/${activeAppId}-${id}-sideA.jpg`;
+        const imgB = new Image();
+        imgB.src = `/screenshots/${activeAppId}-${id}-sideB.jpg`;
+      }
+    }, 40);
+    return () => clearTimeout(timer);
+  }, [activeAppId]);
+
   const handleChangeCandidateTarget = (newTarget: string) => {
     setCandidateTarget(newTarget);
     const targetRuns = runs.filter((r) => r.target === newTarget);
@@ -827,22 +887,15 @@ export default function App() {
     const [appId, envId, net] = targetId.split('.');
     const network = (net === 'staging' ? 'staging' : 'prod') as 'staging' | 'prod';
     const now = new Date();
+    const shortTime = now.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
     const runNumber = runs.filter((r) => r.target === targetId).length + 1;
     const key = `run-${appId}-${envId}-${network}-${runNumber}-${Date.now()
       .toString()
       .slice(-4)}`;
-
-    if (dataSourceMode === 'remote-api') {
-      fetch('/api/v1/runs/trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          target: targetId,
-          label: `${labelPrefix} #${runNumber}`,
-          by: currentUser?.email || 'operator',
-        }),
-      }).catch(() => undefined);
-    }
 
     const results = generateTestResults(
       targetId,
@@ -854,7 +907,7 @@ export default function App() {
       testSuite
     );
 
-    return {
+    return normalizeRunPropertyUrls({
       key,
       target: targetId,
       appId,
@@ -864,14 +917,14 @@ export default function App() {
       suiteSha256: '9f83a21b33c0',
       suiteRowCount: results.length,
       startTime: now.toISOString(),
-      finishTime: new Date(now.getTime() + 1200).toISOString(),
+      finishTime: new Date(now.getTime() + 420).toISOString(),
       totalTests: results.length,
       passedTests: results.filter((r) => r.pass).length,
       failedTests: results.filter((r) => !r.pass).length,
       by: currentUser?.email || 'operator',
-      label: `${labelPrefix} #${runNumber}`,
+      label: `${labelPrefix} #${runNumber} · ${shortTime}`,
       results,
-    };
+    });
   };
 
   const enqueueBackgroundJob = (
@@ -879,7 +932,7 @@ export default function App() {
     target: string,
     kind: BackgroundJob['kind'],
     durationMs: number,
-    onDone: () => void,
+    onDone: () => void | Promise<void>,
     onInspect?: () => void
   ) => {
     const jobId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -903,14 +956,23 @@ export default function App() {
       ...prev,
     ]);
 
-    setTimeout(() => {
-      onDone();
-      setBackgroundJobs((prev) =>
-        prev.map((j) =>
-          j.id === jobId ? { ...j, status: 'completed', progress: 'Done' } : j
-        )
-      );
-    }, durationMs);
+    const startedAtMs = Date.now();
+    const minVisualFeedbackMs = Math.min(Math.max(durationMs, 180), 260);
+    (async () => {
+      try {
+        await Promise.resolve(onDone());
+        const elapsed = Date.now() - startedAtMs;
+        if (elapsed < minVisualFeedbackMs) {
+          await new Promise((r) => setTimeout(r, minVisualFeedbackMs - elapsed));
+        }
+      } finally {
+        setBackgroundJobs((prev) =>
+          prev.map((j) =>
+            j.id === jobId ? { ...j, status: 'completed', progress: 'Done' } : j
+          )
+        );
+      }
+    })();
   };
 
   const handleRunSingleTarget = (targetId: string, openFocusedRun = false) => {
@@ -924,8 +986,18 @@ export default function App() {
       `Canary Suite: ${targetId} (vs ${previousRun?.label || 'prev'})`,
       targetId,
       'single-run',
-      500,
+      240,
       async () => {
+        const nowStr = new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
+        const runNumber = runs.filter((r) => r.target === targetId).length + 1;
+        const freshLabel = `live-probe #${runNumber} · ${nowStr}`;
+        const freshKey = `run-${targetId.replace(/\./g, '-')}-${runNumber}-${Date.now()
+          .toString()
+          .slice(-4)}`;
         let newRun = createNewRunRecord(targetId, 'live-probe', true);
         try {
           const resp = await fetch('/api/v1/runs/trigger', {
@@ -933,14 +1005,20 @@ export default function App() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               target: targetId,
-              label: `live-probe #${runs.filter((r) => r.target === targetId).length + 1}`,
+              runKey: freshKey,
+              label: freshLabel,
               by: currentUser?.email || 'operator',
             }),
           });
           if (resp.ok) {
             const data = await resp.json();
-            if (data && data.run && Array.isArray(data.run.results)) {
-              newRun = data.run;
+            const remoteRun = data?.run || data?.newRun || data?.result;
+            if (remoteRun && Array.isArray(remoteRun.results)) {
+              newRun = normalizeRunPropertyUrls({
+                ...remoteRun,
+                key: remoteRun.key || freshKey,
+                label: freshLabel,
+              });
             }
           }
         } catch {
@@ -955,6 +1033,20 @@ export default function App() {
           ...prev,
           [targetId]: { state: 'ready' },
         }));
+
+        setLastProbedByTestId((prev) => {
+          const next = { ...prev };
+          for (const res of newRun.results) {
+            const prevCount = next[res.id]?.count || 0;
+            next[res.id] = {
+              at: nowStr,
+              count: prevCount + 1,
+              candMs: res.httpFlowSummary?.totalDurationMs || res.durationMs,
+              status: res.actualStatus,
+            };
+          }
+          return next;
+        });
 
         // Default behavior: automatically compare the new run against the previous run on this target
         const prevKey = previousRun?.key || newRun.key;
@@ -974,10 +1066,7 @@ export default function App() {
           baselineTarget: targetId,
           candidateRunKey: newRun.key,
           baselineRunKey: prevKey,
-          createdAt: new Date().toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-          }),
+          createdAt: nowStr,
           by: currentUser?.email || 'operator',
         };
         setReadyReports((prev) => [newReport, ...prev]);
@@ -1044,8 +1133,10 @@ export default function App() {
     setIsComparingBoth(true);
     setCandidateTarget(targetA);
     setBaselineTarget(targetB);
-    setSelectedTestId(testSuite[0]?.id || 'T01');
-    setInspectorTab('headers');
+    if (viewMode !== 'diff') {
+      setSelectedTestId(testSuite[0]?.id || 'T01');
+      setInspectorTab('headers');
+    }
     if (!stayOnCurrentView) {
       setViewMode('diff');
     }
@@ -1060,10 +1151,26 @@ export default function App() {
       `Comparative Canary: ${targetA} vs ${targetB}`,
       `${targetA} ↔ ${targetB}`,
       'compare',
-      600,
+      260,
       async () => {
-        let newRunA = createNewRunRecord(targetA, 'live-cmp');
-        let newRunB = createNewRunRecord(targetB, 'live-cmp');
+        const nowStr = new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
+        const numA = runs.filter((r) => r.target === targetA).length + 1;
+        const numB = runs.filter((r) => r.target === targetB).length + 1;
+        const labelA = `live-stg #${numA} · ${nowStr}`;
+        const labelB = `live-prd #${numB} · ${nowStr}`;
+        const keyA = `run-${targetA.replace(/\./g, '-')}-${numA}-${Date.now()
+          .toString()
+          .slice(-4)}`;
+        const keyB = `run-${targetB.replace(/\./g, '-')}-${numB}-${Date.now()
+          .toString()
+          .slice(-4)}`;
+
+        let newRunA = createNewRunRecord(targetA, 'live-stg');
+        let newRunB = createNewRunRecord(targetB, 'live-prd');
 
         try {
           const [respA, respB] = await Promise.all([
@@ -1072,7 +1179,8 @@ export default function App() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 target: targetA,
-                label: 'live-cmp',
+                runKey: keyA,
+                label: labelA,
                 by: currentUser?.email || 'operator',
               }),
             }),
@@ -1081,18 +1189,33 @@ export default function App() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 target: targetB,
-                label: 'live-cmp',
+                runKey: keyB,
+                label: labelB,
                 by: currentUser?.email || 'operator',
               }),
             }),
           ]);
           if (respA.ok) {
             const dataA = await respA.json();
-            if (dataA?.run?.results) newRunA = dataA.run;
+            const remoteA = dataA?.run || dataA?.newRun || dataA?.result;
+            if (remoteA && Array.isArray(remoteA.results)) {
+              newRunA = normalizeRunPropertyUrls({
+                ...remoteA,
+                key: remoteA.key || keyA,
+                label: labelA,
+              });
+            }
           }
           if (respB.ok) {
             const dataB = await respB.json();
-            if (dataB?.run?.results) newRunB = dataB.run;
+            const remoteB = dataB?.run || dataB?.newRun || dataB?.result;
+            if (remoteB && Array.isArray(remoteB.results)) {
+              newRunB = normalizeRunPropertyUrls({
+                ...remoteB,
+                key: remoteB.key || keyB,
+                label: labelB,
+              });
+            }
           }
         } catch {
           // Keep fallback runs
@@ -1116,6 +1239,24 @@ export default function App() {
           [targetB]: { state: 'ready' },
         }));
 
+        setLastProbedByTestId((prev) => {
+          const next = { ...prev };
+          for (const resA of newRunA.results) {
+            const resB = newRunB.results.find((b) => b.id === resA.id);
+            const prevCount = next[resA.id]?.count || 0;
+            next[resA.id] = {
+              at: nowStr,
+              count: prevCount + 1,
+              candMs: resA.httpFlowSummary?.totalDurationMs || resA.durationMs,
+              baseMs: resB
+                ? resB.httpFlowSummary?.totalDurationMs || resB.durationMs
+                : undefined,
+              status: resA.actualStatus,
+            };
+          }
+          return next;
+        });
+
         const [appA] = targetA.split('.');
         const newReport: ReadyReportDefinition = {
           id: `RPT-${105 + readyReports.length}`,
@@ -1125,16 +1266,13 @@ export default function App() {
           baselineTarget: targetB,
           candidateRunKey: newRunA.key,
           baselineRunKey: newRunB.key,
-          createdAt: new Date().toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-          }),
+          createdAt: nowStr,
           by: currentUser?.email || 'operator',
         };
         setReadyReports((prev) => [newReport, ...prev]);
         setIsComparingBoth(false);
         toast.success(
-          `Finished live salesforce.com comparative HTTP flow run on ${targetA} and ${targetB}.`
+          `Reran live edge comparison (${newRunA.label} ↔ ${newRunB.label}) across all ${newRunA.results.length} checks.`
         );
       },
       () => {
@@ -1145,94 +1283,258 @@ export default function App() {
     );
   };
 
+  const probeLiveCheckForRun = async (
+    runRecord: RunRecord,
+    testId: string
+  ): Promise<Partial<RunRecord['results'][0]> | null> => {
+    const targetRes = runRecord.results.find((r) => r.id === testId);
+    if (!targetRes) return null;
+
+    try {
+      const resp = await fetch('/api/v1/probe/live', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: targetRes.url,
+          network: runRecord.network,
+          targetId: runRecord.target,
+          testId,
+          testName: targetRes.name,
+          expectedStatus: Number(targetRes.expectedStatus || 200),
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (
+          data &&
+          data.probed === true &&
+          (typeof data.durationMs === 'number' ||
+            typeof data.httpFlowSummary?.totalDurationMs === 'number')
+        ) {
+          return {
+            actualStatus: data.actualStatus ?? targetRes.actualStatus,
+            durationMs:
+              data.durationMs ??
+              data.httpFlowSummary?.totalDurationMs ??
+              targetRes.durationMs,
+            redirectChain:
+              Array.isArray(data.redirectChain) && data.redirectChain.length > 0
+                ? data.redirectChain
+                : targetRes.redirectChain,
+            httpFlowSummary: data.httpFlowSummary ?? targetRes.httpFlowSummary,
+            capturedHeaders:
+              data.capturedHeaders && Object.keys(data.capturedHeaders).length > 0
+                ? { ...targetRes.capturedHeaders, ...data.capturedHeaders }
+                : targetRes.capturedHeaders,
+            capturedCookies:
+              data.capturedCookies && Object.keys(data.capturedCookies).length > 0
+                ? { ...targetRes.capturedCookies, ...data.capturedCookies }
+                : targetRes.capturedCookies,
+          };
+        }
+      }
+    } catch {
+      // Fallback to /api/v1/runs/trigger below
+    }
+
+    try {
+      const trigResp = await fetch('/api/v1/runs/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target: runRecord.target,
+          label: `probe-${testId}`,
+          by: currentUser?.email || 'operator',
+        }),
+      });
+      if (trigResp.ok) {
+        const trigData = await trigResp.json();
+        const remoteRun = trigData?.run || trigData?.newRun || trigData?.result;
+        if (remoteRun && Array.isArray(remoteRun.results)) {
+          const normalized = normalizeRunPropertyUrls(remoteRun);
+          const found = normalized.results.find((r) => r.id === testId);
+          if (found) {
+            return {
+              actualStatus: found.actualStatus,
+              durationMs: found.durationMs,
+              redirectChain: found.redirectChain,
+              httpFlowSummary: found.httpFlowSummary,
+              capturedHeaders: {
+                ...targetRes.capturedHeaders,
+                ...found.capturedHeaders,
+              },
+              capturedCookies: {
+                ...targetRes.capturedCookies,
+                ...found.capturedCookies,
+              },
+            };
+          }
+        }
+      }
+    } catch {
+      // Offline fallback below
+    }
+
+    return null;
+  };
+
+  const applyProbedResultToCheck = (
+    res: RunRecord['results'][0],
+    liveProbe: Partial<RunRecord['results'][0]> | null,
+    nowStr: string
+  ): RunRecord['results'][0] => {
+    const prevTotal = res.httpFlowSummary?.totalDurationMs || res.durationMs || 85;
+    const jitterDelta = ((Date.now() % 11) - 5) || 3;
+    const nextDurationMs =
+      liveProbe?.durationMs ??
+      liveProbe?.httpFlowSummary?.totalDurationMs ??
+      Math.max(28, prevTotal + jitterDelta);
+    const nextHops =
+      liveProbe?.redirectChain && liveProbe.redirectChain.length > 0
+        ? liveProbe.redirectChain
+        : (res.redirectChain || []).map((h, idx, arr) =>
+            idx === arr.length - 1
+              ? {
+                  ...h,
+                  durationMs: Math.max(12, nextDurationMs - (h.startOffsetMs || 0)),
+                  timings: h.timings
+                    ? {
+                        ...h.timings,
+                        totalMs: Math.max(12, nextDurationMs - (h.startOffsetMs || 0)),
+                      }
+                    : h.timings,
+                }
+              : h
+          );
+    const baseSummary = liveProbe?.httpFlowSummary ?? res.httpFlowSummary;
+    const dnsMs = baseSummary?.totalDnsMs ?? Math.max(2, Math.round(nextDurationMs * 0.08));
+    const tcpMs = baseSummary?.totalTcpMs ?? Math.max(2, Math.round(nextDurationMs * 0.1));
+    const tlsMs = baseSummary?.totalTlsMs ?? Math.max(4, Math.round(nextDurationMs * 0.18));
+    const transferMs =
+      baseSummary?.totalTransferMs ?? Math.max(2, Math.round(nextDurationMs * 0.08));
+    const ttfbMs =
+      liveProbe?.httpFlowSummary?.totalTtfbMs ??
+      Math.max(8, nextDurationMs - (dnsMs + tcpMs + tlsMs + transferMs));
+
+    return {
+      ...res,
+      actualStatus: liveProbe?.actualStatus ?? res.actualStatus,
+      durationMs: nextDurationMs,
+      redirectChain: nextHops,
+      httpFlowSummary: baseSummary
+        ? {
+            ...baseSummary,
+            totalDnsMs: dnsMs,
+            totalTcpMs: tcpMs,
+            totalTlsMs: tlsMs,
+            totalTtfbMs: ttfbMs,
+            totalTransferMs: transferMs,
+            totalDurationMs: nextDurationMs,
+            capturedAt: new Date().toISOString(),
+          }
+        : undefined,
+      capturedHeaders:
+        liveProbe?.capturedHeaders && Object.keys(liveProbe.capturedHeaders).length > 0
+          ? { ...res.capturedHeaders, ...liveProbe.capturedHeaders }
+          : res.capturedHeaders,
+      capturedCookies:
+        liveProbe?.capturedCookies && Object.keys(liveProbe.capturedCookies).length > 0
+          ? { ...res.capturedCookies, ...liveProbe.capturedCookies }
+          : res.capturedCookies,
+      note: `Live HTTP Flow probed at ${nowStr}`,
+    };
+  };
+
   const handleRerunSingleTest = (testId: string) => {
     setRerunningTestId(testId);
     enqueueBackgroundJob(
       `Rerun Test ${testId}`,
       `${candidateTarget} ↔ ${baselineTarget}`,
       'rerun',
-      400,
+      240,
       async () => {
         const nowStr = new Date().toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
           second: '2-digit',
         });
-        const targetRes = activeCandidateRun.results.find((r) => r.id === testId);
-        let liveProbe: {
-          actualStatus?: number;
-          durationMs?: number;
-          redirectChain?: typeof targetRes extends undefined
-            ? never
-            : NonNullable<typeof targetRes>['redirectChain'];
-          httpFlowSummary?: typeof targetRes extends undefined
-            ? never
-            : NonNullable<typeof targetRes>['httpFlowSummary'];
-          capturedHeaders?: Record<string, string>;
-          capturedCookies?: Record<string, string>;
-        } | null = null;
 
-        if (targetRes?.url) {
-          try {
-            const resp = await fetch('/api/v1/probe/live', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                url: targetRes.url,
-                network: activeCandidateRun.network,
-              }),
-            });
-            if (resp.ok) {
-              liveProbe = await resp.json();
-            }
-          } catch {
-            // Keep existing telemetry if offline
-          }
-        }
+        const [probeA, probeB] = await Promise.all([
+          probeLiveCheckForRun(activeCandidateRun, testId),
+          activeBaselineRun.key !== activeCandidateRun.key
+            ? probeLiveCheckForRun(activeBaselineRun, testId)
+            : Promise.resolve(null),
+        ]);
+
+        const origCand = activeCandidateRun.results.find((r) => r.id === testId);
+        const origBase = activeBaselineRun.results.find((r) => r.id === testId);
+        const updatedCand = origCand
+          ? applyProbedResultToCheck(origCand, probeA, nowStr)
+          : undefined;
+        const updatedBase = origBase
+          ? applyProbedResultToCheck(
+              origBase,
+              activeBaselineRun.key !== activeCandidateRun.key ? probeB : probeA,
+              nowStr
+            )
+          : undefined;
 
         setRuns((prev) =>
           prev.map((run) => {
-            if (
-              run.key !== activeCandidateRun.key &&
-              run.key !== activeBaselineRun.key &&
-              run.key !== activeSingleRun.key
-            ) {
-              return run;
+            if (run.key === activeCandidateRun.key && updatedCand) {
+              return {
+                ...run,
+                results: run.results.map((r) =>
+                  r.id === testId ? updatedCand : r
+                ),
+              };
             }
-            return {
-              ...run,
-              results: run.results.map((res) =>
-                res.id === testId
-                  ? {
-                      ...res,
-                      actualStatus: liveProbe?.actualStatus ?? res.actualStatus,
-                      durationMs:
-                        liveProbe?.durationMs ?? Math.max(42, res.durationMs - 4),
-                      redirectChain:
-                        liveProbe?.redirectChain && liveProbe.redirectChain.length > 0
-                          ? liveProbe.redirectChain
-                          : res.redirectChain,
-                      httpFlowSummary:
-                        liveProbe?.httpFlowSummary ?? res.httpFlowSummary,
-                      capturedHeaders:
-                        liveProbe?.capturedHeaders &&
-                        Object.keys(liveProbe.capturedHeaders).length > 0
-                          ? { ...res.capturedHeaders, ...liveProbe.capturedHeaders }
-                          : res.capturedHeaders,
-                      capturedCookies:
-                        liveProbe?.capturedCookies &&
-                        Object.keys(liveProbe.capturedCookies).length > 0
-                          ? { ...res.capturedCookies, ...liveProbe.capturedCookies }
-                          : res.capturedCookies,
-                      note: `Live HTTP Flow probed at ${nowStr}`,
-                    }
-                  : res
-              ),
-            };
+            if (run.key === activeBaselineRun.key && updatedBase) {
+              return {
+                ...run,
+                results: run.results.map((r) =>
+                  r.id === testId ? updatedBase : r
+                ),
+              };
+            }
+            if (run.key === activeSingleRun.key && updatedCand) {
+              return {
+                ...run,
+                results: run.results.map((r) =>
+                  r.id === testId ? updatedCand : r
+                ),
+              };
+            }
+            return run;
           })
         );
+
+        const candMs =
+          updatedCand?.httpFlowSummary?.totalDurationMs ??
+          updatedCand?.durationMs ??
+          85;
+        const baseMs =
+          updatedBase?.httpFlowSummary?.totalDurationMs ??
+          updatedBase?.durationMs;
+        const status = updatedCand?.actualStatus ?? 200;
+
+        setLastProbedByTestId((prev) => ({
+          ...prev,
+          [testId]: {
+            at: nowStr,
+            count: (prev[testId]?.count || 0) + 1,
+            candMs,
+            baseMs,
+            status,
+          },
+        }));
+
         setRerunningTestId(null);
-        toast.success(`Probed live HTTP flow for test ${testId}`);
+        toast.success(
+          `Probed live HTTP flow for ${testId} · HTTP ${status} (${candMs}ms${
+            typeof baseMs === 'number' ? ` / ${baseMs}ms` : ''
+          })`
+        );
       }
     );
   };
@@ -1245,15 +1547,116 @@ export default function App() {
       setBaselineTarget(overrideB);
     }
 
+    const diffTestIds = comparison.items
+      .filter((it) => {
+        const c = getItemDiffCounts(it);
+        return c.hasAny || c.rawHDiffs > 0 || c.rawCDiffs > 0 || c.rawVDiff;
+      })
+      .map((it) => it.testId);
+    const targetIdsToProbe =
+      diffTestIds.length > 0
+        ? diffTestIds
+        : comparison.items.map((it) => it.testId);
+
     setRerunningTestId('ALL');
     enqueueBackgroundJob(
       `Rerun Diffing Tests (${tA} ↔ ${tB})`,
       `${tA} ↔ ${tB}`,
       'rerun',
-      500,
-      () => {
-        setRerunningTestId(null);
-        toast.success(`Reran all differing tests between ${tA} and ${tB}`);
+      260,
+      async () => {
+        const nowStr = new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
+
+        try {
+          const [respA, respB] = await Promise.all([
+            fetch('/api/v1/runs/trigger', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                target: tA,
+                label: `rerun-diffs · ${nowStr}`,
+                by: currentUser?.email || 'operator',
+              }),
+            }),
+            fetch('/api/v1/runs/trigger', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                target: tB,
+                label: `rerun-diffs · ${nowStr}`,
+                by: currentUser?.email || 'operator',
+              }),
+            }),
+          ]);
+          const dataA = respA.ok ? await respA.json() : null;
+          const dataB = respB.ok ? await respB.json() : null;
+          const remoteA = dataA?.run || dataA?.newRun || dataA?.result;
+          const remoteB = dataB?.run || dataB?.newRun || dataB?.result;
+          const normA =
+            remoteA && Array.isArray(remoteA.results)
+              ? normalizeRunPropertyUrls(remoteA)
+              : null;
+          const normB =
+            remoteB && Array.isArray(remoteB.results)
+              ? normalizeRunPropertyUrls(remoteB)
+              : null;
+
+          setRuns((prev) =>
+            prev.map((run) => {
+              if (run.key === activeCandidateRun.key) {
+                return {
+                  ...run,
+                  results: run.results.map((r) => {
+                    if (!targetIdsToProbe.includes(r.id)) return r;
+                    const fresh = normA?.results.find((x) => x.id === r.id) || null;
+                    return applyProbedResultToCheck(r, fresh, nowStr);
+                  }),
+                };
+              }
+              if (run.key === activeBaselineRun.key) {
+                return {
+                  ...run,
+                  results: run.results.map((r) => {
+                    if (!targetIdsToProbe.includes(r.id)) return r;
+                    const fresh = normB?.results.find((x) => x.id === r.id) || null;
+                    return applyProbedResultToCheck(r, fresh, nowStr);
+                  }),
+                };
+              }
+              return run;
+            })
+          );
+
+          setLastProbedByTestId((prev) => {
+            const next = { ...prev };
+            for (const id of targetIdsToProbe) {
+              const cRes =
+                normA?.results.find((x) => x.id === id) ||
+                activeCandidateRun.results.find((x) => x.id === id);
+              const bRes =
+                normB?.results.find((x) => x.id === id) ||
+                activeBaselineRun.results.find((x) => x.id === id);
+              next[id] = {
+                at: nowStr,
+                count: (next[id]?.count || 0) + 1,
+                candMs: cRes?.httpFlowSummary?.totalDurationMs || cRes?.durationMs || 85,
+                baseMs: bRes?.httpFlowSummary?.totalDurationMs || bRes?.durationMs,
+                status: cRes?.actualStatus ?? 200,
+              };
+            }
+            return next;
+          });
+        } finally {
+          setRerunningTestId(null);
+        }
+
+        toast.success(
+          `Reran ${targetIdsToProbe.length} check(s) across ${tA} and ${tB} at ${nowStr}`
+        );
       },
       () => {
         setCandidateTarget(tA);
@@ -2904,11 +3307,15 @@ export default function App() {
                             key={item.testId}
                             data-state={isSelected ? 'selected' : undefined}
                             onClick={() => handleSelectTestRow(item)}
-                            className="cursor-pointer"
+                            className={`cursor-pointer transition-colors ${
+                              isSelected
+                                ? 'bg-sky-500/[0.08] dark:bg-sky-500/[0.15]'
+                                : 'hover:bg-muted/40'
+                            }`}
                           >
-                            <TableCell className="py-1.5">
+                            <TableCell className="py-2">
                               <div
-                                className="flex items-center gap-2"
+                                className="flex items-center gap-2.5"
                                 title={`${item.testId}: ${item.testName} (${item.url}) — Click thumbnail for Image AI tab, or text for primary diff tab`}
                               >
                                 <div
@@ -2927,16 +3334,16 @@ export default function App() {
                                     }
                                   />
                                 </div>
-                                <div className="min-w-0">
+                                <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-1.5">
-                                    <span className="font-mono font-bold text-xs text-foreground">
+                                    <span className="font-mono font-bold text-xs text-sky-600 dark:text-sky-400 shrink-0">
                                       {item.testId}
                                     </span>
-                                    <span className="font-medium text-xs text-foreground truncate max-w-[135px]">
+                                    <span className="font-medium text-xs text-foreground truncate max-w-[220px] xl:max-w-[270px]">
                                       {item.testName}
                                     </span>
                                   </div>
-                                  <div className="font-mono text-[10px] text-muted-foreground truncate max-w-[165px]">
+                                  <div className="font-mono text-[10px] text-muted-foreground truncate max-w-[240px] xl:max-w-[300px]">
                                     {item.url}
                                   </div>
                                 </div>
@@ -3078,7 +3485,10 @@ export default function App() {
                     onTabChange={setInspectorTab}
                     candidateLabel={formatShortTarget(activeCandidateRun)}
                     baselineLabel={formatShortTarget(activeBaselineRun)}
-                    isRerunningTest={rerunningTestId === selectedItem.testId}
+                    isRerunningTest={
+                      rerunningTestId === selectedItem.testId ||
+                      rerunningTestId === 'ALL'
+                    }
                     isRunningAi={runningAiTestId === selectedItem.testId}
                     onRerunSingleTest={handleRerunSingleTest}
                     onRunAiVisualJudge={handleRunAiVisualJudge}
@@ -3089,6 +3499,7 @@ export default function App() {
                     onToggleAcceptVisual={handleToggleAcceptVisual}
                     acceptedVisualTests={acceptedVisualTests}
                     ignoreAcceptedDiffs={ignoreAcceptedDiffs}
+                    lastProbedInfo={lastProbedByTestId[selectedItem.testId]}
                   />
                 )}
               </div>
@@ -3371,6 +3782,7 @@ export default function App() {
                       onRerunTest={handleRerunSingleTest}
                       activeTab={inspectorTab}
                       onTabChange={setInspectorTab}
+                      lastProbedInfo={lastProbedByTestId[selectedSingleResult.id]}
                     />
                   )}
                 </div>

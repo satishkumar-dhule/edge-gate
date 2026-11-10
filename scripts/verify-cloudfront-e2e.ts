@@ -376,13 +376,18 @@ export async function runCloudFrontE2ETests(baseUrl?: string): Promise<void> {
     await page.locator('button[role="tab"]:has-text("Cookies")').click();
     await page.waitForSelector('th:has-text("Cookie")', { timeout: 8000 });
 
-    // 8. Select T03 & verify AI Visual Comparison is active (AI Verdict: MINOR, Δ 1.8%) + trigger "Run Nova Lite Judge"
+    // 8. Select T03 & verify AI Visual Comparison is active (AI Verdict: MINOR, Δ 1.8%) + trigger "Run Nova Lite Judge" & "Rerun Probe"
     await page.locator('[data-testid="page-mini-thumb-img-T03"]').first().click();
     if (await imageAiTab.count() > 0) {
       await imageAiTab.click();
     }
     await page.waitForSelector('[data-testid="dom-snapshot-img-A"]', { timeout: 8000 });
     await page.waitForSelector('text=AI Verdict: MINOR', { timeout: 8000 });
+    const rerunProbeBtn = page.locator('button:has-text("Rerun Probe")').first();
+    if (await rerunProbeBtn.count() > 0) {
+      await rerunProbeBtn.click();
+      await page.waitForTimeout(900);
+    }
     const judgeBtn = page.locator('button:has-text("Run Nova Lite Judge")');
     if (await judgeBtn.count() > 0) {
       await judgeBtn.click();

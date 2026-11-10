@@ -334,6 +334,7 @@ async function startServer() {
       dispatched: true,
       engine: DEFAULT_TEMPLATE_CONFIG.infrastructure.runnerEngine,
       runtimeVersion: DEFAULT_TEMPLATE_CONFIG.infrastructure.runtimeVersion,
+      run: newRun,
       newRun,
       result: newRun,
       targetId,

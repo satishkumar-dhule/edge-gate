@@ -40,6 +40,17 @@ const NAVIGATION_TIMEOUT_MS = Number(
 
 const s3 = new S3Client({ region: REGION });
 const ddb = new DynamoDBClient({ region: REGION });
+const KEEP_ALIVE_HTTPS_AGENT = new https.Agent({
+  keepAlive: true,
+  maxSockets: 32,
+  keepAliveMsecs: 30000,
+  rejectUnauthorized: false,
+});
+const KEEP_ALIVE_HTTP_AGENT = new http.Agent({
+  keepAlive: true,
+  maxSockets: 32,
+  keepAliveMsecs: 30000,
+});
 
 function parseSuiteChecks() {
   if (process.env.SUITE_CHECKS_JSON) {
@@ -124,6 +135,7 @@ function executeLiveHop({ hopNumber, urlStr, startOffsetMs, fallbackIp, edgeCnam
         headers: requestHeaders,
         timeout: NAVIGATION_TIMEOUT_MS,
         rejectUnauthorized: false,
+        agent: isHttps ? KEEP_ALIVE_HTTPS_AGENT : KEEP_ALIVE_HTTP_AGENT,
       },
       (res) => {
         tTtfb = Date.now();
@@ -286,11 +298,12 @@ async function probeMultiHopCheck({ check, canonicalHost, edgeHostname, resolved
     canonicalHost !== `www.${DEFAULT_DOMAIN}` && (check.path || '/') !== '/'
       ? `www.${DEFAULT_DOMAIN}`
       : canonicalHost;
-  const initialUrl = `https://${probeHost}${check.path || '/'}`;
+  const probeUrl = `https://${probeHost}${check.path || '/'}`;
+  const displayUrl = `https://${canonicalHost}${check.path || '/'}`;
   const expectedCode = Number(check.expected_status || check.expectedStatus || 200);
   const hops = [];
   const mergedCookies = {};
-  let currentUrl = initialUrl;
+  let currentUrl = probeUrl;
   let offsetMs = 0;
 
   for (let hopNum = 1; hopNum <= 3; hopNum++) {
@@ -302,7 +315,10 @@ async function probeMultiHopCheck({ check, canonicalHost, edgeHostname, resolved
       edgeCname: cnameChain,
       network,
     });
-    hops.push(hop);
+    hops.push({
+      ...hop,
+      url: hopNum === 1 ? displayUrl : hop.url,
+    });
     Object.assign(mergedCookies, cookies);
     offsetMs += hop.durationMs;
 
@@ -350,8 +366,8 @@ async function probeMultiHopCheck({ check, canonicalHost, edgeHostname, resolved
     id: check.id,
     name: check.name,
     path: check.path || '/',
-    url: initialUrl,
-    canonicalUrl: initialUrl,
+    url: displayUrl,
+    canonicalUrl: displayUrl,
     actualStatus,
     status: String(actualStatus),
     expectedStatus: String(expectedCode),
@@ -457,42 +473,44 @@ exports.handler = async (event) => {
     results,
   };
 
-  if (S3_BUCKET) {
-    try {
-      await s3.send(
-        new PutObjectCommand({
-          Bucket: S3_BUCKET,
-          Key: `runs/${targetId}/${runKey}/summary.json`,
-          Body: JSON.stringify(runSummary, null, 2),
-          ContentType: 'application/json',
-        })
-      );
-    } catch {
-      // Non-fatal
+  if (event?.persistRun !== false) {
+    if (S3_BUCKET) {
+      try {
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: S3_BUCKET,
+            Key: `runs/${targetId}/${runKey}/summary.json`,
+            Body: JSON.stringify(runSummary, null, 2),
+            ContentType: 'application/json',
+          })
+        );
+      } catch {
+        // Non-fatal
+      }
     }
-  }
 
-  if (DYNAMODB_TABLE) {
-    try {
-      await ddb.send(
-        new PutItemCommand({
-          TableName: DYNAMODB_TABLE,
-          Item: {
-            target: { S: targetId },
-            runKey: { S: runKey },
-            appId: { S: appId },
-            envId: { S: envId },
-            network: { S: network },
-            startTime: { S: startTime },
-            finishTime: { S: finishTime },
-            passedTests: { N: String(passedTests) },
-            totalTests: { N: String(checks.length) },
-            payloadJson: { S: JSON.stringify(runSummary) },
-          },
-        })
-      );
-    } catch {
-      // Non-fatal
+    if (DYNAMODB_TABLE) {
+      try {
+        await ddb.send(
+          new PutItemCommand({
+            TableName: DYNAMODB_TABLE,
+            Item: {
+              target: { S: targetId },
+              runKey: { S: runKey },
+              appId: { S: appId },
+              envId: { S: envId },
+              network: { S: network },
+              startTime: { S: startTime },
+              finishTime: { S: finishTime },
+              passedTests: { N: String(passedTests) },
+              totalTests: { N: String(checks.length) },
+              payloadJson: { S: JSON.stringify(runSummary) },
+            },
+          })
+        );
+      } catch {
+        // Non-fatal
+      }
     }
   }
 

@@ -226,7 +226,7 @@ exports.handler = async (event) => {
     return jsonResponse(200, runtimeConfig);
   }
 
-  async function invokeAdhocRunnerForTarget(targetId, runKey, label) {
+  async function invokeAdhocRunnerForTarget(targetId, runKey, label, extraPayload = {}) {
     if (!ADHOC_RUNNER_LAMBDA_NAME) return null;
     try {
       const invokeRes = await lambda.send(
@@ -239,6 +239,7 @@ exports.handler = async (event) => {
               runKey,
               label,
               triggeredBy: operatorEmail,
+              ...extraPayload,
             })
           ),
         })
@@ -476,6 +477,7 @@ exports.handler = async (event) => {
         mode: 'aws-lambda-adhoc',
         targetId,
         by: operatorEmail,
+        run: decoded,
         newRun: decoded,
         result: decoded,
       });
@@ -487,6 +489,73 @@ exports.handler = async (event) => {
       targetId,
       by: operatorEmail,
       timestamp: new Date().toISOString(),
+    });
+  }
+
+  // 4A-2. Live Single-Check Multi-Hop HTTP Flow Probe (/api/v1/probe/live)
+  if (rawPath === '/api/v1/probe/live' && method === 'POST') {
+    const rawUrl = String(body.url || 'https://www.salesforce.com/');
+    const network = body.network === 'prod' ? 'prod' : 'staging';
+    const testId = String(body.testId || 'T01');
+    const testName = String(body.testName || `Live Edge Probe ${testId}`);
+    let parsedPath = '/';
+    let propId = 'www';
+    try {
+      const u = new URL(rawUrl);
+      parsedPath = `${u.pathname || '/'}${u.search || ''}`;
+      const hostPrefix = u.hostname.split('.')[0];
+      if (hostPrefix) propId = hostPrefix;
+    } catch {
+      // Fallback to root
+    }
+    const targetId = body.targetId || `${propId}.prod.${network}`;
+    await recordDdbUserAudit(operatorEmail, 'probe_live_url', `${targetId}:${testId}:${rawUrl}`);
+
+    if (ADHOC_RUNNER_LAMBDA_NAME) {
+      const singleRun = await invokeAdhocRunnerForTarget(
+        targetId,
+        `probe-${propId}-${testId}-${Date.now()}`,
+        `probe-${network}`,
+        {
+          persistRun: false,
+          checks: [
+            {
+              id: testId,
+              name: testName,
+              path: parsedPath,
+              expected_status: Number(body.expectedStatus || 200),
+            },
+          ],
+        }
+      );
+      const probedItem = singleRun?.results?.[0];
+      if (probedItem) {
+        return jsonResponse(200, {
+          probed: true,
+          url: rawUrl,
+          targetId,
+          network,
+          testId,
+          actualStatus: probedItem.actualStatus,
+          durationMs: probedItem.durationMs,
+          edgeHostname: probedItem.edgeHostname,
+          stagingEdgeIp: probedItem.stagingEdgeIp,
+          redirectChain: probedItem.redirectChain,
+          httpFlowSummary: probedItem.httpFlowSummary,
+          capturedHeaders: probedItem.capturedHeaders,
+          capturedCookies: probedItem.capturedCookies,
+          probedAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    return jsonResponse(200, {
+      probed: true,
+      url: rawUrl,
+      targetId,
+      network,
+      testId,
+      probedAt: new Date().toISOString(),
     });
   }
 
@@ -652,28 +721,41 @@ exports.handler = async (event) => {
     const sideAKey = `portal-ui/screenshots/${propId}-${screenshotTestId}-sideA.jpg`;
     const sideBKey = `portal-ui/screenshots/${propId}-${screenshotTestId}-sideB.jpg`;
 
-    // Load real Side A & Side B Chromium JPEG screenshots from S3 if available
+    // Load real Side A & Side B Chromium JPEG screenshots from warm memory or S3
+    const memCache = (globalThis.__s3ScreenshotMemCache =
+      globalThis.__s3ScreenshotMemCache || new Map());
     let sideABytes = null;
     let sideBBytes = null;
     let sideASha256 = '';
     let sideBSha256 = '';
     if (S3_BUCKET) {
       try {
-        const [objA, objB] = await Promise.all([
-          s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: sideAKey })).catch(() => null),
-          s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: sideBKey })).catch(() => null),
+        const loadCachedS3Image = async (key) => {
+          const hit = memCache.get(key);
+          if (hit) return hit;
+          const obj = await s3
+            .send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }))
+            .catch(() => null);
+          if (!obj?.Body) return null;
+          const chunks = [];
+          for await (const c of obj.Body) chunks.push(Buffer.from(c));
+          const bytes = Buffer.concat(chunks);
+          const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+          const entry = { bytes, sha256 };
+          memCache.set(key, entry);
+          return entry;
+        };
+        const [entryA, entryB] = await Promise.all([
+          loadCachedS3Image(sideAKey),
+          loadCachedS3Image(sideBKey),
         ]);
-        if (objA?.Body) {
-          const chunksA = [];
-          for await (const c of objA.Body) chunksA.push(Buffer.from(c));
-          sideABytes = Buffer.concat(chunksA);
-          sideASha256 = crypto.createHash('sha256').update(sideABytes).digest('hex');
+        if (entryA) {
+          sideABytes = entryA.bytes;
+          sideASha256 = entryA.sha256;
         }
-        if (objB?.Body) {
-          const chunksB = [];
-          for await (const c of objB.Body) chunksB.push(Buffer.from(c));
-          sideBBytes = Buffer.concat(chunksB);
-          sideBSha256 = crypto.createHash('sha256').update(sideBBytes).digest('hex');
+        if (entryB) {
+          sideBBytes = entryB.bytes;
+          sideBSha256 = entryB.sha256;
         }
       } catch {
         // Non-fatal S3 screenshot load

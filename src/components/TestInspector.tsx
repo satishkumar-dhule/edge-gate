@@ -40,6 +40,14 @@ export type InspectorDimension = 'flow' | 'headers' | 'cookies' | 'image';
 // ============================================================================
 // SHARED REUSABLE PRIMITIVE 1: INSPECTOR HEADER (USED BY DIFF & SINGLE RUN)
 // ============================================================================
+export interface LiveProbeFeedback {
+  at: string;
+  count: number;
+  candMs: number;
+  baseMs?: number;
+  status: number;
+}
+
 export const InspectorActionHeader: React.FC<{
   testId: string;
   testName: string;
@@ -49,6 +57,7 @@ export const InspectorActionHeader: React.FC<{
   isRerunning: boolean;
   onRerun: () => void;
   curlTarget?: TestResult;
+  lastProbedInfo?: LiveProbeFeedback;
 }> = ({
   testId,
   testName,
@@ -58,6 +67,7 @@ export const InspectorActionHeader: React.FC<{
   isRerunning,
   onRerun,
   curlTarget,
+  lastProbedInfo,
 }) => {
   const [copiedCurl, setCopiedCurl] = useState(false);
 
@@ -70,39 +80,53 @@ export const InspectorActionHeader: React.FC<{
   };
 
   return (
-    <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row flex-wrap items-center justify-between space-y-0 gap-3">
+    <CardHeader className="border-b border-border bg-muted/15 py-3 px-4 flex flex-row flex-wrap items-center justify-between space-y-0 gap-3">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant="outline" className="font-mono text-[11px] px-1.5 py-0">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <span className="font-mono text-xs font-bold tracking-tight text-sky-600 dark:text-sky-400">
             {testId}
-          </Badge>
-          <CardTitle className="truncate text-sm">{testName}</CardTitle>
+          </span>
+          <CardTitle className="truncate text-sm font-semibold tracking-tight">
+            {testName}
+          </CardTitle>
+          {lastProbedInfo && (
+            <span
+              data-testid="live-probe-badge"
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-emerald-700 dark:text-emerald-300 font-mono text-[10px] font-semibold"
+              title={`Live edge HTTP flow re-probed at ${lastProbedInfo.at}`}
+            >
+              <CheckCircle2 className="w-2.5 h-2.5 text-emerald-500 shrink-0" />
+              Probed #{lastProbedInfo.count} · {lastProbedInfo.at} · HTTP {lastProbedInfo.status} ({lastProbedInfo.candMs}ms
+              {typeof lastProbedInfo.baseMs === 'number' ? ` / ${lastProbedInfo.baseMs}ms` : ''})
+            </span>
+          )}
+        </div>
+        <CardDescription className="font-mono text-[11px] truncate mt-1 flex items-center gap-1.5 text-muted-foreground">
+          <span className="truncate">{subtitle}</span>
           {statusBadge && (
             <>
-              <Badge
-                variant={statusBadge.pass ? 'success' : 'destructive'}
-                className="font-mono text-[10px] py-0"
+              <span aria-hidden="true">·</span>
+              <span
+                className={
+                  statusBadge.pass
+                    ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                    : 'text-rose-600 dark:text-rose-400 font-semibold'
+                }
               >
                 HTTP {statusBadge.status}
-              </Badge>
-              <span className="text-[11px] font-mono text-muted-foreground">
-                {statusBadge.durationMs}ms
               </span>
+              <span aria-hidden="true">·</span>
+              <span>{statusBadge.durationMs}ms</span>
             </>
           )}
           {typeof hopCount === 'number' && hopCount > 0 && (
-            <Badge
-              variant={hopCount > 1 ? 'warning' : 'secondary'}
-              className="font-mono text-[10px] py-0 gap-1"
-              title={`Captured ${hopCount} HTTP hop(s) in request lifecycle`}
-            >
-              <Activity className="w-2.5 h-2.5" />
-              {hopCount} {hopCount === 1 ? 'HTTP Hop' : 'HTTP Hops'}
-            </Badge>
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="text-foreground/80 font-medium">
+                {hopCount} {hopCount === 1 ? 'HTTP Hop' : 'HTTP Hops'}
+              </span>
+            </>
           )}
-        </div>
-        <CardDescription className="font-mono text-[11px] truncate mt-0.5">
-          {subtitle}
         </CardDescription>
       </div>
 
@@ -110,10 +134,11 @@ export const InspectorActionHeader: React.FC<{
         <Button
           variant="outline"
           size="xs"
+          data-testid="rerun-probe-btn"
           onClick={onRerun}
           disabled={isRerunning}
         >
-          <RotateCw className={`!size-3 ${isRerunning ? 'animate-spin' : ''}`} />
+          <RotateCw className={`!size-3 ${isRerunning ? 'animate-spin text-sky-500' : ''}`} />
           {isRerunning ? 'Probing…' : 'Rerun Probe'}
         </Button>
 
@@ -584,15 +609,15 @@ export const DomSnapshotCard: React.FC<{
   const activeImgSrc = imgFallback ? fallbackSvgDataUri : liveScreenshotUrl;
 
   return (
-    <div className="border border-border rounded-lg p-3 bg-muted/20 space-y-2">
+    <div className="border border-border rounded-lg p-3 bg-card space-y-2">
       <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
         <span className="font-semibold text-foreground">{title}</span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           <span>{metaRight}</span>
           <button
             type="button"
             onClick={() => setZoomOpen((prev) => !prev)}
-            className="px-1.5 py-0.5 rounded border border-border bg-background hover:bg-muted text-[10px] text-foreground cursor-pointer"
+            className="px-2 py-0.5 rounded border border-border bg-background hover:bg-muted text-[10px] text-foreground cursor-pointer whitespace-nowrap shrink-0"
             title="Toggle enlarged DOM screenshot view"
           >
             {zoomOpen ? 'Compact' : 'Enlarge'}
@@ -603,12 +628,12 @@ export const DomSnapshotCard: React.FC<{
       <div
         className={`bg-background border rounded-md overflow-hidden transition-all ${
           highlightDiff
-            ? 'border-amber-500/60 ring-1 ring-amber-500/30'
+            ? 'border-amber-500/70 ring-1 ring-amber-500/25'
             : 'border-border'
         }`}
       >
         {/* Browser Chrome Header */}
-        <div className="flex items-center justify-between border-b border-border px-2.5 py-1.5 bg-muted/30">
+        <div className="flex items-center justify-between border-b border-border px-2.5 py-1.5 bg-muted/25">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="w-2 h-2 rounded-full bg-rose-400/80 shrink-0" />
             <span className="w-2 h-2 rounded-full bg-amber-400/80 shrink-0" />
@@ -620,41 +645,50 @@ export const DomSnapshotCard: React.FC<{
               </span>
             )}
           </div>
-          <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 shrink-0">
-            LIVE CHROMIUM · 1280×760
+          <span className="font-mono text-[10px] text-muted-foreground shrink-0">
+            1280×760
           </span>
         </div>
 
-        {/* Rendered Real Webpage Screenshot Image */}
+        {/* Dedicated Non-Overlapping AI Region Callout Strip */}
+        {overlayText && (
+          <div className="px-2.5 py-1 bg-amber-500/15 border-b border-amber-500/30 text-amber-800 dark:text-amber-300 text-[10px] font-mono font-semibold flex items-center justify-between gap-2">
+            <span>★ Bedrock Nova Lite Diff: {overlayText}</span>
+            <span className="text-[9px] opacity-80">Top Banner Region</span>
+          </div>
+        )}
+
+        {/* Rendered Real Webpage Screenshot Image (Full 16:10 Frame, No Cropping) */}
         <div
-          className="relative w-full bg-slate-950/5 cursor-pointer group"
+          className="relative w-full bg-slate-950 cursor-pointer group"
           onClick={() => setZoomOpen((prev) => !prev)}
         >
           <img
             src={activeImgSrc}
+            loading="eager"
+            decoding="async"
+            fetchPriority="high"
+            referrerPolicy="no-referrer"
             onError={() => {
               if (!imgFallback) setImgFallback(true);
             }}
             alt={`${title} Live Chromium Screenshot for ${testId} (${url})`}
             data-testid={`dom-snapshot-img-${side}`}
-            className={`w-full object-cover object-top block transition-all ${
-              zoomOpen ? 'max-h-[480px]' : 'h-52 sm:h-60'
+            className={`w-full block transition-all ${
+              zoomOpen
+                ? 'max-h-[540px] object-contain'
+                : 'aspect-[16/10] object-contain'
             }`}
           />
           {overlayText && (
-            <>
-              <div className="pointer-events-none absolute inset-x-3 top-2 h-16 rounded border-2 border-dashed border-amber-500 bg-amber-500/15" />
-              <div className="absolute bottom-2 left-2 px-2 py-0.5 bg-amber-600/95 text-white rounded text-[10px] font-mono font-semibold shadow-sm">
-                ★ Bedrock Nova Lite Diff: {overlayText}
-              </div>
-            </>
+            <div className="pointer-events-none absolute inset-x-1.5 top-1 h-9 rounded border-2 border-dashed border-amber-400 bg-amber-500/10" />
           )}
         </div>
 
         {(footerLeft || footerRight) && (
           <div className="flex items-center justify-between px-2.5 py-1.5 border-t border-border bg-muted/15 text-[10px] font-mono text-muted-foreground">
-            <span>{footerLeft}</span>
-            <span>{footerRight}</span>
+            <span className="truncate">{footerLeft}</span>
+            <span className="shrink-0">{footerRight}</span>
           </div>
         )}
       </div>
@@ -682,6 +716,7 @@ interface TestInspectorProps {
   onToggleAcceptVisual: (testId: string) => void;
   acceptedVisualTests: string[];
   ignoreAcceptedDiffs: boolean;
+  lastProbedInfo?: LiveProbeFeedback;
 }
 
 export const TestInspector: React.FC<TestInspectorProps> = ({
@@ -701,6 +736,7 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
   onToggleAcceptVisual,
   acceptedVisualTests,
   ignoreAcceptedDiffs,
+  lastProbedInfo,
 }) => {
   const [showDiffOverlay, setShowDiffOverlay] = useState(true);
   const [diffsOnly, setDiffsOnly] = useState(false);
@@ -797,6 +833,7 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
         isRerunning={isRerunningTest}
         onRerun={() => onRerunSingleTest(item.testId)}
         curlTarget={cand}
+        lastProbedInfo={lastProbedInfo}
       />
 
       <CardContent className="p-3.5">
@@ -1198,28 +1235,27 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                     <span>
                       AI Verdict: {item.visualResult?.verdict.toUpperCase() || 'SAME'}
                     </span>
-                    <Badge
-                      variant="outline"
-                      className="font-mono text-[10px]"
+                    <span aria-hidden="true" className="text-muted-foreground">·</span>
+                    <span className="font-mono text-[11px] font-bold text-amber-700 dark:text-amber-400">
+                      Δ {item.visualResult?.pixelDiffPercent?.toFixed(1) ?? '0.0'}%
+                    </span>
+                    <span aria-hidden="true" className="text-muted-foreground">·</span>
+                    <span
+                      className="font-mono text-[11px] font-normal text-muted-foreground"
                       title="Evaluated by Amazon Bedrock Nova Lite multimodal judge (arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0)"
                     >
                       AWS Nova Lite · amazon.nova-lite-v1:0
-                    </Badge>
-                    <Badge
-                      variant={
-                        rawVisualDiff && !isVisualAccepted ? 'warning' : 'secondary'
-                      }
-                      className="font-mono"
-                    >
-                      Δ {item.visualResult?.pixelDiffPercent?.toFixed(1) ?? '0.0'}%
-                    </Badge>
+                    </span>
                     {isVisualAccepted && (
-                      <Badge variant="success" className="font-mono">
-                        Accepted Visual Diff
-                      </Badge>
+                      <>
+                        <span aria-hidden="true" className="text-muted-foreground">·</span>
+                        <span className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                          Accepted Visual Diff
+                        </span>
+                      </>
                     )}
                   </div>
-                  <p className="text-muted-foreground">
+                  <p className="text-muted-foreground leading-relaxed">
                     {item.visualResult?.summary ||
                       'Rendered DOM and screenshots match across both environments.'}
                   </p>
@@ -1318,6 +1354,7 @@ export const SingleRunInspector: React.FC<{
   onRerunTest: (testId: string) => void;
   activeTab?: InspectorDimension;
   onTabChange?: (tab: InspectorDimension) => void;
+  lastProbedInfo?: LiveProbeFeedback;
 }> = ({
   result,
   targetLabel,
@@ -1326,6 +1363,7 @@ export const SingleRunInspector: React.FC<{
   onRerunTest,
   activeTab: controlledTab,
   onTabChange,
+  lastProbedInfo,
 }) => {
   const [internalTab, setInternalTab] = useState<InspectorDimension>('flow');
   const activeTab = controlledTab ?? internalTab;
@@ -1354,6 +1392,7 @@ export const SingleRunInspector: React.FC<{
         isRerunning={isRerunning}
         onRerun={() => onRerunTest(result.id)}
         curlTarget={result}
+        lastProbedInfo={lastProbedInfo}
       />
 
       <CardContent className="p-3.5">
