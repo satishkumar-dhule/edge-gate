@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AcceptedRule, AppConfig, RunRecord } from '../engine/types';
-import { buildDomScreenshotDataUri } from '../engine/domScreenshotRenderer';
+import { buildDomScreenshotDataUri, resolveLiveScreenshotUrl } from '../engine/domScreenshotRenderer';
 import {
   DEFAULT_TEMPLATE_CONFIG,
   TemplateConfig,
@@ -24,6 +24,10 @@ import {
   generateAiAgentAdaptationBundle,
   generateOneShotAdaptationPrompt,
 } from '../engine/pluginRegistry';
+import {
+  defaultZeroTokenEngine,
+  ZeroTokenEvaluationDecision,
+} from '../engine/zeroTokenArchitecture';
 import {
   Card,
   CardHeader,
@@ -276,13 +280,22 @@ export const PageMiniThumb: React.FC<{
   isRedirect?: boolean;
   onClick?: () => void;
 }> = ({ testId, testName, url, hasVisualDiff, isRedirect, onClick }) => {
-  const thumbUri = buildDomScreenshotDataUri({
+  const [fallback, setFallback] = useState(false);
+  const liveThumbUrl = resolveLiveScreenshotUrl({
     testId,
     testName,
     url,
     side: 'A',
     highlightDiff: hasVisualDiff,
   });
+  const svgFallback = buildDomScreenshotDataUri({
+    testId,
+    testName,
+    url,
+    side: 'A',
+    highlightDiff: hasVisualDiff,
+  });
+  const thumbUri = fallback ? svgFallback : liveThumbUrl;
 
   return (
     <button
@@ -305,6 +318,9 @@ export const PageMiniThumb: React.FC<{
     >
       <img
         src={thumbUri}
+        onError={() => {
+          if (!fallback) setFallback(true);
+        }}
         alt={`${testId} ${testName} thumbnail`}
         data-testid={`page-mini-thumb-img-${testId}`}
         className="w-full h-full object-cover object-top block"
@@ -916,6 +932,40 @@ export const McpAndAwsBackendView: React.FC<{
   const [selectedPluginScenario, setSelectedPluginScenario] = useState<
     'T02_CACHE_DRIFT' | 'T03_VISUAL_MINOR' | 'T05_COOKIE_DRIFT' | 'T01_CLEAN'
   >('T02_CACHE_DRIFT');
+  const [zeroTokenDecision, setZeroTokenDecision] =
+    useState<ZeroTokenEvaluationDecision | null>(() =>
+      defaultZeroTokenEngine.evaluate({
+        testId: 'T01',
+        url: 'https://www.salesforce.com/',
+        pixelDiffPercent: 0.0,
+      })
+    );
+  const zeroTokenSnap = defaultZeroTokenEngine.getTelemetrySnapshot();
+
+  const handleRunZeroTokenTest = (
+    testId: string,
+    url: string,
+    pixelDiffPercent: number,
+    forceBypassCache = false
+  ) => {
+    const dec = defaultZeroTokenEngine.evaluate({
+      testId,
+      url,
+      pixelDiffPercent,
+      forceBypassCache,
+    });
+    setZeroTokenDecision({ ...dec });
+    fetch('/api/v1/zero-token/evaluate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        testId,
+        url,
+        pixelDiffPercent,
+        forceBypassCache,
+      }),
+    }).catch(() => undefined);
+  };
 
   const togglePluginId = (pluginId: string) => {
     setEnabledPluginIds((prev) =>
@@ -2274,6 +2324,147 @@ terraform apply -auto-approve`}
               </CardContent>
             </Card>
           </div>
+
+          {/* Middle Row: 3-Tier Zero-Token AI Dedup Funnel & Autonomous .env Cycle */}
+          <Card className="border-sky-500/30">
+            <CardHeader className="border-b border-border bg-sky-500/5 py-2.5 px-4 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+              <div>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-sky-500" />
+                  <span>
+                    3-Tier Zero-Token AI Architecture & SHA-256 Diff Dedup Cache (
+                    <code className="font-mono text-xs">
+                      src/engine/zeroTokenArchitecture.ts
+                    </code>
+                    )
+                  </span>
+                  <Badge variant="success" className="font-mono text-[10px]">
+                    Zero-Token Savings: {zeroTokenSnap.zeroTokenHitRatePercent}% ({zeroTokenSnap.totalTokensSaved} tokens saved)
+                  </Badge>
+                </CardTitle>
+                <CardDescription>
+                  Invokes Amazon Bedrock Nova Lite (<code className="font-mono">amazon.nova-lite-v1:0</code>) <strong>only</strong> on genuinely novel unseen visual/structural diff signatures. Routine <code className="font-mono">.env</code> credential rotation, Terraform provisioning, 8-property fleet seeding, and known diffs run at <strong>0 tokens ($0.00)</strong>.
+                </CardDescription>
+              </div>
+
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="xs"
+                  onClick={() =>
+                    handleRunZeroTokenTest('T01', 'https://www.salesforce.com/', 0.0)
+                  }
+                >
+                  Tier 1: 0.0% Delta (0 Tokens)
+                </Button>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  onClick={() =>
+                    handleRunZeroTokenTest(
+                      'T03',
+                      'https://www.salesforce.com/ai/',
+                      2.4,
+                      false
+                    )
+                  }
+                >
+                  Evaluate T03 2.4% Diff (1st=AI, 2nd=0-Token Cache Hit)
+                </Button>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  onClick={() => {
+                    defaultZeroTokenEngine.clearCache();
+                    handleRunZeroTokenTest(
+                      'T03',
+                      'https://www.salesforce.com/ai/',
+                      2.4,
+                      true
+                    );
+                  }}
+                >
+                  Simulate Brand-New Unseen Diff (Tier 3 AI)
+                </Button>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-3.5 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5">
+                <div className="p-2.5 rounded-lg border border-border bg-muted/15 space-y-1">
+                  <div className="text-[10px] font-mono uppercase text-muted-foreground">
+                    Tier 1 · Deterministic Cost-Gate (&le;0.1%)
+                  </div>
+                  <div className="text-sm font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                    {zeroTokenSnap.tier1DeterministicSkips} skips · 0 Tokens
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    Identical DOM snapshots &amp; header/cookie parity rules skip AI completely.
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg border border-border bg-muted/15 space-y-1">
+                  <div className="text-[10px] font-mono uppercase text-muted-foreground">
+                    Tier 2 · SHA-256 Diff Cache (__AI_VERDICT_CACHE__)
+                  </div>
+                  <div className="text-sm font-bold font-mono text-sky-600 dark:text-sky-400">
+                    {zeroTokenSnap.tier2FingerprintCacheHits} hits · 0 Tokens
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {zeroTokenSnap.cachedSignaturesCount} verified SHA-256 diff signature(s) cached for instant 0-token reuse.
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg border border-border bg-muted/15 space-y-1">
+                  <div className="text-[10px] font-mono uppercase text-muted-foreground">
+                    Tier 3 · Novel Unseen Delta Only (Nova Lite)
+                  </div>
+                  <div className="text-sm font-bold font-mono text-amber-600 dark:text-amber-400">
+                    {zeroTokenSnap.tier3NovelAiInvocations} novel call(s)
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    AI invoked strictly once per unique unseen visual regression signature.
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg border border-border bg-muted/15 space-y-1">
+                  <div className="text-[10px] font-mono uppercase text-muted-foreground">
+                    Autonomous .env Lifecycle Reconciler
+                  </div>
+                  <div className="text-sm font-bold font-mono text-foreground">
+                    {zeroTokenSnap.activeEnvFingerprint}
+                  </div>
+                  <div className="text-[10px] font-mono text-muted-foreground">
+                    Run: <code>npm run zero-token-cycle</code> (0 Agent Tokens)
+                  </div>
+                </div>
+              </div>
+
+              {zeroTokenDecision && (
+                <div className="p-2.5 rounded-md border border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge
+                      variant={
+                        zeroTokenDecision.aiInvoked ? 'warning' : 'success'
+                      }
+                      className="font-mono text-[10px]"
+                    >
+                      {zeroTokenDecision.tier}
+                    </Badge>
+                    <span className="font-semibold text-foreground">
+                      [{zeroTokenDecision.fingerprint}]
+                    </span>
+                    <span className="text-muted-foreground">
+                      {zeroTokenDecision.summary}
+                    </span>
+                  </div>
+                  <Badge variant="outline" className="font-mono text-[10px]">
+                    Tokens Consumed: {zeroTokenDecision.tokensConsumed} · Saved: {zeroTokenDecision.tokensSaved}
+                  </Badge>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Bottom Row: Pluggable Release Gate Engine & Live Plugin Sandbox */}
           <Card>

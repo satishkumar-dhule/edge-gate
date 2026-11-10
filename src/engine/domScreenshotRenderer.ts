@@ -562,3 +562,40 @@ export function buildDomScreenshotDataUri(options: DomScreenshotOptions): string
 
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
+
+/**
+ * Resolves the real 1280x760 headless Chromium JPEG screenshot URL (`/screenshots/<prop>-<testId>-side<A|B>.jpg`)
+ * captured from the live salesforce.com property and served from S3 / CloudFront (`/portal-ui/screenshots/*`).
+ */
+export function resolveLiveScreenshotUrl(options: DomScreenshotOptions): string {
+  const { testId = 'T01', url = 'https://www.salesforce.com/', side = 'A', highlightDiff = false } = options;
+  const lowerUrl = (url || '').toLowerCase();
+  const idUpper = (testId || 'T01').toUpperCase();
+
+  let propId = 'www';
+  if (lowerUrl.includes('login.salesforce.com')) propId = 'login';
+  else if (lowerUrl.includes('developer.salesforce.com')) propId = 'developer';
+  else if (lowerUrl.includes('help.salesforce.com')) propId = 'help';
+  else if (lowerUrl.includes('trailhead.salesforce.com')) propId = 'trailhead';
+  else if (lowerUrl.includes('status.salesforce.com')) propId = 'status';
+  else if (lowerUrl.includes('appexchange.salesforce.com')) propId = 'appexchange';
+  else if (lowerUrl.includes('partners.salesforce.com')) propId = 'partners';
+
+  const validWwwTests = new Set(['T01', 'T02', 'T03', 'T04', 'T05', 'T06', 'T07', 'T08']);
+  const resolvedTestId =
+    propId === 'www' && validWwwTests.has(idUpper) ? idUpper : 'T01';
+
+  // For T03 when highlightDiff is active on Side A, serve sideA (with the staging edge candidate banner shift);
+  // otherwise serve sideB (clean production edge render) or sideA matching the side parameter.
+  const effectiveSide =
+    resolvedTestId === 'T03' && propId === 'www'
+      ? side === 'A' && highlightDiff
+        ? 'sideA'
+        : 'sideB'
+      : side === 'B'
+      ? 'sideB'
+      : 'sideA';
+
+  return `/screenshots/${propId}-${resolvedTestId}-${effectiveSide}.jpg`;
+}
+

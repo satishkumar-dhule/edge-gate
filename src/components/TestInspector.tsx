@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ComparisonItem, RedirectHop, TestResult } from '../engine/types';
 import { generateReproduceCurl } from '../engine/rules';
-import { buildDomScreenshotDataUri } from '../engine/domScreenshotRenderer';
+import { buildDomScreenshotDataUri, resolveLiveScreenshotUrl } from '../engine/domScreenshotRenderer';
 import {
   Card,
   CardHeader,
@@ -559,7 +559,15 @@ export const DomSnapshotCard: React.FC<{
   footerRight,
 }) => {
   const [zoomOpen, setZoomOpen] = useState(false);
-  const screenshotDataUri = buildDomScreenshotDataUri({
+  const [imgFallback, setImgFallback] = useState(false);
+  const liveScreenshotUrl = resolveLiveScreenshotUrl({
+    testId,
+    testName,
+    url,
+    side,
+    highlightDiff,
+  });
+  const fallbackSvgDataUri = buildDomScreenshotDataUri({
     testId,
     testName,
     url,
@@ -573,6 +581,7 @@ export const DomSnapshotCard: React.FC<{
     edgeIp,
     cacheStatus,
   });
+  const activeImgSrc = imgFallback ? fallbackSvgDataUri : liveScreenshotUrl;
 
   return (
     <div className="border border-border rounded-lg p-3 bg-muted/20 space-y-2">
@@ -611,28 +620,34 @@ export const DomSnapshotCard: React.FC<{
               </span>
             )}
           </div>
-          <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
-            1280×760
+          <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 shrink-0">
+            LIVE CHROMIUM · 1280×760
           </span>
         </div>
 
-        {/* Rendered Webpage Screenshot Image */}
+        {/* Rendered Real Webpage Screenshot Image */}
         <div
           className="relative w-full bg-slate-950/5 cursor-pointer group"
           onClick={() => setZoomOpen((prev) => !prev)}
         >
           <img
-            src={screenshotDataUri}
-            alt={`${title} DOM Screenshot for ${testId} (${url})`}
+            src={activeImgSrc}
+            onError={() => {
+              if (!imgFallback) setImgFallback(true);
+            }}
+            alt={`${title} Live Chromium Screenshot for ${testId} (${url})`}
             data-testid={`dom-snapshot-img-${side}`}
             className={`w-full object-cover object-top block transition-all ${
               zoomOpen ? 'max-h-[480px]' : 'h-52 sm:h-60'
             }`}
           />
           {overlayText && (
-            <div className="absolute bottom-2 left-2 px-2 py-0.5 bg-amber-500/95 text-white rounded text-[10px] font-mono font-semibold shadow-sm">
-              {overlayText}
-            </div>
+            <>
+              <div className="pointer-events-none absolute inset-x-3 top-2 h-16 rounded border-2 border-dashed border-amber-500 bg-amber-500/15" />
+              <div className="absolute bottom-2 left-2 px-2 py-0.5 bg-amber-600/95 text-white rounded text-[10px] font-mono font-semibold shadow-sm">
+                ★ Bedrock Nova Lite Diff: {overlayText}
+              </div>
+            </>
           )}
         </div>
 
@@ -741,13 +756,13 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
       return Number(bDiff) - Number(aDiff);
     });
 
-  const visibleHeaderKeys = diffsOnly
-    ? allHeaderKeys.filter((k) =>
-        item.functionalDiffs.some(
-          (d) => (d.field || d.kind).toLowerCase() === k.toLowerCase()
-        )
-      )
-    : allHeaderKeys;
+  const diffHeaderKeys = allHeaderKeys.filter((k) =>
+    item.functionalDiffs.some(
+      (d) => (d.field || d.kind).toLowerCase() === k.toLowerCase()
+    )
+  );
+  const visibleHeaderKeys =
+    diffsOnly && diffHeaderKeys.length > 0 ? diffHeaderKeys : allHeaderKeys;
 
   const allCookieKeys = Array.from(
     new Set([
@@ -762,13 +777,13 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
     return Number(bDiff) - Number(aDiff);
   });
 
-  const visibleCookieKeys = diffsOnly
-    ? allCookieKeys.filter(
-        (k) =>
-          (cand?.capturedCookies?.[k] ?? '') !==
-          (base?.capturedCookies?.[k] ?? '')
-      )
-    : allCookieKeys;
+  const diffCookieKeys = allCookieKeys.filter(
+    (k) =>
+      (cand?.capturedCookies?.[k] ?? '') !==
+      (base?.capturedCookies?.[k] ?? '')
+  );
+  const visibleCookieKeys =
+    diffsOnly && diffCookieKeys.length > 0 ? diffCookieKeys : allCookieKeys;
 
   const statusDiff = cand?.actualStatus !== base?.actualStatus;
 

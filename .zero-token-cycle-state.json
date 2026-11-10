@@ -1,0 +1,11 @@
+{
+  "architecture": "ZERO_TOKEN_AUTONOMOUS_CYCLE",
+  "envFingerprint": "ak_env_d3769a2b4be9",
+  "accountId": "373211957869",
+  "operatorUsername": "user-pqtpsgwbthke",
+  "maskedAccessKey": "AKIA••••SIFP",
+  "orchestratorTokensConsumed": 0,
+  "aiJudgePolicy": "INVOKE_ONLY_ON_NOVEL_UNSEEN_DIFF_SIGNATURES",
+  "completedAt": "2026-11-10T08:48:47.330Z",
+  "status": "SUCCESS"
+}

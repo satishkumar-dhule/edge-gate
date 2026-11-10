@@ -24,55 +24,102 @@ import {
   type UserActionType,
   type UserStatus,
 } from './src/engine/userManager';
+import fs from 'fs';
 import {
   executeLiveSalesforceRun,
   loadDotEnvCredentials,
   probeLiveUrlHttpFlow,
 } from './src/engine/httpFlowProber';
+import { defaultZeroTokenEngine } from './src/engine/zeroTokenArchitecture';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
   // Load .env AWS credentials (supports both KEY=VALUE and "AWS Access Key: ..." format)
-  const awsEnv = loadDotEnvCredentials();
+  let awsEnv = loadDotEnvCredentials();
+  defaultZeroTokenEngine.updateEnvMetadata({
+    accountId: awsEnv.accountId,
+    operatorUsername: awsEnv.operatorUsername,
+    maskedAccessKey: awsEnv.maskedAccessKey,
+    region: awsEnv.region,
+    cycleStatus: 'VERIFIED_LOCAL_STANDBY',
+    cycleAt: new Date().toISOString(),
+  });
 
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '5mb' }));
 
-  // In-memory server run store (seeded with salesforce.com runs, then enriched with live HTTP flows)
-  let serverRuns = [...INITIAL_RUNS];
+  // In-memory server run store populated with live salesforce.com HTTP flow probes
+  let serverRuns = [] as typeof INITIAL_RUNS;
 
-  // Trigger initial background live HTTP flow capture against www.salesforce.com on startup
-  (async () => {
-    try {
-      const [liveStg, livePrd] = await Promise.all([
-        executeLiveSalesforceRun({
-          targetId: 'www.prod.staging',
+  const seedLiveFleetOnServer = async () => {
+    const fleetTargets = [
+      'www.prod.staging',
+      'www.prod.prod',
+      'www.uat.staging',
+      'www.uat.prod',
+      'login.prod.staging',
+      'login.prod.prod',
+      'developer.prod.staging',
+      'developer.prod.prod',
+      'help.prod.staging',
+      'help.prod.prod',
+      'trailhead.prod.staging',
+      'trailhead.prod.prod',
+      'status.prod.staging',
+      'status.prod.prod',
+      'appexchange.prod.staging',
+      'appexchange.prod.prod',
+      'partners.prod.staging',
+      'partners.prod.prod',
+    ];
+    const opEmail = `${awsEnv.operatorUsername || 'user-pqtpsgwbthke'}@salesforce.com`;
+    const liveRuns = await Promise.all(
+      fleetTargets.map(async (targetId) => {
+        const net = targetId.endsWith('.staging') ? 'staging' : 'prod';
+        const run = await executeLiveSalesforceRun({
+          targetId,
           runNumber: 1,
-          label: 'v2026.11-rc1',
-          operatorEmail: DEFAULT_TEMPLATE_CONFIG.branding.defaultOperator.email,
-        }),
-        executeLiveSalesforceRun({
-          targetId: 'www.prod.prod',
-          runNumber: 1,
-          label: 'live-baseline',
-          operatorEmail: 'aws-synthetics-canary',
-        }),
-      ]);
-      liveStg.key = 'run-www-prod-staging-1';
-      livePrd.key = 'run-www-prod-prod-1';
-      serverRuns = serverRuns.map((r) => {
-        if (r.key === 'run-www-prod-staging-1') return liveStg;
-        if (r.key === 'run-www-prod-prod-1') return livePrd;
-        return r;
-      });
-    } catch {
-      // Keep deterministic salesforce.com runs if network is restricted
-    }
-  })();
+          label: `live-${net}`,
+          operatorEmail: opEmail,
+        });
+        run.key = `run-${targetId.replace(/\./g, '-')}-live-1`;
+        return run;
+      })
+    );
+    serverRuns = liveRuns;
+    return liveRuns;
+  };
+
+  // Trigger initial background live HTTP flow capture against salesforce.com on startup
+  seedLiveFleetOnServer().catch(() => undefined);
+
+  // Zero-Token .env Watcher: Automatically detect rotated AWS credentials in /.env and re-seed fleet
+  const dotEnvPath = path.resolve(__dirname, '.env');
+  if (fs.existsSync(dotEnvPath)) {
+    fs.watchFile(dotEnvPath, { interval: 2500 }, () => {
+      try {
+        const refreshed = loadDotEnvCredentials();
+        const { changed } = defaultZeroTokenEngine.updateEnvMetadata({
+          accountId: refreshed.accountId,
+          operatorUsername: refreshed.operatorUsername,
+          maskedAccessKey: refreshed.maskedAccessKey,
+          region: refreshed.region,
+          cycleStatus: 'VERIFIED_LOCAL_STANDBY',
+          cycleAt: new Date().toISOString(),
+        });
+        if (changed) {
+          awsEnv = refreshed;
+          seedLiveFleetOnServer().catch(() => undefined);
+        }
+      } catch {
+        // Ignore transient file write errors
+      }
+    });
+  }
 
   // Helper to resolve operator email from request headers/body for user tracking
   const resolveOperatorEmail = (req: express.Request): string => {
@@ -231,8 +278,22 @@ async function startServer() {
     });
   });
 
+  // 5b. Purge & Seed Live Fleet Runs Across All 8 Salesforce Properties
+  app.post('/api/v1/runs/seed-fleet', async (_req, res) => {
+    try {
+      const liveRuns = await seedLiveFleetOnServer();
+      res.json({
+        seededLiveFleet: true,
+        total: liveRuns.length,
+        runs: liveRuns,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // 6. Trigger Live HTTP Flow Probe + AWS CloudWatch Synthetics Canary & Auto-Compare vs Previous Run
-  app.post(['/api/v1/runs/trigger', '/api/synthetics/runs'], async (req, res) => {
+  app.post(['/api/v1/runs', '/api/v1/runs/trigger', '/api/synthetics/runs'], async (req, res) => {
     const targetId =
       (req.body?.targetId as string) ||
       (req.body?.target as string) ||
@@ -274,6 +335,8 @@ async function startServer() {
       engine: DEFAULT_TEMPLATE_CONFIG.infrastructure.runnerEngine,
       runtimeVersion: DEFAULT_TEMPLATE_CONFIG.infrastructure.runtimeVersion,
       newRun,
+      result: newRun,
+      targetId,
       comparedAgainstPreviousRun: prevRun?.key || null,
       headlineVerdict: comparison?.headlineVerdict || 'GO',
       rollup: comparison?.rollup || null,
@@ -320,11 +383,15 @@ async function startServer() {
   });
 
   // 7. Evaluate 3-Dimension Comparison (Headers, Cookies, Bedrock Nova Lite Visual Judge)
-  app.post('/api/v1/comparisons/evaluate', (req, res) => {
+  app.post(['/api/v1/compare', '/api/v1/comparisons/evaluate'], (req, res) => {
     const candidateTarget =
-      (req.body?.candidateTarget as string) || 'www.prod.staging';
+      (req.body?.candidateTarget as string) ||
+      (req.body?.candidateTargetId as string) ||
+      'www.prod.staging';
     const baselineTarget =
-      (req.body?.baselineTarget as string) || 'www.prod.prod';
+      (req.body?.baselineTarget as string) ||
+      (req.body?.baselineTargetId as string) ||
+      'www.prod.prod';
     const operatorEmail = resolveOperatorEmail(req);
     const candRun =
       serverRuns.find((r) => r.target === candidateTarget) || serverRuns[0];
@@ -365,8 +432,12 @@ async function startServer() {
     });
   });
 
-  // 8. Invoke Amazon Bedrock Nova Lite (amazon.nova-lite-v1:0) Visual Judge
-  app.post('/api/v1/judge/nova-lite', async (req, res) => {
+  // 8. 3-Tier Zero-Token AI Judge & SHA-256 Semantic Diff Cache (/api/v1/judge/nova-lite & /api/v1/zero-token/*)
+  app.get('/api/v1/zero-token/status', (_req, res) => {
+    res.json(defaultZeroTokenEngine.getTelemetrySnapshot());
+  });
+
+  app.post(['/api/v1/judge/nova-lite', '/api/v1/zero-token/evaluate'], async (req, res) => {
     const testId = (req.body?.testId as string) || 'T03';
     const candidateTarget =
       (req.body?.candidateTarget as string) || 'www.prod.staging';
@@ -388,50 +459,25 @@ async function startServer() {
       metadata: { testId, pixelDiffPercent },
     });
 
-    if (req.body?.sideABase64Png && req.body?.sideBBase64Png) {
-      try {
-        const { invokeBedrockNovaLiteJudge } = await import(
-          './aws-synthetics/bedrock-nova-lite-judge'
-        );
-        const liveRes = await invokeBedrockNovaLiteJudge({
-          testId,
-          pageName: req.body?.pageName || testId,
-          url: req.body?.url || `https://www.salesforce.com/${testId}`,
-          pixelDiffPercentage: pixelDiffPercent,
-          sideABase64Png: req.body.sideABase64Png,
-          sideBBase64Png: req.body.sideBBase64Png,
-        });
-        res.json({
-          modelId: liveRes.modelId,
-          provider: liveRes.provider,
-          executionMode: 'aws-bedrock-live',
-          testId,
-          verdict: liveRes.semanticMatch ? 'same' : 'different',
-          pixelDiffPercent,
-          confidence: liveRes.confidenceScore,
-          summary: liveRes.summary,
-          differences: liveRes.detectedAnomalies.map((desc) => ({
-            region: 'dom-viewport',
-            description: desc,
-            severity: 'major',
-          })),
-          evaluatedAt: new Date().toISOString(),
-        });
-        return;
-      } catch {
-        // Fallback to deterministic evaluation below
-      }
-    }
-
-    const evaluation = evaluateNovaLiteVisualDiff({
+    const ztDecision = defaultZeroTokenEngine.evaluate({
       testId,
+      testName: req.body?.testName,
+      url: req.body?.url || `https://www.salesforce.com/`,
       candidateTarget,
       baselineTarget,
-      s3CandidateUri: req.body?.s3CandidateUri,
-      s3BaselineUri: req.body?.s3BaselineUri,
+      candidateStatus: req.body?.candidateStatus ?? 200,
+      baselineStatus: req.body?.baselineStatus ?? 200,
+      headerDiffs: req.body?.headerDiffs,
+      cookieDiffs: req.body?.cookieDiffs,
       pixelDiffPercent,
+      forceBypassCache: Boolean(req.body?.forceBypassCache),
     });
-    res.json(evaluation);
+
+    res.json({
+      ...ztDecision,
+      costGateSkippedAi: !ztDecision.aiInvoked,
+      costGated: !ztDecision.aiInvoked,
+    });
   });
 
   // 9. Model Context Protocol (MCP) JSON-RPC 2.0 Server Endpoint

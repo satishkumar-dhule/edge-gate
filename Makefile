@@ -23,7 +23,7 @@ BY ?= user-wbbmbfobdqdu@salesforce.com
 
 .DEFAULT_GOAL := all
 
-.PHONY: all deploy deploy-all help install dev build test lint verify verify-bundle \
+.PHONY: all deploy deploy-all zero-token-cycle zero-token-watch help install dev build test lint verify verify-bundle \
         tf-init tf-validate tf-plan tf-apply tf-destroy \
         sync-ui invalidate-cloudfront deploy-cloudfront \
         run-adhoc compare api-health \
@@ -36,6 +36,12 @@ deploy: deploy-all
 
 deploy-all:
 	npx --yes tsx scripts/deploy-aws-portal.ts deploy-all
+
+zero-token-cycle:
+	npx --yes tsx scripts/zero-token-cycle.ts
+
+zero-token-watch:
+	npx --yes tsx scripts/zero-token-cycle.ts --watch
 
 help:
 	@echo "=========================================================================================="

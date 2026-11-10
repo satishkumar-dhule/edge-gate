@@ -92,12 +92,12 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
       'Live HTTP Flow, Header, Set-Cookie & AWS Bedrock Nova Lite Visual Verification for salesforce.com',
     defaultDomain: 'salesforce.com',
     defaultOperator: {
-      email: 'user-wbbmbfobdqdu@salesforce.com',
+      email: 'user-eqavcdxohbpj@salesforce.com',
       role: 'Lead Edge Release Engineer',
-      account: 'SFDC-EDGE-030771555103 (AWS 030771555103 · Akamai Prod + Staging)',
+      account: 'SFDC-EDGE-344883437139 (AWS 344883437139 · Akamai Prod + Staging)',
     },
     accountOptions: [
-      'SFDC-EDGE-030771555103 (AWS 030771555103 · Akamai Prod + Staging)',
+      'SFDC-EDGE-344883437139 (AWS 344883437139 · Akamai Prod + Staging)',
       'SFDC-TRAILHEAD-030771555103 (Trailhead & Developer Edge)',
       'SFDC-TRUST-GOV (Salesforce Trust & GovCloud Edge)',
     ],
@@ -130,7 +130,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
       { id: 'eu-west-1', label: 'eu-west-1 (Ireland)' },
       { id: 'ap-northeast-1', label: 'ap-northeast-1 (Tokyo)' },
     ],
-    s3Bucket: 's3://salesforce-akamai-synthetics-030771555103-us-east-1',
+    s3Bucket: 's3://salesforce-akamai-synthetics-344883437139-us-east-1',
     dynamodbTable: 'salesforce-synthetics-gate-state',
     mcpServerEndpoint: '/api/v1/mcp/rpc',
     mcpEndpoint: '/api/v1/mcp/rpc',
@@ -394,7 +394,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
       candidateTarget: 'www.uat.staging',
       baselineTarget: 'www.prod.prod',
       createdAt: '08:50 AM',
-      by: 'user-enaopopztofm@salesforce.com',
+      by: 'user-eqavcdxohbpj@salesforce.com',
     },
     {
       id: 'RPT-103',
@@ -412,7 +412,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
       candidateTarget: 'developer.prod.staging',
       baselineTarget: 'developer.prod.prod',
       createdAt: '08:12 AM',
-      by: 'user-enaopopztofm@salesforce.com',
+      by: 'user-eqavcdxohbpj@salesforce.com',
     },
     {
       id: 'RPT-105',

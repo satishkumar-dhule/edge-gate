@@ -56,8 +56,22 @@ export interface PersistedPortalState {
   inspectorTab: 'flow' | 'headers' | 'cookies' | 'image';
 }
 
-const STORAGE_KEY = 'salesforce-gate-portal-state-v3';
-const CURRENT_VERSION = 3;
+const STORAGE_KEY = 'salesforce-gate-portal-state-v6-live';
+const CURRENT_VERSION = 6;
+
+export function isDummySeededRun(r: Partial<RunRecord>): boolean {
+  if (!r) return true;
+  if (r.by === 'aws-synthetics-canary') return true;
+  if (
+    r.label === 'v2026.11-rc1' ||
+    r.label === 'v2026.10-prev' ||
+    r.label === 'live-baseline' ||
+    r.label === 'prev-baseline'
+  ) {
+    return true;
+  }
+  return false;
+}
 
 export function buildDefaultRunMap(runs: RunRecord[]): Record<string, string> {
   const map: Record<string, string> = {};
@@ -82,7 +96,7 @@ export function getInitialPortalState(): PersistedPortalState {
     apps: DEFAULT_TEMPLATE_CONFIG.properties,
     testSuite: DEFAULT_TEMPLATE_CONFIG.testSuite,
     runs: INITIAL_RUNS,
-    readyReports: DEFAULT_TEMPLATE_CONFIG.readyReports,
+    readyReports: [],
     acceptedRules: INITIAL_RULES,
     acceptedCookies: [],
     acceptedVisualTests: [],
@@ -106,23 +120,29 @@ export function loadPersistedPortalState(): PersistedPortalState {
     return fallback;
   }
   try {
-    // Clean up any legacy v2 company.com storage keys
+    // Clean up all legacy storage keys that previously cached seeded/dummy runs
     window.localStorage.removeItem('akamai-gate-portal-state-v2');
+    window.localStorage.removeItem('salesforce-gate-portal-state-v3');
+    window.localStorage.removeItem('salesforce-gate-portal-state-v4');
+    window.localStorage.removeItem('salesforce-gate-portal-state-v5-live');
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<PersistedPortalState>;
+    const liveOnlyRuns = Array.isArray(parsed.runs)
+      ? parsed.runs.filter((r) => !isDummySeededRun(r))
+      : [];
     if (
       parsed.version !== CURRENT_VERSION ||
       !Array.isArray(parsed.apps) ||
       parsed.apps.length === 0 ||
-      !Array.isArray(parsed.runs) ||
-      parsed.runs.length === 0
+      liveOnlyRuns.length === 0
     ) {
       return fallback;
     }
     return {
       ...fallback,
       ...parsed,
+      runs: liveOnlyRuns,
     };
   } catch {
     return fallback;
@@ -132,7 +152,15 @@ export function loadPersistedPortalState(): PersistedPortalState {
 export function savePersistedPortalState(state: PersistedPortalState): void {
   if (typeof window === 'undefined' || !window.localStorage) return;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const liveRuns = state.runs.filter((r) => !isDummySeededRun(r));
+    if (liveRuns.length === 0) return;
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        ...state,
+        runs: liveRuns,
+      })
+    );
   } catch {
     // Ignore quota errors when storing large run histories
   }
@@ -141,6 +169,7 @@ export function savePersistedPortalState(state: PersistedPortalState): void {
 export function clearPersistedPortalState(): PersistedPortalState {
   if (typeof window !== 'undefined' && window.localStorage) {
     window.localStorage.removeItem(STORAGE_KEY);
+    window.localStorage.removeItem('salesforce-gate-portal-state-v3');
     window.localStorage.removeItem('akamai-gate-portal-state-v2');
   }
   return getInitialPortalState();

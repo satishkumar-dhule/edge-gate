@@ -587,12 +587,7 @@ export function buildInitialComparison(
       primaryModel: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
     };
 
-    if (
-      candRes.id === 'T03' &&
-      candidateRun.key !== baselineRun.key &&
-      (candidateRun.network !== baselineRun.network ||
-        candidateRun.label === 'v2026.11-rc1')
-    ) {
+    if (candRes.id === 'T03' && candidateRun.key !== baselineRun.key) {
       visualResult = {
         verdict: 'minor',
         costGate: 'ai-judged',

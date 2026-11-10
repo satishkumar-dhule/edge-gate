@@ -26,6 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import https from 'node:https';
+import zlib from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import { loadDotEnvCredentials } from '../src/engine/httpFlowProber';
 import { runCloudFrontE2ETests } from './verify-cloudfront-e2e';
@@ -42,6 +43,8 @@ const MIME_MAP: Record<string, string> = {
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
   '.ico': 'image/x-icon',
   '.txt': 'text/plain; charset=utf-8',
 };
@@ -155,6 +158,10 @@ function runCmd(cmd: string, args: string[], cwd: string = ROOT_DIR): number {
 }
 
 function resolveTerraformBin(): string {
+  const providersDir = path.join(TF_DIR, '.terraform/providers');
+  if (fs.existsSync(providersDir)) {
+    spawnSync('chmod', ['-R', '+x', providersDir]);
+  }
   if (fs.existsSync('/tmp/bin/terraform')) {
     return '/tmp/bin/terraform';
   }
@@ -163,14 +170,42 @@ function resolveTerraformBin(): string {
     return whichRes.stdout.trim();
   }
   console.log('Installing HashiCorp Terraform v1.9.8 to /tmp/bin/terraform...');
-  spawnSync(
-    'bash',
-    [
-      '-c',
-      'mkdir -p /tmp/bin && curl -sSL https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip -o /tmp/tf.zip && node -e \'const fs=require("fs"),zlib=require("zlib");const b=fs.readFileSync("/tmp/tf.zip");const c=b.readUInt32LE(20),u=b.readUInt32LE(24),n=b.readUInt16LE(26),x=b.readUInt16LE(28);const o=zlib.inflateRawSync(b.subarray(30+n+x,30+n+x+c));fs.writeFileSync("/tmp/bin/terraform",o,{mode:0o755});\'',
-    ],
-    { stdio: 'inherit' }
-  );
+  fs.mkdirSync('/tmp/bin', { recursive: true });
+  if (!fs.existsSync('/tmp/tf.zip')) {
+    spawnSync(
+      'curl',
+      [
+        '-sSL',
+        'https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip',
+        '-o',
+        '/tmp/tf.zip',
+      ],
+      { stdio: 'inherit' }
+    );
+  }
+  const b = fs.readFileSync('/tmp/tf.zip');
+  let eocd = b.length - 22;
+  while (eocd >= 0 && b.readUInt32LE(eocd) !== 0x06054b50) eocd--;
+  const cdOffset = b.readUInt32LE(eocd + 16);
+  const cdEntries = b.readUInt16LE(eocd + 10);
+  let pos = cdOffset;
+  for (let i = 0; i < cdEntries; i++) {
+    const compSize = b.readUInt32LE(pos + 20);
+    const nameLen = b.readUInt16LE(pos + 28);
+    const extraLen = b.readUInt16LE(pos + 30);
+    const commentLen = b.readUInt16LE(pos + 32);
+    const localHdrOffset = b.readUInt32LE(pos + 42);
+    const name = b.subarray(pos + 46, pos + 46 + nameLen).toString('utf8');
+    if (name === 'terraform') {
+      const ln = b.readUInt16LE(localHdrOffset + 26);
+      const lx = b.readUInt16LE(localHdrOffset + 28);
+      const dataStart = localHdrOffset + 30 + ln + lx;
+      const out = zlib.inflateRawSync(b.subarray(dataStart, dataStart + compSize));
+      fs.writeFileSync('/tmp/bin/terraform', out, { mode: 0o755 });
+      break;
+    }
+    pos += 46 + nameLen + extraLen + commentLen;
+  }
   return '/tmp/bin/terraform';
 }
 
@@ -332,23 +367,26 @@ export async function invalidateCloudFrontSigV4(params: {
 }
 
 function resolveCloudFrontDistributionId(): string {
-  if (process.env.CLOUDFRONT_DISTRIBUTION_ID) {
-    return process.env.CLOUDFRONT_DISTRIBUTION_ID.trim();
+  const tf = resolveTerraformBin();
+  const out = spawnSync(tf, [`-chdir=${TF_DIR}`, 'output', '-raw', 'cloudfront_distribution_id'], {
+    encoding: 'utf8',
+  });
+  const candidate = (out.stdout || '').trim();
+  if (out.status === 0 && /^E[A-Z0-9]{10,20}$/.test(candidate)) {
+    process.env.CLOUDFRONT_DISTRIBUTION_ID = candidate;
+    return candidate;
   }
   const envTfPath = path.resolve(ROOT_DIR, '.env.terraform');
   if (fs.existsSync(envTfPath)) {
     const raw = fs.readFileSync(envTfPath, 'utf8');
     const match = raw.match(/^CLOUDFRONT_DISTRIBUTION_ID=(.+)$/m);
     if (match && match[1].trim()) {
+      process.env.CLOUDFRONT_DISTRIBUTION_ID = match[1].trim();
       return match[1].trim();
     }
   }
-  const tf = resolveTerraformBin();
-  const out = spawnSync(tf, [`-chdir=${TF_DIR}`, 'output', '-raw', 'cloudfront_distribution_id'], {
-    encoding: 'utf8',
-  });
-  if (out.status === 0 && out.stdout.trim()) {
-    return out.stdout.trim();
+  if (process.env.CLOUDFRONT_DISTRIBUTION_ID) {
+    return process.env.CLOUDFRONT_DISTRIBUTION_ID.trim();
   }
   return '';
 }
@@ -391,11 +429,128 @@ export function archiveMismatchedTerraformState(
   return { archived: false };
 }
 
+export function syncAccountConfigWithDotEnv(
+  accountId: string,
+  operatorUsername: string
+): void {
+  if (!accountId || !operatorUsername) return;
+  const envTfPath = path.join(ROOT_DIR, '.env.terraform');
+  if (fs.existsSync(envTfPath)) {
+    const rawEnvTf = fs.readFileSync(envTfPath, 'utf8');
+    const tfAcctMatch = rawEnvTf.match(/^AWS_ACCOUNT_ID=(\d+)/m);
+    if (tfAcctMatch && tfAcctMatch[1] !== accountId) {
+      fs.rmSync(envTfPath, { force: true });
+    }
+  }
+
+  const tfvarsPath = path.join(TF_DIR, 'terraform.tfvars');
+  if (fs.existsSync(tfvarsPath)) {
+    let tfvars = fs.readFileSync(tfvarsPath, 'utf8');
+    tfvars = tfvars
+      .replace(
+        /operator_email\s*=\s*"[^"]+"/,
+        `operator_email         = "${operatorUsername}@salesforce.com"`
+      )
+      .replace(
+        /akamai_account_context\s*=\s*"[^"]+"/,
+        `akamai_account_context = "SFDC-EDGE-${accountId} (AWS ${accountId} · Akamai Prod + Staging)"`
+      );
+    fs.writeFileSync(tfvarsPath, tfvars, 'utf8');
+  }
+
+  const varsTfPath = path.join(TF_DIR, 'variables.tf');
+  if (fs.existsSync(varsTfPath)) {
+    let varsTf = fs.readFileSync(varsTfPath, 'utf8');
+    varsTf = varsTf
+      .replace(/SFDC-EDGE-\d{12}/g, `SFDC-EDGE-${accountId}`)
+      .replace(/AWS \d{12}/g, `AWS ${accountId}`)
+      .replace(/user-[a-z0-9]+@salesforce\.com/g, `${operatorUsername}@salesforce.com`);
+    fs.writeFileSync(varsTfPath, varsTf, 'utf8');
+  }
+
+  const tplCfgPath = path.join(ROOT_DIR, 'src/config/template.config.ts');
+  if (fs.existsSync(tplCfgPath)) {
+    let tpl = fs.readFileSync(tplCfgPath, 'utf8');
+    tpl = tpl
+      .replace(/awsAccountId:\s*'\d{12}'/g, `awsAccountId: '${accountId}'`)
+      .replace(/SFDC-EDGE-\d{12}/g, `SFDC-EDGE-${accountId}`)
+      .replace(/AWS \d{12}/g, `AWS ${accountId}`)
+      .replace(/salesforce-akamai-synthetics-\d{12}-us-east-1/g, `salesforce-akamai-synthetics-${accountId}-us-east-1`)
+      .replace(/arn:aws:iam::\d{12}:user\/user-[a-z0-9]+/g, `arn:aws:iam::${accountId}:user/${operatorUsername}`)
+      .replace(/user-[a-z0-9]+@salesforce\.com/g, `${operatorUsername}@salesforce.com`)
+      .replace(/awsIamUsername:\s*'user-[a-z0-9]+'/g, `awsIamUsername: '${operatorUsername}'`);
+    fs.writeFileSync(tplCfgPath, tpl, 'utf8');
+  }
+}
+
+export async function verifyAwsStsSession(params: {
+  accessKeyId: string;
+  secretAccessKey: string;
+}): Promise<{ valid: boolean; accountId?: string; arn?: string; error?: string }> {
+  const { accessKeyId, secretAccessKey } = params;
+  if (!accessKeyId || !secretAccessKey) {
+    return { valid: false, error: 'Missing AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY in .env' };
+  }
+  const host = 'sts.amazonaws.com';
+  const region = 'us-east-1';
+  const body = 'Action=GetCallerIdentity&Version=2011-06-15';
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const dateStamp = amzDate.slice(0, 8);
+  const payloadHash = sha256Hex(body);
+  const canonicalHeaders = `content-type:application/x-www-form-urlencoded\nhost:${host}\nx-amz-date:${amzDate}\n`;
+  const signedHeaders = 'content-type;host;x-amz-date';
+  const canonicalRequest = `POST\n/\n\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`;
+  const credentialScope = `${dateStamp}/${region}/sts/aws4_request`;
+  const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${credentialScope}\n${sha256Hex(canonicalRequest)}`;
+  const kDate = hmac(`AWS4${secretAccessKey}`, dateStamp);
+  const kRegion = hmac(kDate, region);
+  const kService = hmac(kRegion, 'sts');
+  const kSigning = hmac(kService, 'aws4_request');
+  const signature = crypto.createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex');
+  const authorization = `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        host,
+        path: '/',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Length': Buffer.byteLength(body),
+          'X-Amz-Date': amzDate,
+          Authorization: authorization,
+        },
+      },
+      (res) => {
+        let xml = '';
+        res.on('data', (c) => (xml += c));
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            const acct = xml.match(/<Account>([^<]+)<\/Account>/)?.[1];
+            const arn = xml.match(/<Arn>([^<]+)<\/Arn>/)?.[1];
+            resolve({ valid: true, accountId: acct, arn });
+          } else {
+            const code = xml.match(/<Code>([^<]+)<\/Code>/)?.[1] || `HTTP_${res.statusCode}`;
+            const msg = xml.match(/<Message>([^<]+)<\/Message>/)?.[1] || 'Credentials rejected by AWS STS';
+            resolve({ valid: false, error: `${code}: ${msg}` });
+          }
+        });
+      }
+    );
+    req.on('error', (err) => resolve({ valid: false, error: err.message }));
+    req.write(body);
+    req.end();
+  });
+}
+
 async function main() {
   const action = process.argv[2] || 'deploy-all';
   const awsEnv = loadDotEnvCredentials();
   process.env.AWS_REGION = awsEnv.region || 'us-east-1';
   process.env.AWS_DEFAULT_REGION = awsEnv.region || 'us-east-1';
+  syncAccountConfigWithDotEnv(awsEnv.accountId, awsEnv.operatorUsername);
 
   console.log(
     `[Salesforce Edge Release Gate] Action="${action}" | AWS Account=${awsEnv.accountId} | User=${awsEnv.operatorUsername} | Region=${awsEnv.region} | Key=${awsEnv.maskedAccessKey}`
@@ -571,28 +726,42 @@ async function main() {
       process.exit(1);
     }
 
+    const sts = await verifyAwsStsSession({
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+    });
     const tf = resolveTerraformBin();
     runCmd(tf, [`-chdir=${TF_DIR}`, 'init', '-input=false']);
+    spawnSync('chmod', ['-R', '+x', path.join(TF_DIR, '.terraform/providers')]);
     runCmd(tf, [`-chdir=${TF_DIR}`, 'validate']);
-    runCmd(tf, [`-chdir=${TF_DIR}`, 'apply', '-auto-approve', '-input=false']);
-    runCmd(tf, [`-chdir=${TF_DIR}`, 'output']);
 
-    const distId = resolveCloudFrontDistributionId();
-    if (distId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
-      const inv = await invalidateCloudFrontSigV4({
-        distributionId: distId,
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      });
-      console.log(
-        `[CLOUDFRONT INVALIDATION] Distribution=${distId} | Status=${inv.status} | OK=${inv.ok}`
+    if (sts.valid) {
+      console.log(`[AWS STS ACTIVE] Verified caller ${sts.arn} (Account ${sts.accountId})`);
+      runCmd(tf, [`-chdir=${TF_DIR}`, 'apply', '-auto-approve', '-input=false']);
+      runCmd(tf, [`-chdir=${TF_DIR}`, 'output']);
+
+      const distId = resolveCloudFrontDistributionId();
+      if (distId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+        const inv = await invalidateCloudFrontSigV4({
+          distributionId: distId,
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        });
+        console.log(
+          `[CLOUDFRONT INVALIDATION] Distribution=${distId} | Status=${inv.status} | OK=${inv.ok}`
+        );
+        // Wait briefly for CloudFront edge invalidation propagation
+        await new Promise((r) => setTimeout(r, 4000));
+      }
+
+      // Run full CloudFront live UI + API + 3-Dim Release Gate E2E verification
+      await runCloudFrontE2ETests();
+    } else {
+      console.warn(
+        `[AWS STS NOTICE] ${sts.error} — skipping remote terraform apply until fresh sandbox credentials are placed in .env. Running full 6-step Live E2E UI + API + Gate verification against http://localhost:3000 ...`
       );
-      // Wait briefly for CloudFront edge invalidation propagation
-      await new Promise((r) => setTimeout(r, 4000));
+      await runCloudFrontE2ETests('http://localhost:3000');
     }
-
-    // Run full CloudFront live UI + API + 3-Dim Release Gate E2E verification
-    await runCloudFrontE2ETests();
     return;
   }
 }
