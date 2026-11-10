@@ -206,8 +206,8 @@ All operational workflows — including building, testing, deploying the **Cloud
 ```bash
 # Run all 21 TDD unit tests + TypeScript lint + production Vite SPA build
 make verify
-# Or via npm:
-npm test && npm run lint && npm run build
+# Or via pnpm:
+pnpm test && pnpm run lint && pnpm run build
 ```
 
 ### 7.2 Deploy CloudFront Distribution + Scale-to-Zero Lambda on AWS

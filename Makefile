@@ -2,7 +2,7 @@
 # MAKEFILE — SALESFORCE EDGE & AWS SYNTHETICS 3-DIMENSIONAL RELEASE GATE
 # ============================================================================
 # Single-Command Full Pipeline (`make` or `make all` or `make deploy`):
-#   1. npm install + unit tests (node:test) + TypeScript lint + Vite SPA build (dist/)
+#   1. pnpm install + unit tests (node:test) + TypeScript lint + Vite SPA build (dist/)
 #   2. 100% Scale-to-Zero Terraform IaC (`terraform init`, `validate`, `apply -auto-approve`)
 #      automatically loading `.env` AWS credentials and uploading `dist/` SPA bundle
 #      into `s3://salesforce-akamai-synthetics-<account>-us-east-1/portal-ui/`
@@ -29,32 +29,32 @@ BY ?= user-wbbmbfobdqdu@salesforce.com
         run-adhoc compare api-health \
         user-list user-add user-reset-password user-disable user-enable user-delete user-auth user-stats user-audit
 
-# Default `make` target: runs full npm install + test + lint + build + terraform apply + S3 SPA sync
+# Default `make` target: runs full pnpm install + test + lint + build + terraform apply + S3 SPA sync
 all: deploy-all
 
 deploy: deploy-all
 
 deploy-all:
-	npx --yes tsx scripts/deploy-aws-portal.ts deploy-all
+	pnpm exec tsx scripts/deploy-aws-portal.ts deploy-all
 
 zero-token-cycle:
-	npx --yes tsx scripts/zero-token-cycle.ts
+	pnpm exec tsx scripts/zero-token-cycle.ts
 
 zero-token-watch:
-	npx --yes tsx scripts/zero-token-cycle.ts --watch
+	pnpm exec tsx scripts/zero-token-cycle.ts --watch
 
 help:
 	@echo "=========================================================================================="
 	@echo " Salesforce Edge & AWS Synthetics Release Gate — Make CLI Targets"
 	@echo "=========================================================================================="
 	@echo ""
-	@echo " [0] ONE-COMMAND FULL PIPELINE (NPM + BUILD + TERRAFORM APPLY + S3/CLOUDFRONT PORTAL)"
+	@echo " [0] ONE-COMMAND FULL PIPELINE (PNPM + BUILD + TERRAFORM APPLY + S3/CLOUDFRONT PORTAL)"
 	@echo "   make                         Run full pipeline: install + test + lint + build + tf-apply + sync-ui"
-	@echo "   make all                     Alias for full end-to-end npm + terraform apply deployment"
-	@echo "   make deploy                  Alias for full end-to-end npm + terraform apply deployment"
+	@echo "   make all                     Alias for full end-to-end pnpm + terraform apply deployment"
+	@echo "   make deploy                  Alias for full end-to-end pnpm + terraform apply deployment"
 	@echo ""
 	@echo " [1] BUILD, TDD & VERIFICATION"
-	@echo "   make install                 Install npm dependencies"
+	@echo "   make install                 Install pnpm dependencies"
 	@echo "   make dev                     Start local Express + Vite + MCP server on port 3000"
 	@echo "   make build                   Build production SPA bundle into dist/ and verify index.html + assets"
 	@echo "   make verify-bundle           Verify compiled dist/ SPA bundle integrity & S3 MIME mappings"
@@ -92,22 +92,22 @@ help:
 # 1. BUILD, TDD & VERIFICATION
 # ----------------------------------------------------------------------------
 install:
-	npm install
+	pnpm install
 
 dev:
-	npm run dev
+	pnpm run dev
 
 build:
-	npx --yes tsx scripts/deploy-aws-portal.ts build
+	pnpm exec tsx scripts/deploy-aws-portal.ts build
 
 verify-bundle:
-	npx --yes tsx scripts/deploy-aws-portal.ts verify-bundle
+	pnpm exec tsx scripts/deploy-aws-portal.ts verify-bundle
 
 test:
-	npx --yes tsx --test src/engine/rules.test.ts
+	pnpm exec tsx --test src/engine/rules.test.ts
 
 lint:
-	npm run lint
+	pnpm run lint
 
 verify: test lint build
 	node --check aws-synthetics/canary-har-runner.js
@@ -119,28 +119,28 @@ verify: test lint build
 # 2. AWS TERRAFORM & CLOUDFRONT + SCALE-TO-ZERO LAMBDA DEPLOYMENT
 # ----------------------------------------------------------------------------
 tf-init:
-	npx --yes tsx scripts/deploy-aws-portal.ts tf-init
+	pnpm exec tsx scripts/deploy-aws-portal.ts tf-init
 
 tf-validate:
-	npx --yes tsx scripts/deploy-aws-portal.ts tf-validate
+	pnpm exec tsx scripts/deploy-aws-portal.ts tf-validate
 
 tf-plan:
-	npx --yes tsx scripts/deploy-aws-portal.ts tf-plan
+	pnpm exec tsx scripts/deploy-aws-portal.ts tf-plan
 
 tf-apply:
-	npx --yes tsx scripts/deploy-aws-portal.ts tf-apply
+	pnpm exec tsx scripts/deploy-aws-portal.ts tf-apply
 
 tf-destroy:
 	cd $(TF_DIR) && terraform destroy -auto-approve
 
 sync-ui:
-	npx --yes tsx scripts/deploy-aws-portal.ts sync-ui
+	pnpm exec tsx scripts/deploy-aws-portal.ts sync-ui
 
 invalidate-cloudfront:
-	npx --yes tsx scripts/deploy-aws-portal.ts invalidate-cloudfront
+	pnpm exec tsx scripts/deploy-aws-portal.ts invalidate-cloudfront
 
 test-e2e:
-	npx --yes tsx scripts/verify-cloudfront-e2e.ts
+	pnpm exec tsx scripts/verify-cloudfront-e2e.ts
 
 verify-cloudfront: test-e2e
 
@@ -153,22 +153,22 @@ deploy-cloudfront: deploy-all
 # 3. AD-HOC SYNTHETIC EXECUTION & 3-DIM RELEASE GATE (CLI)
 # ----------------------------------------------------------------------------
 run-adhoc:
-	npx --yes tsx scripts/user-admin-cli.ts run-adhoc --target="$(TARGET)" --by="$(BY)"
+	pnpm exec tsx scripts/user-admin-cli.ts run-adhoc --target="$(TARGET)" --by="$(BY)"
 
 compare:
-	npx --yes tsx scripts/user-admin-cli.ts compare --candidate="$(CANDIDATE)" --baseline="$(BASELINE)" --by="$(BY)"
+	pnpm exec tsx scripts/user-admin-cli.ts compare --candidate="$(CANDIDATE)" --baseline="$(BASELINE)" --by="$(BY)"
 
 api-health:
-	curl -sS "$(API_URL)/api/v1/health" | npx --yes tsx -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.stringify(JSON.parse(d),null,2)))"
+	curl -sS "$(API_URL)/api/v1/health" | pnpm exec tsx -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.stringify(JSON.parse(d),null,2)))"
 
 # ----------------------------------------------------------------------------
 # 4. USER ADMINISTRATION, PASSWORD RESET & TRACKING STATS (CLI-ONLY, NO UI)
 # ----------------------------------------------------------------------------
 user-list:
-	npx --yes tsx scripts/user-admin-cli.ts list
+	pnpm exec tsx scripts/user-admin-cli.ts list
 
 user-add:
-	npx --yes tsx scripts/user-admin-cli.ts add \
+	pnpm exec tsx scripts/user-admin-cli.ts add \
 		--email="$(EMAIL)" \
 		--password="$(PASSWORD)" \
 		--name="$(NAME)" \
@@ -177,25 +177,25 @@ user-add:
 		--by="$(BY)"
 
 user-reset-password:
-	npx --yes tsx scripts/user-admin-cli.ts reset-password \
+	pnpm exec tsx scripts/user-admin-cli.ts reset-password \
 		--email="$(EMAIL)" \
 		--new-password="$(NEW_PASSWORD)$(PASSWORD)" \
 		--by="$(BY)"
 
 user-disable:
-	npx --yes tsx scripts/user-admin-cli.ts status --email="$(EMAIL)" --status="disabled" --by="$(BY)"
+	pnpm exec tsx scripts/user-admin-cli.ts status --email="$(EMAIL)" --status="disabled" --by="$(BY)"
 
 user-enable:
-	npx --yes tsx scripts/user-admin-cli.ts status --email="$(EMAIL)" --status="active" --by="$(BY)"
+	pnpm exec tsx scripts/user-admin-cli.ts status --email="$(EMAIL)" --status="active" --by="$(BY)"
 
 user-delete:
-	npx --yes tsx scripts/user-admin-cli.ts delete --email="$(EMAIL)" --by="$(BY)"
+	pnpm exec tsx scripts/user-admin-cli.ts delete --email="$(EMAIL)" --by="$(BY)"
 
 user-auth:
-	npx --yes tsx scripts/user-admin-cli.ts auth --email="$(EMAIL)" --password="$(PASSWORD)"
+	pnpm exec tsx scripts/user-admin-cli.ts auth --email="$(EMAIL)" --password="$(PASSWORD)"
 
 user-stats:
-	npx --yes tsx scripts/user-admin-cli.ts stats --email="$(EMAIL)"
+	pnpm exec tsx scripts/user-admin-cli.ts stats --email="$(EMAIL)"
 
 user-audit:
-	npx --yes tsx scripts/user-admin-cli.ts audit --email="$(EMAIL)"
+	pnpm exec tsx scripts/user-admin-cli.ts audit --email="$(EMAIL)"
