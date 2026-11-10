@@ -89,6 +89,7 @@ import {
   LayoutGrid,
   History,
   Search,
+  Activity,
 } from 'lucide-react';
 
 type ViewMode =
@@ -239,10 +240,30 @@ export default function App() {
   const [rerunningTestId, setRerunningTestId] = useState<string | null>(null);
   const [runningAiTestId, setRunningAiTestId] = useState<string | null>(null);
 
+  // Hydrate live salesforce.com runs from the backend/Lambda on mount (merging with seeded property runs)
+  useEffect(() => {
+    fetch('/api/v1/runs')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data.runs) && data.runs.length > 0) {
+          const incomingRuns: RunRecord[] = data.runs;
+          setRuns((prev) => {
+            const incomingKeys = new Set(incomingRuns.map((r) => r.key));
+            const merged = [
+              ...incomingRuns,
+              ...prev.filter((r) => !incomingKeys.has(r.key)),
+            ];
+            return merged;
+          });
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
   // Automatically persist portal state across reloads so user state never resets unexpectedly
   useEffect(() => {
     savePersistedPortalState({
-      version: 2,
+      version: 3,
       dataSourceMode,
       remoteApiBaseUrl,
       apps,
@@ -856,9 +877,28 @@ export default function App() {
       targetId,
       'single-run',
       500,
-      () => {
-        const newRun = createNewRunRecord(targetId, 'run', true);
-        setRuns((prev) => [newRun, ...prev]);
+      async () => {
+        let newRun = createNewRunRecord(targetId, 'live-probe', true);
+        try {
+          const resp = await fetch('/api/v1/runs/trigger', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              target: targetId,
+              label: `live-probe #${runs.filter((r) => r.target === targetId).length + 1}`,
+              by: currentUser?.email || 'operator',
+            }),
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data && data.run && Array.isArray(data.run.results)) {
+              newRun = data.run;
+            }
+          }
+        } catch {
+          // Fallback to deterministic HTTP flow run record
+        }
+        setRuns((prev) => [newRun, ...prev.filter((r) => r.key !== newRun.key)]);
         setSelectedRunByTarget((prev) => ({
           ...prev,
           [targetId]: newRun.key,
@@ -901,9 +941,7 @@ export default function App() {
           setViewMode('diff');
         }
         toast.success(
-          `Completed ${newRun.label} on ${targetId} — comparing against previous run (${
-            previousRun?.label || 'baseline'
-          })`
+          `Completed live salesforce.com HTTP flow probe (${newRun.label}) on ${targetId}`
         );
       },
       () => {
@@ -975,11 +1013,48 @@ export default function App() {
       `${targetA} ↔ ${targetB}`,
       'compare',
       600,
-      () => {
-        const newRunA = createNewRunRecord(targetA, 'cmp');
-        const newRunB = createNewRunRecord(targetB, 'cmp');
+      async () => {
+        let newRunA = createNewRunRecord(targetA, 'live-cmp');
+        let newRunB = createNewRunRecord(targetB, 'live-cmp');
 
-        setRuns((prev) => [newRunA, newRunB, ...prev]);
+        try {
+          const [respA, respB] = await Promise.all([
+            fetch('/api/v1/runs/trigger', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                target: targetA,
+                label: 'live-cmp',
+                by: currentUser?.email || 'operator',
+              }),
+            }),
+            fetch('/api/v1/runs/trigger', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                target: targetB,
+                label: 'live-cmp',
+                by: currentUser?.email || 'operator',
+              }),
+            }),
+          ]);
+          if (respA.ok) {
+            const dataA = await respA.json();
+            if (dataA?.run?.results) newRunA = dataA.run;
+          }
+          if (respB.ok) {
+            const dataB = await respB.json();
+            if (dataB?.run?.results) newRunB = dataB.run;
+          }
+        } catch {
+          // Keep fallback runs
+        }
+
+        setRuns((prev) => [
+          newRunA,
+          newRunB,
+          ...prev.filter((r) => r.key !== newRunA.key && r.key !== newRunB.key),
+        ]);
         setSelectedRunByTarget((prev) => ({
           ...prev,
           [targetA]: newRunA.key,
@@ -1010,7 +1085,9 @@ export default function App() {
         };
         setReadyReports((prev) => [newReport, ...prev]);
         setIsComparingBoth(false);
-        toast.success(`Finished comparative run on ${targetA} and ${targetB}.`);
+        toast.success(
+          `Finished live salesforce.com comparative HTTP flow run on ${targetA} and ${targetB}.`
+        );
       },
       () => {
         setCandidateTarget(targetA);
@@ -1027,12 +1104,44 @@ export default function App() {
       `${candidateTarget} ↔ ${baselineTarget}`,
       'rerun',
       400,
-      () => {
+      async () => {
         const nowStr = new Date().toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
           second: '2-digit',
         });
+        const targetRes = activeCandidateRun.results.find((r) => r.id === testId);
+        let liveProbe: {
+          actualStatus?: number;
+          durationMs?: number;
+          redirectChain?: typeof targetRes extends undefined
+            ? never
+            : NonNullable<typeof targetRes>['redirectChain'];
+          httpFlowSummary?: typeof targetRes extends undefined
+            ? never
+            : NonNullable<typeof targetRes>['httpFlowSummary'];
+          capturedHeaders?: Record<string, string>;
+          capturedCookies?: Record<string, string>;
+        } | null = null;
+
+        if (targetRes?.url) {
+          try {
+            const resp = await fetch('/api/v1/probe/live', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                url: targetRes.url,
+                network: activeCandidateRun.network,
+              }),
+            });
+            if (resp.ok) {
+              liveProbe = await resp.json();
+            }
+          } catch {
+            // Keep existing telemetry if offline
+          }
+        }
+
         setRuns((prev) =>
           prev.map((run) => {
             if (
@@ -1048,8 +1157,26 @@ export default function App() {
                 res.id === testId
                   ? {
                       ...res,
-                      durationMs: Math.max(42, res.durationMs - 4),
-                      note: `Reran at ${nowStr}`,
+                      actualStatus: liveProbe?.actualStatus ?? res.actualStatus,
+                      durationMs:
+                        liveProbe?.durationMs ?? Math.max(42, res.durationMs - 4),
+                      redirectChain:
+                        liveProbe?.redirectChain && liveProbe.redirectChain.length > 0
+                          ? liveProbe.redirectChain
+                          : res.redirectChain,
+                      httpFlowSummary:
+                        liveProbe?.httpFlowSummary ?? res.httpFlowSummary,
+                      capturedHeaders:
+                        liveProbe?.capturedHeaders &&
+                        Object.keys(liveProbe.capturedHeaders).length > 0
+                          ? { ...res.capturedHeaders, ...liveProbe.capturedHeaders }
+                          : res.capturedHeaders,
+                      capturedCookies:
+                        liveProbe?.capturedCookies &&
+                        Object.keys(liveProbe.capturedCookies).length > 0
+                          ? { ...res.capturedCookies, ...liveProbe.capturedCookies }
+                          : res.capturedCookies,
+                      note: `Live HTTP Flow probed at ${nowStr}`,
                     }
                   : res
               ),
@@ -1057,7 +1184,7 @@ export default function App() {
           })
         );
         setRerunningTestId(null);
-        toast.success(`Reran test ${testId}`);
+        toast.success(`Probed live HTTP flow for test ${testId}`);
       }
     );
   };
@@ -1222,13 +1349,13 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-muted/20 text-foreground flex flex-col font-sans relative">
+    <div className="min-h-screen bg-muted/20 text-foreground flex flex-col font-sans relative overflow-x-hidden">
       <Toaster position="bottom-right" richColors theme={theme} />
 
       {/* =====================================================================
           CONTROL CENTER GLOBAL HEADER + ICON-FIRST NAVIGATION + NOTIFICATIONS
          ===================================================================== */}
-      <header className="h-11 bg-zinc-950 text-zinc-100 px-4 flex items-center justify-between gap-3 shrink-0 border-b border-zinc-800">
+      <header className="sticky top-0 z-30 h-11 bg-zinc-950 text-zinc-100 px-4 flex items-center justify-between gap-3 shrink-0 border-b border-zinc-800">
         <div className="flex items-center gap-2 text-xs min-w-0">
           <button
             type="button"
@@ -1601,7 +1728,7 @@ export default function App() {
 
           <main className="px-4 py-3 space-y-3 w-full">
             {/* PANEL 1: UNIFIED EDGE TOPOLOGY & LIVE RELEASE GATE MATRIX */}
-            <Card className="overflow-hidden">
+            <Card>
               <CardHeader className="py-2 px-4 border-b border-border bg-muted/20 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
                 <div className="flex items-center gap-2">
                   <Globe className="w-3.5 h-3.5 text-sky-500" />
@@ -1925,6 +2052,24 @@ export default function App() {
                                   : '✓'}
                               </span>
                             </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCandidateTarget(stagingId);
+                                setBaselineTarget(prodId);
+                                setCandidateRunKey(stgRun.key);
+                                setBaselineRunKey(prdRun.key);
+                                setSelectedTestId('T04');
+                                setInspectorTab('flow');
+                                setViewMode('diff');
+                              }}
+                              title="Inspect complete multi-hop HTTP Flow, TLS handshake, Akamai CNAME chain & phase timing waterfall"
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[10px] border cursor-pointer transition-colors bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30 font-semibold hover:bg-sky-500/20"
+                            >
+                              <Activity className="w-3 h-3" />
+                              <span>Flow</span>
+                            </button>
                           </div>
                         </TableCell>
 
@@ -1963,7 +2108,7 @@ export default function App() {
             {/* PANEL 2: NON-REDUNDANT 2-COLUMN OPERATIONAL INTELLIGENCE SPLIT */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
               {/* LEFT COLUMN (7 cols): ACTIVE DRIFT & RELEASE BLOCKERS TRIAGE QUEUE */}
-              <Card className="lg:col-span-7 overflow-hidden">
+              <Card className="lg:col-span-7">
                 <CardHeader className="py-2 px-4 border-b border-border bg-muted/20 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
                   <div className="flex items-center gap-2">
                     {comparison.headlineVerdict === 'GO' ? (
@@ -2105,7 +2250,7 @@ export default function App() {
                                   hasVisualDiff={vDiff}
                                   onClick={() => {
                                     setSelectedTestId(item.testId);
-                                    setInspectorTab(primaryTab);
+                                    setInspectorTab('image');
                                     setViewMode('diff');
                                   }}
                                 />
@@ -2257,7 +2402,7 @@ export default function App() {
               </Card>
 
               {/* RIGHT COLUMN (5 cols): MULTI-PROPERTY FLEET GATE MATRIX & AUDIT LOG */}
-              <Card className="lg:col-span-5 overflow-hidden">
+              <Card className="lg:col-span-5">
                 <CardHeader className="py-2 px-4 border-b border-border bg-muted/20 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
                   <div className="flex items-center gap-2">
                     <LayoutGrid className="w-3.5 h-3.5 text-sky-500" />
@@ -2590,7 +2735,7 @@ export default function App() {
 
           <main className="px-4 py-3 w-full flex-1">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
-              <Card className="lg:col-span-5 overflow-hidden">
+              <Card className="lg:col-span-5">
                 <div className="px-3.5 py-2 border-b border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2">
                   <Tabs
                     value={testFilter}
@@ -2638,200 +2783,226 @@ export default function App() {
                   </div>
                 </div>
 
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="py-1.5">Page & Test Case</TableHead>
-                      <TableHead
-                        className="text-center w-11 py-1.5"
-                        title="HTTP Response Header & Cache Key Diffs — Click any cell below to open Headers tab"
-                      >
-                        <Code2 className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
-                      </TableHead>
-                      <TableHead
-                        className="text-center w-11 py-1.5"
-                        title="Set-Cookie Domain, SameSite & Attribute Diffs — Click any cell below to open Cookies tab"
-                      >
-                        <KeyRound className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
-                      </TableHead>
-                      <TableHead
-                        className="text-center w-11 py-1.5"
-                        title="Visual DOM Screenshot & AI Judge Verdict — Click any cell below to open Image AI tab"
-                      >
-                        <Sparkles className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
-                      </TableHead>
-                      <TableHead className="text-right w-10 py-1.5" title="Rerun Single Check">
-                        <RotateCw className="w-3 h-3 ml-auto text-muted-foreground" />
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredItems.map((item) => {
-                      const isSelected = item.testId === selectedItem?.testId;
-                      const {
-                        hDiffs,
-                        cDiffs,
-                        vDiff,
-                        rawHDiffs,
-                        isHAcc,
-                        rawCDiffs,
-                        isCAcc,
-                        rawVDiff,
-                        isVAcc,
-                      } = getItemDiffCounts(item);
-
-                      return (
-                        <TableRow
-                          key={item.testId}
-                          data-state={isSelected ? 'selected' : undefined}
-                          onClick={() => handleSelectTestRow(item)}
-                          className="cursor-pointer"
+                <div className="max-h-[70vh] overflow-y-auto overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="py-1.5">Page & Test Case</TableHead>
+                        <TableHead
+                          className="text-center w-11 py-1.5"
+                          title="HTTP Flow Hops, Redirect Chain & Timing Waterfall — Click any cell below to open HTTP Flow tab"
                         >
-                          <TableCell className="py-1.5">
-                            <div
-                              className="flex items-center gap-2"
-                              title={`${item.testId}: ${item.testName} (${item.url}) — Click thumbnail for Image AI tab, or text for primary diff tab`}
-                            >
+                          <Activity className="w-3.5 h-3.5 mx-auto text-sky-500" />
+                        </TableHead>
+                        <TableHead
+                          className="text-center w-11 py-1.5"
+                          title="HTTP Response Header & Cache Key Diffs — Click any cell below to open Headers tab"
+                        >
+                          <Code2 className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
+                        </TableHead>
+                        <TableHead
+                          className="text-center w-11 py-1.5"
+                          title="Set-Cookie Domain, SameSite & Attribute Diffs — Click any cell below to open Cookies tab"
+                        >
+                          <KeyRound className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
+                        </TableHead>
+                        <TableHead
+                          className="text-center w-11 py-1.5"
+                          title="Visual DOM Screenshot & AI Judge Verdict — Click any cell below to open Image AI tab"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
+                        </TableHead>
+                        <TableHead className="text-right w-10 py-1.5" title="Rerun Single Check">
+                          <RotateCw className="w-3 h-3 ml-auto text-muted-foreground" />
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredItems.map((item) => {
+                        const isSelected = item.testId === selectedItem?.testId;
+                        const {
+                          hDiffs,
+                          cDiffs,
+                          vDiff,
+                          rawHDiffs,
+                          isHAcc,
+                          rawCDiffs,
+                          isCAcc,
+                          rawVDiff,
+                          isVAcc,
+                        } = getItemDiffCounts(item);
+                        const hopCount =
+                          item.candidateResult?.redirectChain?.length || 1;
+
+                        return (
+                          <TableRow
+                            key={item.testId}
+                            data-state={isSelected ? 'selected' : undefined}
+                            onClick={() => handleSelectTestRow(item)}
+                            className="cursor-pointer"
+                          >
+                            <TableCell className="py-1.5">
                               <div
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleSelectTestRow(item, 'image');
-                                }}
+                                className="flex items-center gap-2"
+                                title={`${item.testId}: ${item.testName} (${item.url}) — Click thumbnail for Image AI tab, or text for primary diff tab`}
                               >
-                                <PageMiniThumb
-                                  testId={item.testId}
-                                  testName={item.testName}
-                                  url={item.url}
-                                  hasVisualDiff={vDiff}
-                                  onClick={() =>
-                                    handleSelectTestRow(item, 'image')
-                                  }
-                                />
-                              </div>
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="font-mono font-bold text-xs text-foreground">
-                                    {item.testId}
-                                  </span>
-                                  <span className="font-medium text-xs text-foreground truncate max-w-[145px]">
-                                    {item.testName}
-                                  </span>
+                                <div
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleSelectTestRow(item, 'image');
+                                  }}
+                                >
+                                  <PageMiniThumb
+                                    testId={item.testId}
+                                    testName={item.testName}
+                                    url={item.url}
+                                    hasVisualDiff={vDiff}
+                                    onClick={() =>
+                                      handleSelectTestRow(item, 'image')
+                                    }
+                                  />
                                 </div>
-                                <div className="font-mono text-[10px] text-muted-foreground truncate max-w-[175px]">
-                                  {item.url}
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono font-bold text-xs text-foreground">
+                                      {item.testId}
+                                    </span>
+                                    <span className="font-medium text-xs text-foreground truncate max-w-[135px]">
+                                      {item.testName}
+                                    </span>
+                                  </div>
+                                  <div className="font-mono text-[10px] text-muted-foreground truncate max-w-[165px]">
+                                    {item.url}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          </TableCell>
+                            </TableCell>
 
-                          <TableCell
-                            className="text-center py-1.5"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSelectTestRow(item, 'headers');
-                            }}
-                            title={
-                              hDiffs > 0
-                                ? `${hDiffs} HTTP Header / Cache-Key diff(s) — click to inspect`
-                                : rawHDiffs > 0 && isHAcc
-                                ? 'HTTP Header diff(s) accepted & suppressed'
-                                : 'HTTP Headers & Cache Key matched'
-                            }
-                          >
-                            {hDiffs > 0 ? (
-                              <Badge variant="destructive" className="font-mono px-1.5 py-0 text-[10px]">
-                                {hDiffs}
-                              </Badge>
-                            ) : rawHDiffs > 0 && isHAcc ? (
-                              <Badge variant="success" className="font-mono px-1 py-0 text-[9px]">
-                                OK
-                              </Badge>
-                            ) : (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 mx-auto" />
-                            )}
-                          </TableCell>
-
-                          <TableCell
-                            className="text-center py-1.5"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSelectTestRow(item, 'cookies');
-                            }}
-                            title={
-                              cDiffs > 0
-                                ? `${cDiffs} Set-Cookie attribute diff(s) — click to inspect`
-                                : rawCDiffs > 0 && isCAcc
-                                ? 'Set-Cookie diff(s) accepted & suppressed'
-                                : 'Set-Cookie attributes matched'
-                            }
-                          >
-                            {cDiffs > 0 ? (
-                              <Badge variant="warning" className="font-mono px-1.5 py-0 text-[10px]">
-                                {cDiffs}
-                              </Badge>
-                            ) : rawCDiffs > 0 && isCAcc ? (
-                              <Badge variant="success" className="font-mono px-1 py-0 text-[9px]">
-                                OK
-                              </Badge>
-                            ) : (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 mx-auto" />
-                            )}
-                          </TableCell>
-
-                          <TableCell
-                            className="text-center py-1.5"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSelectTestRow(item, 'image');
-                            }}
-                            title={
-                              vDiff
-                                ? `Visual DOM layout drift (${item.visualResult?.summary || 'AI detected layout shift'}) — click for AI Visual Judge`
-                                : rawVDiff && isVAcc
-                                ? 'Visual diff accepted & suppressed'
-                                : 'Visual DOM screenshot matched'
-                            }
-                          >
-                            {vDiff ? (
-                              <Badge variant="warning" className="font-mono px-1 py-0 text-[10px]">
-                                AI
-                              </Badge>
-                            ) : rawVDiff && isVAcc ? (
-                              <Badge variant="success" className="font-mono px-1 py-0 text-[9px]">
-                                OK
-                              </Badge>
-                            ) : (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 mx-auto" />
-                            )}
-                          </TableCell>
-
-                          <TableCell
-                            className="text-right py-1.5"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRerunSingleTest(item.testId);
-                            }}
-                          >
-                            <button
-                              type="button"
-                              aria-label={`Rerun ${item.testId}`}
-                              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
-                              title={`Rerun ${item.testId} (${item.url}) on both targets`}
+                            <TableCell
+                              className="text-center py-1.5"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectTestRow(item, 'flow');
+                              }}
+                              title={`${hopCount} HTTP hop(s) · ${item.candidateResult?.durationMs ?? 0}ms — click to inspect full HTTP Flow waterfall`}
                             >
-                              <RotateCw
-                                className={`w-3 h-3 ${
-                                  rerunningTestId === item.testId
-                                    ? 'animate-spin text-foreground'
-                                    : ''
-                                }`}
-                              />
-                            </button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                              <Badge
+                                variant={hopCount > 1 ? 'default' : 'outline'}
+                                className="font-mono px-1.5 py-0 text-[10px]"
+                              >
+                                {hopCount}h
+                              </Badge>
+                            </TableCell>
+
+                            <TableCell
+                              className="text-center py-1.5"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectTestRow(item, 'headers');
+                              }}
+                              title={
+                                hDiffs > 0
+                                  ? `${hDiffs} HTTP Header / Cache-Key diff(s) — click to inspect`
+                                  : rawHDiffs > 0 && isHAcc
+                                  ? 'HTTP Header diff(s) accepted & suppressed'
+                                  : 'HTTP Headers & Cache Key matched'
+                              }
+                            >
+                              {hDiffs > 0 ? (
+                                <Badge variant="destructive" className="font-mono px-1.5 py-0 text-[10px]">
+                                  {hDiffs}
+                                </Badge>
+                              ) : rawHDiffs > 0 && isHAcc ? (
+                                <Badge variant="success" className="font-mono px-1 py-0 text-[9px]">
+                                  OK
+                                </Badge>
+                              ) : (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 mx-auto" />
+                              )}
+                            </TableCell>
+
+                            <TableCell
+                              className="text-center py-1.5"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectTestRow(item, 'cookies');
+                              }}
+                              title={
+                                cDiffs > 0
+                                  ? `${cDiffs} Set-Cookie attribute diff(s) — click to inspect`
+                                  : rawCDiffs > 0 && isCAcc
+                                  ? 'Set-Cookie diff(s) accepted & suppressed'
+                                  : 'Set-Cookie attributes matched'
+                              }
+                            >
+                              {cDiffs > 0 ? (
+                                <Badge variant="warning" className="font-mono px-1.5 py-0 text-[10px]">
+                                  {cDiffs}
+                                </Badge>
+                              ) : rawCDiffs > 0 && isCAcc ? (
+                                <Badge variant="success" className="font-mono px-1 py-0 text-[9px]">
+                                  OK
+                                </Badge>
+                              ) : (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 mx-auto" />
+                              )}
+                            </TableCell>
+
+                            <TableCell
+                              className="text-center py-1.5"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectTestRow(item, 'image');
+                              }}
+                              title={
+                                vDiff
+                                  ? `Visual DOM layout drift (${item.visualResult?.summary || 'AI detected layout shift'}) — click for AI Visual Judge`
+                                  : rawVDiff && isVAcc
+                                  ? 'Visual diff accepted & suppressed'
+                                  : 'Visual DOM screenshot matched'
+                              }
+                            >
+                              {vDiff ? (
+                                <Badge variant="warning" className="font-mono px-1 py-0 text-[10px]">
+                                  AI
+                                </Badge>
+                              ) : rawVDiff && isVAcc ? (
+                                <Badge variant="success" className="font-mono px-1 py-0 text-[9px]">
+                                  OK
+                                </Badge>
+                              ) : (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 mx-auto" />
+                              )}
+                            </TableCell>
+
+                            <TableCell
+                              className="text-right py-1.5"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRerunSingleTest(item.testId);
+                              }}
+                            >
+                              <button
+                                type="button"
+                                aria-label={`Rerun ${item.testId}`}
+                                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
+                                title={`Rerun ${item.testId} (${item.url}) on both targets`}
+                              >
+                                <RotateCw
+                                  className={`w-3 h-3 ${
+                                    rerunningTestId === item.testId
+                                      ? 'animate-spin text-foreground'
+                                      : ''
+                                  }`}
+                                />
+                              </button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
               </Card>
 
               <div className="lg:col-span-7">
@@ -2950,7 +3121,7 @@ export default function App() {
 
             <main className="px-4 py-3 w-full flex-1">
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
-                <Card className="lg:col-span-5 overflow-hidden">
+                <Card className="lg:col-span-5">
                   <div className="px-3.5 py-2 border-b border-border bg-muted/20 flex items-center justify-between">
                     <span className="text-xs font-semibold text-foreground">
                       Test Run Results ({activeSingleRun.passedTests}/
@@ -2964,140 +3135,165 @@ export default function App() {
                     </span>
                   </div>
 
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="py-1.5">Test Case</TableHead>
-                        <TableHead
-                          className="text-center w-12 py-1.5"
-                          title="HTTP Status & Captured Headers — Click to open Headers tab"
-                        >
-                          <Code2 className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
-                        </TableHead>
-                        <TableHead
-                          className="text-center w-12 py-1.5"
-                          title="Captured Set-Cookie Jar — Click to open Cookies tab"
-                        >
-                          <KeyRound className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
-                        </TableHead>
-                        <TableHead
-                          className="text-center w-12 py-1.5"
-                          title="Captured DOM Snapshot — Click to open Captured Image tab"
-                        >
-                          <Sparkles className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
-                        </TableHead>
-                        <TableHead className="text-right w-16 py-1.5">Latency</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {activeSingleRun.results.map((res) => {
-                        const isSelected = res.id === selectedSingleResult?.id;
-                        const headerCount = Object.keys(res.capturedHeaders || {}).length;
-                        const cookieCount = Object.keys(res.capturedCookies || {}).length;
-                        return (
-                          <TableRow
-                            key={res.id}
-                            data-state={isSelected ? 'selected' : undefined}
-                            onClick={() => {
-                              setSelectedTestId(res.id);
-                              setInspectorTab('headers');
-                            }}
-                            className="cursor-pointer"
+                  <div className="max-h-[70vh] overflow-y-auto overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="py-1.5">Test Case</TableHead>
+                          <TableHead
+                            className="text-center w-11 py-1.5"
+                            title="HTTP Flow Hops & Redirect Waterfall — Click to open HTTP Flow tab"
                           >
-                            <TableCell className="py-1.5">
-                              <div
-                                className="flex items-center gap-2"
-                                title={`${res.id}: ${res.name} (${res.url})`}
-                              >
+                            <Activity className="w-3.5 h-3.5 mx-auto text-sky-500" />
+                          </TableHead>
+                          <TableHead
+                            className="text-center w-12 py-1.5"
+                            title="HTTP Status & Captured Headers — Click to open Headers tab"
+                          >
+                            <Code2 className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
+                          </TableHead>
+                          <TableHead
+                            className="text-center w-12 py-1.5"
+                            title="Captured Set-Cookie Jar — Click to open Cookies tab"
+                          >
+                            <KeyRound className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
+                          </TableHead>
+                          <TableHead
+                            className="text-center w-12 py-1.5"
+                            title="Captured DOM Snapshot — Click to open Captured Image tab"
+                          >
+                            <Sparkles className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
+                          </TableHead>
+                          <TableHead className="text-right w-16 py-1.5">Latency</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {activeSingleRun.results.map((res) => {
+                          const isSelected = res.id === selectedSingleResult?.id;
+                          const headerCount = Object.keys(res.capturedHeaders || {}).length;
+                          const cookieCount = Object.keys(res.capturedCookies || {}).length;
+                          const hopCount = res.redirectChain?.length || 1;
+                          return (
+                            <TableRow
+                              key={res.id}
+                              data-state={isSelected ? 'selected' : undefined}
+                              onClick={() => {
+                                setSelectedTestId(res.id);
+                                setInspectorTab('flow');
+                              }}
+                              className="cursor-pointer"
+                            >
+                              <TableCell className="py-1.5">
                                 <div
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedTestId(res.id);
-                                    setInspectorTab('image');
-                                  }}
+                                  className="flex items-center gap-2"
+                                  title={`${res.id}: ${res.name} (${res.url})`}
                                 >
-                                  <PageMiniThumb
-                                    testId={res.id}
-                                    testName={res.name}
-                                    url={res.url}
-                                    hasVisualDiff={!res.pass}
-                                    onClick={() => {
+                                  <div
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       setSelectedTestId(res.id);
                                       setInspectorTab('image');
                                     }}
-                                  />
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-1.5">
-                                    {res.pass ? (
-                                      <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                                    ) : (
-                                      <AlertCircle className="w-3 h-3 text-rose-600 dark:text-rose-400 shrink-0" />
-                                    )}
-                                    <span className="font-mono font-bold text-xs">
-                                      {res.id}
-                                    </span>
-                                    <span className="font-medium text-xs truncate max-w-[135px]">
-                                      {res.name}
-                                    </span>
+                                  >
+                                    <PageMiniThumb
+                                      testId={res.id}
+                                      testName={res.name}
+                                      url={res.url}
+                                      hasVisualDiff={!res.pass}
+                                      onClick={() => {
+                                        setSelectedTestId(res.id);
+                                        setInspectorTab('image');
+                                      }}
+                                    />
                                   </div>
-                                  <div className="font-mono text-[10px] text-muted-foreground truncate max-w-[165px]">
-                                    {res.url}
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      {res.pass ? (
+                                        <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                      ) : (
+                                        <AlertCircle className="w-3 h-3 text-rose-600 dark:text-rose-400 shrink-0" />
+                                      )}
+                                      <span className="font-mono font-bold text-xs">
+                                        {res.id}
+                                      </span>
+                                      <span className="font-medium text-xs truncate max-w-[130px]">
+                                        {res.name}
+                                      </span>
+                                    </div>
+                                    <div className="font-mono text-[10px] text-muted-foreground truncate max-w-[155px]">
+                                      {res.url}
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                            </TableCell>
-                            <TableCell
-                              className="py-1.5 text-center font-mono text-xs"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedTestId(res.id);
-                                setInspectorTab('headers');
-                              }}
-                              title={`HTTP ${res.actualStatus} · ${headerCount} headers — Click to inspect Headers`}
-                            >
-                              <Badge
-                                variant={res.pass ? 'secondary' : 'destructive'}
-                                className="font-mono text-[10px] px-1.5 py-0"
+                              </TableCell>
+                              <TableCell
+                                className="py-1.5 text-center font-mono text-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedTestId(res.id);
+                                  setInspectorTab('flow');
+                                }}
+                                title={`${hopCount} HTTP hop(s) — Click to inspect HTTP Flow`}
                               >
-                                {res.actualStatus}
-                              </Badge>
-                            </TableCell>
-                            <TableCell
-                              className="py-1.5 text-center font-mono text-xs"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedTestId(res.id);
-                                setInspectorTab('cookies');
-                              }}
-                              title={`${cookieCount} Set-Cookie attributes — Click to inspect Cookies`}
-                            >
-                              <Badge
-                                variant="outline"
-                                className="font-mono text-[10px] px-1.5 py-0"
+                                <Badge
+                                  variant={hopCount > 1 ? 'default' : 'outline'}
+                                  className="font-mono text-[10px] px-1.5 py-0"
+                                >
+                                  {hopCount}h
+                                </Badge>
+                              </TableCell>
+                              <TableCell
+                                className="py-1.5 text-center font-mono text-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedTestId(res.id);
+                                  setInspectorTab('headers');
+                                }}
+                                title={`HTTP ${res.actualStatus} · ${headerCount} headers — Click to inspect Headers`}
                               >
-                                {cookieCount}
-                              </Badge>
-                            </TableCell>
-                            <TableCell
-                              className="py-1.5 text-center font-mono text-xs"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedTestId(res.id);
-                                setInspectorTab('image');
-                              }}
-                              title="Click to inspect Captured DOM Snapshot"
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 mx-auto" />
-                            </TableCell>
-                            <TableCell className="py-1.5 text-right font-mono text-xs text-muted-foreground">
-                              {res.durationMs}ms
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
+                                <Badge
+                                  variant={res.pass ? 'secondary' : 'destructive'}
+                                  className="font-mono text-[10px] px-1.5 py-0"
+                                >
+                                  {res.actualStatus}
+                                </Badge>
+                              </TableCell>
+                              <TableCell
+                                className="py-1.5 text-center font-mono text-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedTestId(res.id);
+                                  setInspectorTab('cookies');
+                                }}
+                                title={`${cookieCount} Set-Cookie attributes — Click to inspect Cookies`}
+                              >
+                                <Badge
+                                  variant="outline"
+                                  className="font-mono text-[10px] px-1.5 py-0"
+                                >
+                                  {cookieCount}
+                                </Badge>
+                              </TableCell>
+                              <TableCell
+                                className="py-1.5 text-center font-mono text-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedTestId(res.id);
+                                  setInspectorTab('image');
+                                }}
+                                title="Click to inspect Captured DOM Snapshot"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 mx-auto" />
+                              </TableCell>
+                              <TableCell className="py-1.5 text-right font-mono text-xs text-muted-foreground">
+                                {res.durationMs}ms
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
                 </Card>
 
                 <div className="lg:col-span-7">

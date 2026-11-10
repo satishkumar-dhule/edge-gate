@@ -82,6 +82,19 @@ output "provisioned_canary_alarm_names" {
   value       = { for k, v in aws_cloudwatch_metric_alarm.canary_failed_alarm : k => v.alarm_name }
 }
 
+output "lambda_cloudwatch_alarm_names" {
+  description = "CloudWatch Metric Alarms monitoring the Scale-to-Zero Ad-Hoc Runner and Control Plane Lambda functions"
+  value = var.deploy_serverless_lambda ? {
+    adhoc_runner_errors  = aws_cloudwatch_metric_alarm.adhoc_runner_lambda_alarm[0].alarm_name
+    control_plane_errors = aws_cloudwatch_metric_alarm.control_plane_lambda_alarm[0].alarm_name
+  } : {}
+}
+
+output "s3_portal_spa_files" {
+  description = "Compiled React SPA files uploaded by Terraform to the S3 CloudFront origin"
+  value       = [for k, v in aws_s3_object.portal_spa_bundle : "s3://${aws_s3_bucket.synthetics_artifacts.id}/${v.key}"]
+}
+
 output "control_plane_lambda_function_name" {
   description = "Scale-to-Zero ($0/idle) Control Plane REST API, OpenAPI 3.1 & MCP AWS Lambda Function Name"
   value       = var.deploy_serverless_lambda ? aws_lambda_function.control_plane_api[0].function_name : "disabled"

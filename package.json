@@ -21,7 +21,13 @@
     "user:stats": "tsx scripts/user-admin-cli.ts stats",
     "user:audit": "tsx scripts/user-admin-cli.ts audit",
     "run:adhoc": "tsx scripts/user-admin-cli.ts run-adhoc",
-    "compare": "tsx scripts/user-admin-cli.ts compare"
+    "compare": "tsx scripts/user-admin-cli.ts compare",
+    "deploy": "tsx scripts/deploy-aws-portal.ts deploy-all",
+    "tf:apply": "tsx scripts/deploy-aws-portal.ts tf-apply",
+    "sync:ui": "tsx scripts/deploy-aws-portal.ts sync-ui",
+    "verify:bundle": "tsx scripts/deploy-aws-portal.ts verify-bundle",
+    "invalidate:cloudfront": "tsx scripts/deploy-aws-portal.ts invalidate-cloudfront",
+    "test:e2e": "tsx scripts/verify-cloudfront-e2e.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

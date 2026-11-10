@@ -22,34 +22,34 @@ variable "environment" {
 
 variable "project_name" {
   type        = string
-  default     = "akamai-synthetic-release-gate"
+  default     = "salesforce-edge-release-gate"
   description = "Canonical project name used across IAM, S3, DynamoDB, SSM, ECR, and CloudWatch resources"
 }
 
 variable "operator_email" {
   type        = string
-  default     = "satishkumardhule@gmail.com"
+  default     = "user-enaopopztofm@salesforce.com"
   description = "Default Principal Edge SRE operator identity seeded into Control Plane config"
 }
 
 variable "operator_role" {
   type        = string
-  default     = "Principal Edge SRE"
+  default     = "Lead Edge Release Engineer"
   description = "Default operator role seeded into Control Plane config"
 }
 
 variable "akamai_account_context" {
   type        = string
-  default     = "B-C-1AKAMAI-ENT (Enterprise Production)"
+  default     = "SFDC-EDGE-373211957869 (AWS 373211957869 · Akamai Prod + Staging)"
   description = "Akamai Control Center account context identifier"
 }
 
 variable "default_tags" {
   type = map(string)
   default = {
-    Project     = "akamai-synthetic-release-gate"
-    ManagedBy   = "terraform"
-    ControlPlane = "akamai-edge-synthetics-mcp"
+    Project      = "salesforce-edge-release-gate"
+    ManagedBy    = "terraform"
+    ControlPlane = "salesforce-edge-synthetics-mcp"
   }
   description = "Base tags applied to all provisioned AWS resources"
 }
@@ -59,7 +59,7 @@ variable "default_tags" {
 # ----------------------------------------------------------------------------
 variable "s3_artifact_bucket" {
   type        = string
-  default     = "akamai-synthetics-gate-prod"
+  default     = "salesforce-akamai-synthetics"
   description = "Base name for S3 bucket storing HARs, headers, cookies, screenshots, and suite configs (account ID & region are suffixed automatically)"
 }
 
@@ -86,7 +86,7 @@ variable "noncurrent_version_retention_days" {
 # ----------------------------------------------------------------------------
 variable "dynamodb_table_name" {
   type        = string
-  default     = "akamai-synthetics-release-gate-runs"
+  default     = "salesforce-synthetics-gate-state"
   description = "DynamoDB table storing run metadata, comparison verdicts, and accepted diff rules"
 }
 
@@ -167,7 +167,7 @@ variable "visual_judge_max_tokens" {
 # ----------------------------------------------------------------------------
 variable "default_domain" {
   type        = string
-  default     = "company.com"
+  default     = "salesforce.com"
   description = "Default canonical root domain for properties"
 }
 
@@ -179,7 +179,7 @@ variable "staging_edge_suffix" {
 
 variable "staging_edge_ip" {
   type        = string
-  default     = "23.56.128.45"
+  default     = "23.48.201.18"
   description = "Default Akamai Staging Edge IP used for DNS pinning (--host-resolver-rules / curl --resolve)"
 }
 
@@ -191,7 +191,7 @@ variable "prod_edge_suffix" {
 
 variable "prod_edge_ip" {
   type        = string
-  default     = "104.96.22.11"
+  default     = "23.212.251.15"
   description = "Default Akamai Production Edge IP used for DNS pinning (--host-resolver-rules / curl --resolve)"
 }
 
@@ -223,6 +223,12 @@ variable "restricted_headers" {
 # ----------------------------------------------------------------------------
 # 7. AD-HOC CLOUDWATCH SYNTHETICS CANARY EXECUTION & VIEWPORT SETTINGS
 # ----------------------------------------------------------------------------
+variable "deploy_synthetics_canaries" {
+  type        = bool
+  default     = false
+  description = "When false (default for scale-to-zero AWS Lambda Ad-Hoc Runner mode or AWS Organizations SCPs restricting synthetics:CreateCanary), synthetic probing runs on-demand via the Ad-Hoc Edge Runner AWS Lambda function"
+}
+
 variable "synthetics_runtime_version" {
   type        = string
   default     = "syn-nodejs-puppeteer-9.1"
@@ -399,18 +405,18 @@ variable "initial_operator_users" {
   }))
   default = [
     {
-      email        = "sre-lead@company.com"
-      display_name = "Principal Edge SRE"
+      email        = "user-zyjydpqcvgpx@salesforce.com"
+      display_name = "Lead Edge Release Engineer (AWS 769576625884)"
       role         = "admin"
     },
     {
-      email        = "release-bot@company.com"
-      display_name = "CI/CD Release Automation"
+      email        = "release-automation@salesforce.com"
+      display_name = "Salesforce Edge CI/CD Pipeline"
       role         = "operator"
     },
     {
-      email        = "qa-auditor@company.com"
-      display_name = "Edge QA Auditor"
+      email        = "trust-security@salesforce.com"
+      display_name = "Salesforce Trust & Security QA"
       role         = "viewer"
     }
   ]
@@ -419,7 +425,7 @@ variable "initial_operator_users" {
 
 variable "ecr_repository_name" {
   type        = string
-  default     = "akamai-synthetic-release-gate"
+  default     = "salesforce-edge-release-gate"
   description = "Amazon ECR repository name (optional, only used if container deployment is enabled)"
 }
 
@@ -461,13 +467,13 @@ variable "apprunner_health_check_path" {
 
 variable "mcp_endpoint_uri" {
   type        = string
-  default     = "mcp://akamai-synthetics-gate/v1"
+  default     = "/api/v1/mcp/rpc"
   description = "Logical Model Context Protocol (MCP) server URI exposed to AI coding agents"
 }
 
 variable "mcp_npm_package" {
   type        = string
-  default     = "@company/akamai-synthetics-mcp-server"
+  default     = "@salesforce-edge/akamai-release-gate-mcp"
   description = "NPM package identifier for the MCP stdio/HTTP bridge"
 }
 
@@ -493,150 +499,156 @@ variable "properties" {
   default = [
     {
       id               = "www"
-      name             = "Main Public Portal"
+      name             = "Salesforce Global Marketing & Digital Experience (www.salesforce.com)"
       suite_path       = "config/suites/www.csv"
       default_networks = ["prod", "staging"]
-      headers          = { "x-portal-team" = "edge-release-eng" }
+      headers          = { "x-sfdc-edge-gate" = "release-verify" }
       envs = [
         {
           id       = "prod"
-          name     = "Production"
+          name     = "PROD"
           networks = ["prod", "staging"]
-          host_map = {
-            "www.company.com"    = "www.company.com"
-            "assets.company.com" = "assets.company.com"
-          }
+          host_map = { "www.salesforce.com" = "www.salesforce.com" }
         },
         {
           id       = "uat"
           name     = "UAT"
           networks = ["prod", "staging"]
-          host_map = {
-            "www.company.com"    = "uat-www.company.com"
-            "assets.company.com" = "uat-assets.company.com"
-          }
+          host_map = { "www.salesforce.com" = "www-uat1.salesforce.com" }
         }
       ]
     },
     {
-      id               = "store"
-      name             = "E-Commerce Storefront"
-      suite_path       = "config/suites/store.csv"
+      id               = "login"
+      name             = "Salesforce Core Identity & OAuth Gateway (login.salesforce.com)"
+      suite_path       = "config/suites/login.csv"
       default_networks = ["prod", "staging"]
       envs = [
         {
           id       = "prod"
-          name     = "Production"
+          name     = "PROD"
           networks = ["prod", "staging"]
-          host_map = { "store.company.com" = "store.company.com" }
+          host_map = { "login.salesforce.com" = "login.salesforce.com" }
         },
         {
           id       = "uat"
           name     = "UAT"
           networks = ["prod", "staging"]
-          host_map = { "store.company.com" = "uat-store.company.com" }
-        }
-      ]
-    },
-    {
-      id               = "help"
-      name             = "Help & Docs Center"
-      suite_path       = "config/suites/help.csv"
-      default_networks = ["prod", "staging"]
-      envs = [
-        {
-          id       = "prod"
-          name     = "Production"
-          networks = ["prod", "staging"]
-          host_map = { "help.company.com" = "help.company.com" }
-        }
-      ]
-    },
-    {
-      id               = "checkout"
-      name             = "Global Checkout & Payments"
-      suite_path       = "config/suites/checkout.csv"
-      default_networks = ["prod", "staging"]
-      envs = [
-        {
-          id       = "prod"
-          name     = "Production"
-          networks = ["prod", "staging"]
-          host_map = { "checkout.company.com" = "checkout.company.com" }
-        },
-        {
-          id       = "uat"
-          name     = "UAT"
-          networks = ["prod", "staging"]
-          host_map = { "checkout.company.com" = "uat-checkout.company.com" }
-        }
-      ]
-    },
-    {
-      id               = "api"
-      name             = "Edge GraphQL & REST Gateway"
-      suite_path       = "config/suites/api.csv"
-      default_networks = ["prod", "staging"]
-      envs = [
-        {
-          id       = "prod"
-          name     = "Production"
-          networks = ["prod", "staging"]
-          host_map = { "api.company.com" = "api.company.com" }
-        },
-        {
-          id       = "uat"
-          name     = "UAT"
-          networks = ["prod", "staging"]
-          host_map = { "api.company.com" = "uat-api.company.com" }
-        }
-      ]
-    },
-    {
-      id               = "auth"
-      name             = "Identity & SSO Edge Broker"
-      suite_path       = "config/suites/auth.csv"
-      default_networks = ["prod", "staging"]
-      envs = [
-        {
-          id       = "prod"
-          name     = "Production"
-          networks = ["prod", "staging"]
-          host_map = { "auth.company.com" = "auth.company.com" }
-        },
-        {
-          id       = "uat"
-          name     = "UAT"
-          networks = ["prod", "staging"]
-          host_map = { "auth.company.com" = "uat-auth.company.com" }
+          host_map = { "login.salesforce.com" = "test.salesforce.com" }
         }
       ]
     },
     {
       id               = "developer"
-      name             = "Developer Hub & API Reference"
+      name             = "Salesforce Developers & API Portal (developer.salesforce.com)"
       suite_path       = "config/suites/developer.csv"
       default_networks = ["prod", "staging"]
       envs = [
         {
           id       = "prod"
-          name     = "Production"
+          name     = "PROD"
           networks = ["prod", "staging"]
-          host_map = { "developer.company.com" = "developer.company.com" }
+          host_map = { "developer.salesforce.com" = "developer.salesforce.com" }
+        },
+        {
+          id       = "uat"
+          name     = "UAT"
+          networks = ["prod", "staging"]
+          host_map = { "developer.salesforce.com" = "developer-uat.salesforce.com" }
+        }
+      ]
+    },
+    {
+      id               = "help"
+      name             = "Salesforce Help & Customer Trailblazer Support (help.salesforce.com)"
+      suite_path       = "config/suites/help.csv"
+      default_networks = ["prod", "staging"]
+      envs = [
+        {
+          id       = "prod"
+          name     = "PROD"
+          networks = ["prod", "staging"]
+          host_map = { "help.salesforce.com" = "help.salesforce.com" }
+        },
+        {
+          id       = "uat"
+          name     = "UAT"
+          networks = ["prod", "staging"]
+          host_map = { "help.salesforce.com" = "help-uat.salesforce.com" }
+        }
+      ]
+    },
+    {
+      id               = "trailhead"
+      name             = "Salesforce Trailhead Learning & Certification (trailhead.salesforce.com)"
+      suite_path       = "config/suites/trailhead.csv"
+      default_networks = ["prod", "staging"]
+      envs = [
+        {
+          id       = "prod"
+          name     = "PROD"
+          networks = ["prod", "staging"]
+          host_map = { "trailhead.salesforce.com" = "trailhead.salesforce.com" }
+        },
+        {
+          id       = "uat"
+          name     = "UAT"
+          networks = ["prod", "staging"]
+          host_map = { "trailhead.salesforce.com" = "trailhead-uat.salesforce.com" }
+        }
+      ]
+    },
+    {
+      id               = "status"
+      name             = "Salesforce Trust & Real-Time Cloud Status (status.salesforce.com)"
+      suite_path       = "config/suites/status.csv"
+      default_networks = ["prod", "staging"]
+      envs = [
+        {
+          id       = "prod"
+          name     = "PROD"
+          networks = ["prod", "staging"]
+          host_map = { "status.salesforce.com" = "status.salesforce.com" }
+        }
+      ]
+    },
+    {
+      id               = "appexchange"
+      name             = "Salesforce AppExchange Enterprise Marketplace (appexchange.salesforce.com)"
+      suite_path       = "config/suites/appexchange.csv"
+      default_networks = ["prod", "staging"]
+      envs = [
+        {
+          id       = "prod"
+          name     = "PROD"
+          networks = ["prod", "staging"]
+          host_map = { "appexchange.salesforce.com" = "appexchange.salesforce.com" }
+        },
+        {
+          id       = "uat"
+          name     = "UAT"
+          networks = ["prod", "staging"]
+          host_map = { "appexchange.salesforce.com" = "appexchange-uat.salesforce.com" }
         }
       ]
     },
     {
       id               = "partners"
-      name             = "Partner Portal & Rebates"
+      name             = "Salesforce Partner Community & Ecosystem (partners.salesforce.com)"
       suite_path       = "config/suites/partners.csv"
       default_networks = ["prod", "staging"]
       envs = [
         {
           id       = "prod"
-          name     = "Production"
+          name     = "PROD"
           networks = ["prod", "staging"]
-          host_map = { "partners.company.com" = "partners.company.com" }
+          host_map = { "partners.salesforce.com" = "partners.salesforce.com" }
+        },
+        {
+          id       = "uat"
+          name     = "UAT"
+          networks = ["prod", "staging"]
+          host_map = { "partners.salesforce.com" = "partners-uat.salesforce.com" }
         }
       ]
     }
@@ -657,14 +669,14 @@ variable "test_suite" {
     enabled         = optional(bool, true)
   }))
   default = [
-    { id = "T01", name = "Homepage Root & Edge Cache", path = "/", expected_status = "200", critical = true, enabled = true },
-    { id = "T02", name = "Product Catalog & Session Cookie", path = "/products", expected_status = "200", critical = true, enabled = true },
-    { id = "T03", name = "Enterprise Solutions Hero Layout", path = "/solutions/enterprise", expected_status = "200", critical = true, enabled = true },
-    { id = "T04", name = "Global Geo Redirect (/global)", path = "/global", expected_status = "301", critical = true, enabled = true },
-    { id = "T05", name = "Authentication Sign-In Portal", path = "/login", expected_status = "200", critical = true, enabled = true },
-    { id = "T06", name = "Customer Case Studies Feed", path = "/customers/stories", expected_status = "200", critical = false, enabled = true },
-    { id = "T07", name = "Pricing & Tier Calculator", path = "/pricing", expected_status = "200", critical = true, enabled = true },
-    { id = "T08", name = "Edge Health Check Probe", path = "/healthz", expected_status = "200", critical = true, enabled = true }
+    { id = "T01", name = "Salesforce Global Home & Hero Experience", path = "/", expected_status = "200", critical = true, enabled = true },
+    { id = "T02", name = "Sales Cloud & Agentforce Product Overview", path = "/sales/", expected_status = "200", critical = true, enabled = true },
+    { id = "T03", name = "Agentforce AI & Einstein Platform Landing", path = "/artificial-intelligence/", expected_status = "200", critical = true, enabled = true },
+    { id = "T04", name = "Legacy CRM Redirect Normalization (/crm -> /crm/)", path = "/crm", expected_status = "301", critical = true, enabled = true },
+    { id = "T05", name = "Salesforce Free Trial & Lead Capture Flow", path = "/form/signup/freetrial-sales/", expected_status = "200", critical = true, enabled = true },
+    { id = "T06", name = "Enterprise Editions & Pricing Matrix", path = "/editions-pricing/sales-cloud/", expected_status = "200", critical = true, enabled = true },
+    { id = "T07", name = "Customer 360 & Small Business Solutions", path = "/small-business/", expected_status = "200", critical = true, enabled = true },
+    { id = "T08", name = "Company Overview & Global Trust Center Entry", path = "/company/", expected_status = "200", critical = true, enabled = true }
   ]
   description = "Synthetic test suite checks provisioned into S3 (CSV + JSON) and injected into CloudWatch Synthetics Canaries"
 }

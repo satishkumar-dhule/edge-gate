@@ -143,7 +143,10 @@ export function calculateFunctionalDiffs(
   }
 
   // Helper for case-insensitive header getter
-  const getHeader = (headers: Record<string, string>, name: string) => {
+  const getHeader = (
+    headers: Record<string, string | undefined>,
+    name: string
+  ) => {
     const target = name.toLowerCase();
     for (const [k, v] of Object.entries(headers)) {
       if (k.toLowerCase() === target) return v;

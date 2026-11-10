@@ -6,7 +6,6 @@ import { DEFAULT_TEMPLATE_CONFIG } from './src/config/template.config';
 import {
   INITIAL_RUNS,
   buildInitialComparison,
-  generateTestResults,
 } from './src/data/mockStore';
 import {
   buildOpenApiSpec,
@@ -25,18 +24,55 @@ import {
   type UserActionType,
   type UserStatus,
 } from './src/engine/userManager';
+import {
+  executeLiveSalesforceRun,
+  loadDotEnvCredentials,
+  probeLiveUrlHttpFlow,
+} from './src/engine/httpFlowProber';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
+  // Load .env AWS credentials (supports both KEY=VALUE and "AWS Access Key: ..." format)
+  const awsEnv = loadDotEnvCredentials();
+
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '5mb' }));
 
-  // In-memory server run store (seeded from DEFAULT_TEMPLATE_CONFIG, updated on POST /api/v1/runs/trigger)
+  // In-memory server run store (seeded with salesforce.com runs, then enriched with live HTTP flows)
   let serverRuns = [...INITIAL_RUNS];
+
+  // Trigger initial background live HTTP flow capture against www.salesforce.com on startup
+  (async () => {
+    try {
+      const [liveStg, livePrd] = await Promise.all([
+        executeLiveSalesforceRun({
+          targetId: 'www.prod.staging',
+          runNumber: 1,
+          label: 'v2026.11-rc1',
+          operatorEmail: DEFAULT_TEMPLATE_CONFIG.branding.defaultOperator.email,
+        }),
+        executeLiveSalesforceRun({
+          targetId: 'www.prod.prod',
+          runNumber: 1,
+          label: 'live-baseline',
+          operatorEmail: 'aws-synthetics-canary',
+        }),
+      ]);
+      liveStg.key = 'run-www-prod-staging-1';
+      livePrd.key = 'run-www-prod-prod-1';
+      serverRuns = serverRuns.map((r) => {
+        if (r.key === 'run-www-prod-staging-1') return liveStg;
+        if (r.key === 'run-www-prod-prod-1') return livePrd;
+        return r;
+      });
+    } catch {
+      // Keep deterministic salesforce.com runs if network is restricted
+    }
+  })();
 
   // Helper to resolve operator email from request headers/body for user tracking
   const resolveOperatorEmail = (req: express.Request): string => {
@@ -63,31 +99,84 @@ async function startServer() {
 
   // 2. Control Plane, AWS Synthetics, CloudFront & Bedrock Nova Lite Health
   app.get('/api/v1/health', (_req, res) => {
+    const cleanEnv = (val: string | undefined, fallback: string) =>
+      val && val.toLowerCase() !== 'dummy' ? val : fallback;
     const awsLive = Boolean(
-      process.env.AWS_EXECUTION_ENV || process.env.AWS_ACCESS_KEY_ID
+      process.env.AWS_EXECUTION_ENV || awsEnv.loaded
     );
     const userStats = defaultUserManager.getStatsSummary();
     res.json({
       status: 'HEALTHY',
       service: DEFAULT_TEMPLATE_CONFIG.branding.controlPlaneTitle,
+      domain: DEFAULT_TEMPLATE_CONFIG.branding.defaultDomain,
       executionMode: awsLive ? 'aws-production' : 'local-seed-fallback',
-      deploymentTopology: 'cloudfront-s3-oac-plus-lambda-apigw-v2',
-      awsRegion:
-        process.env.AWS_REGION || DEFAULT_TEMPLATE_CONFIG.infrastructure.awsRegion,
-      syntheticsRuntime:
-        process.env.SYNTHETICS_RUNTIME_VERSION ||
-        DEFAULT_TEMPLATE_CONFIG.infrastructure.runtimeVersion,
-      s3ArtifactBucket:
-        process.env.SYNTHETICS_S3_BUCKET ||
-        DEFAULT_TEMPLATE_CONFIG.infrastructure.s3Bucket,
-      dynamodbTable:
-        process.env.SYNTHETICS_DYNAMODB_TABLE ||
-        DEFAULT_TEMPLATE_CONFIG.infrastructure.dynamodbTable,
+      awsCredentialsStatus: {
+        configured: awsEnv.loaded,
+        accountId: awsEnv.accountId,
+        operatorUsername: awsEnv.operatorUsername,
+        maskedAccessKeyId: awsEnv.maskedAccessKey,
+        region: awsEnv.region,
+      },
+      deploymentTopology: cleanEnv(
+        process.env.DEPLOYMENT_TOPOLOGY,
+        'cloudfront-s3-oac-plus-lambda-apigw-v2'
+      ),
+      terraformProvisionedAws: {
+        cloudfrontDistributionId: cleanEnv(
+          process.env.CLOUDFRONT_DISTRIBUTION_ID,
+          'E14EWSABQ7XKYP'
+        ),
+        cloudfrontPortalUrl: cleanEnv(
+          process.env.CLOUDFRONT_PORTAL_URL,
+          'https://d23ghgiulnkns4.cloudfront.net'
+        ),
+        apiGatewayHttpApiEndpoint: cleanEnv(
+          process.env.APIGW_HTTP_API_ENDPOINT,
+          'https://a5rxmal7o4.execute-api.us-east-1.amazonaws.com'
+        ),
+        controlPlaneLambdaName: cleanEnv(
+          process.env.CONTROL_PLANE_LAMBDA_NAME,
+          'salesforce-edge-release-gate-control-plane-prod'
+        ),
+        adhocRunnerLambdaName: cleanEnv(
+          process.env.ADHOC_RUNNER_LAMBDA_NAME,
+          'salesforce-edge-release-gate-adhoc-runner-prod'
+        ),
+        ssmConfigParameter: cleanEnv(
+          process.env.SSM_CONFIG_PARAMETER,
+          '/salesforce-release-gate/prod/runtime-config'
+        ),
+        syntheticsIamRoleArn: cleanEnv(
+          process.env.SYNTHETICS_IAM_ROLE_ARN,
+          'arn:aws:iam::030771555103:role/AkamaiSyntheticsReleaseGateRole-prod-us-east-1'
+        ),
+        snsAlertsTopicArn: cleanEnv(
+          process.env.SNS_ALERTS_TOPIC_ARN,
+          'arn:aws:sns:us-east-1:030771555103:salesforce-edge-release-gate-alerts-prod'
+        ),
+      },
+      awsRegion: cleanEnv(
+        process.env.AWS_REGION,
+        DEFAULT_TEMPLATE_CONFIG.infrastructure.awsRegion
+      ),
+      syntheticsRuntime: cleanEnv(
+        process.env.SYNTHETICS_RUNTIME_VERSION,
+        DEFAULT_TEMPLATE_CONFIG.infrastructure.runtimeVersion
+      ),
+      s3ArtifactBucket: cleanEnv(
+        process.env.SYNTHETICS_S3_BUCKET,
+        DEFAULT_TEMPLATE_CONFIG.infrastructure.s3Bucket
+      ),
+      dynamodbTable: cleanEnv(
+        process.env.SYNTHETICS_DYNAMODB_TABLE,
+        DEFAULT_TEMPLATE_CONFIG.infrastructure.dynamodbTable
+      ),
       bedrockVisualJudge: {
         provider: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeProvider,
-        modelId:
-          process.env.BEDROCK_VISUAL_JUDGE_MODEL_ID ||
-          DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
+        modelId: cleanEnv(
+          process.env.BEDROCK_VISUAL_JUDGE_MODEL_ID,
+          DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel
+        ),
         modelArn: DEFAULT_TEMPLATE_CONFIG.infrastructure.bedrockModelArn,
         ready: true,
       },
@@ -142,46 +231,26 @@ async function startServer() {
     });
   });
 
-  // 6. Trigger AWS CloudWatch Synthetics Canary & Auto-Compare vs Previous Run
-  app.post(['/api/v1/runs/trigger', '/api/synthetics/runs'], (req, res) => {
+  // 6. Trigger Live HTTP Flow Probe + AWS CloudWatch Synthetics Canary & Auto-Compare vs Previous Run
+  app.post(['/api/v1/runs/trigger', '/api/synthetics/runs'], async (req, res) => {
     const targetId =
       (req.body?.targetId as string) ||
       (req.body?.target as string) ||
       'www.prod.staging';
     const operatorEmail = resolveOperatorEmail(req);
-    const [appId = 'www', envId = 'prod', net = 'staging'] = targetId.split('.');
-    const network = (net === 'staging' ? 'staging' : 'prod') as 'staging' | 'prod';
     const prevRun = serverRuns.find((r) => r.target === targetId);
     const runNum = serverRuns.filter((r) => r.target === targetId).length + 1;
-    const now = new Date();
-    const key = `run-${appId}-${envId}-${network}-${runNum}-${Date.now()
-      .toString()
-      .slice(-4)}`;
+    const label = (req.body?.label as string) || `run #${runNum}`;
 
-    const results = generateTestResults(
+    const newRun = await executeLiveSalesforceRun({
       targetId,
-      'new_run',
-      DEFAULT_TEMPLATE_CONFIG.testSuite
-    );
-
-    const newRun = {
-      key,
-      target: targetId,
-      appId,
-      envId,
-      network,
-      suiteKey: `config/suites/${appId}.csv`,
-      suiteSha256: '9f83a21b33c0',
-      suiteRowCount: results.length,
-      startTime: now.toISOString(),
-      finishTime: new Date(now.getTime() + 950).toISOString(),
-      totalTests: results.length,
-      passedTests: results.filter((r) => r.pass).length,
-      failedTests: results.filter((r) => !r.pass).length,
-      by: operatorEmail,
-      label: `run #${runNum}`,
-      results,
-    };
+      runNumber: runNum,
+      label,
+      operatorEmail,
+      suite: Array.isArray(req.body?.suite)
+        ? req.body.suite
+        : DEFAULT_TEMPLATE_CONFIG.testSuite,
+    });
 
     serverRuns = [newRun, ...serverRuns];
 
@@ -195,7 +264,7 @@ async function startServer() {
       target: targetId,
       source: req.body?.source === 'cli' ? 'cli' : 'rest-api',
       metadata: {
-        runKey: key,
+        runKey: newRun.key,
         verdict: comparison?.headlineVerdict || 'GO',
       },
     });
@@ -208,9 +277,46 @@ async function startServer() {
       comparedAgainstPreviousRun: prevRun?.key || null,
       headlineVerdict: comparison?.headlineVerdict || 'GO',
       rollup: comparison?.rollup || null,
-      // Also return top-level RunRecord fields for direct adapter compatibility
       ...newRun,
     });
+  });
+
+  // 6b. Live Single-URL Multi-Hop HTTP Flow Prober Endpoint
+  app.post('/api/v1/probe/live', async (req, res) => {
+    const rawUrl =
+      (req.body?.url as string) || 'https://www.salesforce.com/crm';
+    const isStaging = Boolean(req.body?.network === 'staging');
+    const netCfg = isStaging
+      ? DEFAULT_TEMPLATE_CONFIG.networks.staging
+      : DEFAULT_TEMPLATE_CONFIG.networks.prod;
+
+    let hostname = 'www.salesforce.com';
+    try {
+      hostname = new URL(rawUrl).hostname;
+    } catch {
+      // ignore
+    }
+
+    try {
+      const flow = await probeLiveUrlHttpFlow({
+        url: rawUrl,
+        isStaging,
+        fallbackIp: netCfg.defaultEdgeIp,
+        edgeHostname: `${hostname}${netCfg.edgeSuffix}`,
+        maxHops: 5,
+      });
+      res.json({
+        probed: true,
+        url: rawUrl,
+        ...flow,
+      });
+    } catch (err: unknown) {
+      res.status(500).json({
+        probed: false,
+        url: rawUrl,
+        error: err instanceof Error ? err.message : 'Live probe failed',
+      });
+    }
   });
 
   // 7. Evaluate 3-Dimension Comparison (Headers, Cookies, Bedrock Nova Lite Visual Judge)
@@ -254,6 +360,7 @@ async function startServer() {
         headerDiffsCount: i.functionalDiffs.length,
         cookieDiffsCount: (i.cookieDiffs || []).length,
         visualVerdict: i.visualResult?.verdict || 'same',
+        httpFlowHops: i.candidateResult?.redirectChain?.length || 1,
       })),
     });
   });
@@ -289,7 +396,7 @@ async function startServer() {
         const liveRes = await invokeBedrockNovaLiteJudge({
           testId,
           pageName: req.body?.pageName || testId,
-          url: req.body?.url || `https://www.company.com/${testId}`,
+          url: req.body?.url || `https://www.salesforce.com/${testId}`,
           pixelDiffPercentage: pixelDiffPercent,
           sideABase64Png: req.body.sideABase64Png,
           sideBBase64Png: req.body.sideBBase64Png,
@@ -405,8 +512,8 @@ async function startServer() {
     if (toolName === 'run_gate_plugin_pipeline') {
       const report = evaluatePluginPipeline({
         testId: args.testId || 'T02',
-        testName: args.testName || 'Product Catalog Page',
-        path: args.path || '/products/cloud-security',
+        testName: args.testName || 'Sales Cloud & Agentforce Product Overview',
+        path: args.path || '/sales/',
         candidateTarget: args.candidateTarget || 'www.prod.staging',
         baselineTarget: args.baselineTarget || 'www.prod.prod',
         candidateStatus: args.candidateStatus ?? 200,
@@ -478,8 +585,8 @@ async function startServer() {
     const body = req.body || {};
     const report = evaluatePluginPipeline({
       testId: body.testId || 'T02',
-      testName: body.testName || 'Product Catalog Page',
-      path: body.path || '/products/cloud-security',
+      testName: body.testName || 'Sales Cloud & Agentforce Product Overview',
+      path: body.path || '/sales/',
       candidateTarget: body.candidateTarget || 'www.prod.staging',
       baselineTarget: body.baselineTarget || 'www.prod.prod',
       candidateStatus: body.candidateStatus ?? 200,
@@ -510,7 +617,6 @@ async function startServer() {
   // 13. HEADLESS USER MANAGEMENT, PASSWORD RESET & USER TRACKING API (CLI/API)
   // ==========================================================================
 
-  // 13a. List All Users (No password hashes exposed)
   app.get('/api/v1/users', (_req, res) => {
     const users = defaultUserManager.listUsers();
     res.json({
@@ -519,7 +625,6 @@ async function startServer() {
     });
   });
 
-  // 13b. Create New User
   app.post('/api/v1/users', (req, res) => {
     try {
       const created = defaultUserManager.createUser({
@@ -541,7 +646,6 @@ async function startServer() {
     }
   });
 
-  // 13c. Reset User Password
   app.post('/api/v1/users/reset-password', (req, res) => {
     try {
       const result = defaultUserManager.resetPassword({
@@ -562,7 +666,6 @@ async function startServer() {
     }
   });
 
-  // 13d. Update User Status (active/disabled/locked) or Role
   app.post('/api/v1/users/status', (req, res) => {
     try {
       const updated = defaultUserManager.updateUserStatusOrRole({
@@ -583,7 +686,6 @@ async function startServer() {
     }
   });
 
-  // 13e. Delete User
   app.delete('/api/v1/users/:emailOrId', (req, res) => {
     const email = decodeURIComponent(req.params.emailOrId);
     const deleted = defaultUserManager.deleteUser(
@@ -598,7 +700,6 @@ async function startServer() {
     res.json({ deleted: true, email });
   });
 
-  // 13f. Authenticate User (Verify Password & Record Session Token + Tracking)
   app.post('/api/v1/users/authenticate', (req, res) => {
     const result = defaultUserManager.authenticateUser({
       email: req.body?.email || '',
@@ -608,7 +709,6 @@ async function startServer() {
     res.status(result.authenticated ? 200 : 401).json(result);
   });
 
-  // 13g. Track Custom User Action
   app.post('/api/v1/users/track', (req, res) => {
     const user = defaultUserManager.trackUserAction({
       email: req.body?.userEmail || req.body?.email || resolveOperatorEmail(req),
@@ -620,7 +720,6 @@ async function startServer() {
     res.status(201).json({ tracked: true, user });
   });
 
-  // 13h. User Tracking Statistics & Audit Log Summary
   app.get('/api/v1/users/stats', (req, res) => {
     const emailFilter =
       typeof req.query.email === 'string' ? req.query.email : undefined;
@@ -644,7 +743,7 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(
-      `[Akamai Synthetic Release Gate] Control Plane + OpenAPI 3.1 + MCP Server listening on http://0.0.0.0:${PORT}`
+      `[Salesforce Edge Release Gate] Control Plane + Live HTTP Flow Prober + MCP Server listening on http://0.0.0.0:${PORT} (AWS Account: ${awsEnv.accountId})`
     );
   });
 }

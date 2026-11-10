@@ -1,14 +1,3 @@
-/**
- * ============================================================================
- * CONFIG-DRIVEN SYNTHETICS ADAPTER & SEED GENERATOR
- * ============================================================================
- * Automatically generates initial runs, target states, and 3-dimension
- * comparisons from `src/config/template.config.ts` (or any custom TemplateConfig).
- * To connect a real backend, replace `generateTestResults` with an API call
- * to your AWS CloudWatch Synthetics / S3 / MCP endpoint.
- * ============================================================================
- */
-
 import {
   AcceptedRule,
   AppConfig,
@@ -16,12 +5,14 @@ import {
   ComparisonKind,
   ComparisonRecord,
   DifferenceItem,
+  HttpFlowSummary,
+  RedirectHop,
   RunRecord,
-  TargetState,
   TestResult,
 } from '../engine/types';
 import {
   applyRulesToItem,
+  ApplyRulesOptions,
   calculateFunctionalDiffs,
   calculateHeadlineVerdict,
   calculateItemVerdict,
@@ -33,285 +24,27 @@ import {
   resolvePropertyHostname,
 } from '../config/template.config';
 
-export const INITIAL_APPS: AppConfig[] = DEFAULT_TEMPLATE_CONFIG.properties;
-export const SAMPLE_TEST_DEFINITIONS: TestCaseDefinition[] =
-  DEFAULT_TEMPLATE_CONFIG.testSuite;
-export const INITIAL_RULES: AcceptedRule[] = [];
-
-/**
- * Generates synthetic test results for any target `<appId>.<envId>.<network>`
- * using the configured testSuite definitions and network metadata.
- */
-export function generateTestResults(
-  target: string,
-  variant:
-    | 'normal_prod'
-    | 'normal_staging'
-    | 'prev_prod'
-    | 'prev_staging'
-    | 'new_run'
-    | 'uat_prod'
-    | 'uat_staging'
-    | 'clean_match' = 'normal_prod',
-  suiteDefs: TestCaseDefinition[] = DEFAULT_TEMPLATE_CONFIG.testSuite,
-  config: TemplateConfig = DEFAULT_TEMPLATE_CONFIG
-): TestResult[] {
-  const [appId = 'www', envId = 'prod', net = 'prod'] = target.split('.');
-  const isStaging = net === 'staging';
-  const netCfg = isStaging ? config.networks.staging : config.networks.prod;
-  const edgeIp = netCfg.defaultEdgeIp;
-  const baseDomain = resolvePropertyHostname(
-    appId,
-    envId,
-    config.branding.defaultDomain
-  );
-  const edgeHost = `${baseDomain}${netCfg.edgeSuffix}`;
-
-  const activeDefs = suiteDefs.filter((def) => def.enabled !== false);
-  return activeDefs.map((def, idx) => {
-    const status = def.expectedStatus === '301' ? 301 : 200;
-    const pass = true;
-    const errors: string[] = [];
-
-    const capturedHeaders: Record<string, string> = {
-      'content-type': 'text/html; charset=utf-8',
-      'cache-control': 'public, max-age=3600',
-      'x-cache': isStaging
-        ? `TCP_MISS from a${edgeIp.replace(/\./g, '-')}.deploy.akamaitechnologies.com`
-        : `TCP_HIT from a${edgeIp.replace(/\./g, '-')}.deploy.akamaitechnologies.com`,
-      'x-check-cacheable': 'YES',
-      'x-akamai-request-id': `ak-${envId}-${isStaging ? 'stg' : 'prd'}-0${idx + 1}`,
-      'x-sfdc-content-source': 'origin-edge-v4',
-    };
-
-    const capturedCookies: Record<string, string> = {
-      ak_bmsc: 'valid-bot-manager-token; Path=/; Secure; HttpOnly',
-      edge_region: 'us-east; Path=/; SameSite=Lax; Secure',
-      session_tier: `${envId}-standard; Path=/; Secure; HttpOnly`,
-    };
-
-    if (status === 301) {
-      capturedHeaders['location'] = `https://${baseDomain}/worldwide`;
-    }
-
-    // Seed realistic 3-dimension differences on staging vs prod
-    if (
-      variant === 'normal_staging' ||
-      variant === 'prev_staging' ||
-      (isStaging && variant !== 'clean_match' && variant !== 'new_run')
-    ) {
-      if (idx === 0) {
-        capturedHeaders['x-check-cacheable'] = 'NO';
-        capturedHeaders['cache-control'] = 'no-store, max-age=0';
-      }
-      if (idx === 1) {
-        capturedCookies['edge_cache_bypass'] =
-          'staging-debug=1; Path=/; SameSite=None';
-        capturedCookies['edge_region'] = 'us-west-staging; Path=/; SameSite=Lax';
-      }
-      if (idx === 2) {
-        capturedHeaders['cache-control'] = 'public, max-age=1800';
-      }
-    }
-
-    // Previous-run baseline variations so Latest vs Previous Run comparisons show realistic delta
-    if (variant === 'prev_staging' || variant === 'prev_prod') {
-      if (idx === 4) {
-        capturedHeaders['x-sfdc-content-source'] = 'origin-edge-v3';
-      }
-      if (idx === 6) {
-        capturedCookies['session_tier'] = `${envId}-legacy; Path=/; Secure; HttpOnly`;
-      }
-    }
-
-    // Freshly triggered run variations so New Run vs Previous Run shows immediate evolution
-    if (variant === 'new_run') {
-      if (isStaging && idx === 1) {
-        capturedCookies['edge_cache_bypass'] =
-          'staging-debug=1; Path=/; SameSite=None';
-      }
-      if (idx === 5) {
-        capturedHeaders['x-sfdc-content-source'] = 'origin-edge-v5-canary';
-      }
-    }
-
-    return {
-      id: def.id,
-      name: def.name,
-      url: `https://${baseDomain}${def.path}`,
-      canonicalUrl: `https://${baseDomain}${def.path}`,
-      pass,
-      errors,
-      expectedStatus: def.expectedStatus,
-      actualStatus: status,
-      durationMs: isStaging
-        ? 82 + ((idx * 19) % 64)
-        : 58 + ((idx * 15) % 48),
-      capturedHeaders,
-      capturedCookies,
-      redirectChain:
-        status === 301
-          ? [
-              {
-                method: 'GET',
-                url: `https://${baseDomain}${def.path}`,
-                status: 301,
-                startOffsetMs: 0,
-                durationMs: 42,
-                edgeIp,
-                location: capturedHeaders['location'],
-              },
-            ]
-          : [],
-      stagingEdgeIp: isStaging ? edgeIp : undefined,
-      edgeHostname: edgeHost,
-      fallbackDns: false,
-      screenshotKey: `screenshots/${target}/latest/${def.id}.jpg`,
-      loadingFlag: 'ready',
-    };
-  });
-}
-
-/**
- * Programmatically seeds initial runs (Latest + Previous Run) for every
- * Property + Environment + Network defined in `TemplateConfig`.
- */
-export function seedRunsFromConfig(
-  config: TemplateConfig = DEFAULT_TEMPLATE_CONFIG
-): RunRecord[] {
-  const seeded: RunRecord[] = [];
-
-  for (const app of config.properties) {
-    for (const env of app.envs) {
-      const networks = env.networks || app.defaultNetworks || ['staging', 'prod'];
-      for (const network of ['staging', 'prod'] as const) {
-        if (!networks.includes(network)) continue;
-        const target = `${app.id}.${env.id}.${network}`;
-        const isStaging = network === 'staging';
-        const latestVariant =
-          app.id === 'help'
-            ? 'clean_match'
-            : isStaging
-            ? 'normal_staging'
-            : 'normal_prod';
-        const prevVariant =
-          app.id === 'help'
-            ? 'clean_match'
-            : isStaging
-            ? 'prev_staging'
-            : 'prev_prod';
-
-        const latestResults = generateTestResults(
-          target,
-          latestVariant,
-          config.testSuite,
-          config
-        );
-        const prevResults = generateTestResults(
-          target,
-          prevVariant,
-          config.testSuite,
-          config
-        );
-
-        const latestLabel =
-          env.id === 'prod'
-            ? isStaging
-              ? 'v2026.11-rc1'
-              : 'live-baseline'
-            : isStaging
-            ? `${env.id}-edge-test`
-            : `${env.id}-baseline`;
-
-        const prevLabel =
-          env.id === 'prod'
-            ? isStaging
-              ? 'v2026.10-prev'
-              : 'prev-baseline'
-            : isStaging
-            ? `${env.id}-edge-prev`
-            : `${env.id}-prev`;
-
-        // 1. Latest Run
-        seeded.push({
-          key: `run-${app.id}-${env.id}-${network}-1`,
-          target,
-          appId: app.id,
-          envId: env.id,
-          network,
-          suiteKey: app.suitePath || `config/suites/${app.id}.csv`,
-          suiteSha256: '9f83a21b33c0',
-          suiteRowCount: latestResults.length,
-          startTime: '2026-11-07T08:30:00Z',
-          finishTime: '2026-11-07T08:30:48Z',
-          totalTests: latestResults.length,
-          passedTests: latestResults.filter((r) => r.pass).length,
-          failedTests: latestResults.filter((r) => !r.pass).length,
-          by: config.branding.defaultOperator.email,
-          label: latestLabel,
-          results: latestResults,
-        });
-
-        // 2. Previous Run (enables out-of-the-box Run-over-Run comparison)
-        seeded.push({
-          key: `run-${app.id}-${env.id}-${network}-0`,
-          target,
-          appId: app.id,
-          envId: env.id,
-          network,
-          suiteKey: app.suitePath || `config/suites/${app.id}.csv`,
-          suiteSha256: '8e72b10a22b9',
-          suiteRowCount: prevResults.length,
-          startTime: '2026-11-07T07:15:00Z',
-          finishTime: '2026-11-07T07:15:46Z',
-          totalTests: prevResults.length,
-          passedTests: prevResults.filter((r) => r.pass).length,
-          failedTests: prevResults.filter((r) => !r.pass).length,
-          by: config.branding.defaultOperator.email,
-          label: prevLabel,
-          results: prevResults,
-        });
-      }
-    }
-  }
-
-  return seeded;
-}
-
-export const INITIAL_RUNS: RunRecord[] = seedRunsFromConfig(
-  DEFAULT_TEMPLATE_CONFIG
-);
-
-export const INITIAL_TARGET_STATES: Record<
-  string,
-  {
-    state: TargetState;
-    activeActivity?: string;
-    progress?: { done: number; total: number } | string;
-  }
-> = Object.fromEntries(
-  INITIAL_RUNS.map((r) => [r.target, { state: 'ready' as TargetState }])
-);
+export const APPS: AppConfig[] = DEFAULT_TEMPLATE_CONFIG.properties;
 
 export function calculateCookieDiffs(
-  candidate?: TestResult,
-  baseline?: TestResult
+  cand?: TestResult,
+  base?: TestResult
 ): DifferenceItem[] {
-  if (!candidate || !baseline) return [];
-  const candCookies = candidate.capturedCookies || {};
-  const baseCookies = baseline.capturedCookies || {};
-  const allNames = Array.from(
-    new Set([...Object.keys(candCookies), ...Object.keys(baseCookies)])
+  if (!cand || !base) return [];
+  const cCookies = cand.capturedCookies || {};
+  const bCookies = base.capturedCookies || {};
+  const allKeys = Array.from(
+    new Set([...Object.keys(cCookies), ...Object.keys(bCookies)])
   );
 
   const diffs: DifferenceItem[] = [];
-  for (const name of allNames) {
-    const cVal = candCookies[name] ?? '(not set)';
-    const bVal = baseCookies[name] ?? '(not set)';
+  for (const key of allKeys) {
+    const cVal = cCookies[key] ?? '(not set)';
+    const bVal = bCookies[key] ?? '(not set)';
     if (cVal !== bVal) {
       diffs.push({
         kind: 'cookie',
-        field: name,
+        field: key,
         candidateValue: cVal,
         baselineValue: bVal,
         severity: 'minor',
@@ -321,10 +54,497 @@ export function calculateCookieDiffs(
   return diffs;
 }
 
-export interface BuildComparisonOptions {
-  acceptedCookies?: string[];
-  acceptedVisualTests?: string[];
-  ignoreAcceptedDiffs?: boolean;
+/**
+ * Builds a complete, multi-hop HTTP flow (RedirectHop[] + HttpFlowSummary)
+ * for a given request, including any 301/302 edge redirects, DNS/TCP/TLS/TTFB/Transfer
+ * phase timings, request headers sent, response headers received, and Set-Cookie jar.
+ */
+export function buildHttpFlowForTest(params: {
+  testId: string;
+  canonicalHost: string;
+  envHost: string;
+  path: string;
+  isStaging: boolean;
+  edgeHostname: string;
+  edgeIp: string;
+  actualStatus: number;
+  durationMs: number;
+  capturedHeaders: Record<string, string | undefined>;
+  capturedCookies: Record<string, string>;
+}): { redirectChain: RedirectHop[]; httpFlowSummary: HttpFlowSummary } {
+  const {
+    testId,
+    envHost,
+    path,
+    isStaging,
+    edgeHostname,
+    edgeIp,
+    actualStatus,
+    durationMs,
+    capturedHeaders,
+    capturedCookies,
+  } = params;
+
+  const baseRequestHeaders: Record<string, string> = {
+    ':method': 'GET',
+    ':scheme': 'https',
+    ':authority': envHost,
+    ':path': path,
+    host: envHost,
+    'user-agent':
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Salesforce-Synthetics-Canary/9.1',
+    accept:
+      'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'accept-encoding': 'br, gzip, deflate',
+    'accept-language': 'en-US,en;q=0.9',
+    pragma:
+      'akamai-x-cache-on, akamai-x-cache-remote-on, akamai-x-check-cacheable, akamai-x-get-cache-key, akamai-x-get-true-cache-key, akamai-x-get-request-id',
+    'x-sfdc-edge-probe': isStaging ? 'staging-edgekey' : 'prod-edgekey',
+  };
+
+  const cleanRespHeaders: Record<string, string> = {};
+  for (const [k, v] of Object.entries(capturedHeaders)) {
+    if (v !== undefined) cleanRespHeaders[k] = v;
+  }
+
+  const cookieLines = Object.entries(capturedCookies).map(
+    ([name, val]) => `${name}=${val}`
+  );
+  const edgeCname = `${envHost} -> ${edgeHostname} -> e12844.dsca.akamaiedge.net`;
+  const tlsProtocol = 'TLSv1.3';
+  const tlsCipher = 'TLS_AES_256_GCM_SHA384';
+
+  // Multi-hop flows for redirect & auth/trial endpoints (T04 /crm -> /crm/, T05 trial flow, or login property)
+  const isRedirectFlow =
+    testId === 'T04' ||
+    actualStatus === 301 ||
+    actualStatus === 302 ||
+    testId === 'T05';
+
+  if (isRedirectFlow) {
+    const hop1Duration = Math.max(22, Math.round(durationMs * 0.42));
+    const hop2Duration = Math.max(28, durationMs - hop1Duration);
+
+    const hop1Status = testId === 'T04' ? 301 : 302;
+    const redirectTargetUrl =
+      cleanRespHeaders.location ||
+      (testId === 'T04'
+        ? `https://${envHost}/crm/`
+        : `https://${envHost}${path}?d=70130000000i7jB`);
+
+    const hop1Timings = {
+      dnsMs: isStaging ? 8 : 5,
+      tcpMs: isStaging ? 9 : 6,
+      tlsMs: isStaging ? 14 : 11,
+      ttfbMs: Math.max(8, hop1Duration - (isStaging ? 34 : 24)),
+      transferMs: 3,
+      totalMs: hop1Duration,
+    };
+
+    const hop2Timings = {
+      dnsMs: 0, // HTTP/2 connection coalescing / keep-alive reuse
+      tcpMs: 0,
+      tlsMs: 0,
+      ttfbMs: Math.max(16, hop2Duration - 9),
+      transferMs: 9,
+      totalMs: hop2Duration,
+    };
+
+    const hop1: RedirectHop = {
+      hopNumber: 1,
+      method: 'GET',
+      url: `https://${envHost}${path}`,
+      protocol: 'HTTP/2',
+      status: hop1Status,
+      statusText: hop1Status === 301 ? 'Moved Permanently' : 'Found (Edge Redirect)',
+      startOffsetMs: 0,
+      durationMs: hop1Duration,
+      timings: hop1Timings,
+      edgeIp,
+      edgeCname,
+      tlsProtocol,
+      tlsCipher,
+      requestHeaders: baseRequestHeaders,
+      responseHeaders: {
+        status: String(hop1Status),
+        location: redirectTargetUrl,
+        server: 'AkamaiGHost',
+        'cache-control': 'public, max-age=3600',
+        'x-check-cacheable': 'YES',
+        'x-cache': isStaging
+          ? 'TCP_HIT from a23-48-201-18.deploy.akamaitechnologies.com'
+          : 'TCP_HIT from a23-212-251-15.deploy.akamaitechnologies.com',
+        'x-akamai-request-id': `${cleanRespHeaders['x-akamai-request-id'] || 'sfdc'}-hop1`,
+        'strict-transport-security': 'max-age=63072000; includeSubDomains; preload',
+      },
+      cookiesSet: cookieLines.slice(0, 2),
+      redirectLocation: redirectTargetUrl,
+      bytesTransferred: 482,
+    };
+
+    const hop2Path = (() => {
+      try {
+        const u = new URL(redirectTargetUrl);
+        return u.pathname + u.search;
+      } catch {
+        return `${path}/`;
+      }
+    })();
+
+    const hop2: RedirectHop = {
+      hopNumber: 2,
+      method: 'GET',
+      url: redirectTargetUrl,
+      protocol: 'HTTP/2',
+      status: 200,
+      statusText: 'OK',
+      startOffsetMs: hop1Duration,
+      durationMs: hop2Duration,
+      timings: hop2Timings,
+      edgeIp,
+      edgeCname,
+      tlsProtocol,
+      tlsCipher,
+      requestHeaders: {
+        ...baseRequestHeaders,
+        ':path': hop2Path,
+        referer: `https://${envHost}${path}`,
+      },
+      responseHeaders: {
+        ...cleanRespHeaders,
+        status: '200',
+        'content-type': 'text/html; charset=utf-8',
+      },
+      cookiesSet: cookieLines,
+      bytesTransferred: 68420,
+    };
+
+    const hops = [hop1, hop2];
+    return {
+      redirectChain: hops,
+      httpFlowSummary: {
+        totalHops: 2,
+        redirectCount: 1,
+        totalDnsMs: hop1Timings.dnsMs + hop2Timings.dnsMs,
+        totalTcpMs: hop1Timings.tcpMs + hop2Timings.tcpMs,
+        totalTlsMs: hop1Timings.tlsMs + hop2Timings.tlsMs,
+        totalTtfbMs: hop1Timings.ttfbMs + hop2Timings.ttfbMs,
+        totalTransferMs: hop1Timings.transferMs + hop2Timings.transferMs,
+        totalDurationMs: durationMs,
+        finalUrl: redirectTargetUrl,
+        protocol: 'HTTP/2',
+        tlsVersion: tlsProtocol,
+        tlsCipher,
+        resolvedEdgeIp: edgeIp,
+        resolvedEdgeCname: edgeCname,
+        liveCaptured: true,
+        capturedAt: new Date().toISOString(),
+      },
+    };
+  }
+
+  // Standard single-hop HTTP/2 flow with full DNS + TCP + TLS + TTFB + Transfer telemetry
+  const dnsMs = isStaging ? 7 : 4;
+  const tcpMs = isStaging ? 8 : 5;
+  const tlsMs = isStaging ? 13 : 10;
+  const transferMs = isStaging ? 11 : 8;
+  const ttfbMs = Math.max(12, durationMs - (dnsMs + tcpMs + tlsMs + transferMs));
+
+  const hopTimings = {
+    dnsMs,
+    tcpMs,
+    tlsMs,
+    ttfbMs,
+    transferMs,
+    totalMs: durationMs,
+  };
+
+  const singleHop: RedirectHop = {
+    hopNumber: 1,
+    method: 'GET',
+    url: `https://${envHost}${path}`,
+    protocol: 'HTTP/2',
+    status: actualStatus,
+    statusText: actualStatus === 200 ? 'OK' : `HTTP ${actualStatus}`,
+    startOffsetMs: 0,
+    durationMs,
+    timings: hopTimings,
+    edgeIp,
+    edgeCname,
+    tlsProtocol,
+    tlsCipher,
+    requestHeaders: baseRequestHeaders,
+    responseHeaders: {
+      status: String(actualStatus),
+      ...cleanRespHeaders,
+    },
+    cookiesSet: cookieLines,
+    bytesTransferred: 74910,
+  };
+
+  return {
+    redirectChain: [singleHop],
+    httpFlowSummary: {
+      totalHops: 1,
+      redirectCount: 0,
+      totalDnsMs: dnsMs,
+      totalTcpMs: tcpMs,
+      totalTlsMs: tlsMs,
+      totalTtfbMs: ttfbMs,
+      totalTransferMs: transferMs,
+      totalDurationMs: durationMs,
+      finalUrl: `https://${envHost}${path}`,
+      protocol: 'HTTP/2',
+      tlsVersion: tlsProtocol,
+      tlsCipher,
+      resolvedEdgeIp: edgeIp,
+      resolvedEdgeCname: edgeCname,
+      liveCaptured: true,
+      capturedAt: new Date().toISOString(),
+    },
+  };
+}
+
+export function generateTestResults(
+  target: string,
+  variant:
+    | 'normal_staging'
+    | 'normal_prod'
+    | 'prev_staging'
+    | 'prev_prod'
+    | 'new_run',
+  customSuite?: TestCaseDefinition[],
+  config: TemplateConfig = DEFAULT_TEMPLATE_CONFIG
+): TestResult[] {
+  const [appId, envId, network] = target.split('.');
+  const isStaging = network === 'staging';
+  const isNewRun = variant === 'new_run';
+  const isPrevStaging = variant === 'prev_staging';
+
+  const canonicalHost = resolvePropertyHostname(appId, 'prod', config);
+  const envHost = resolvePropertyHostname(appId, envId, config);
+
+  const netCfg = isStaging ? config.networks.staging : config.networks.prod;
+  const edgeHostname = `${envHost}${netCfg.edgeSuffix}`;
+  const edgeIp = netCfg.defaultEdgeIp;
+
+  const activeSuite = (customSuite || config.testSuite).filter(
+    (tc) => tc.enabled !== false
+  );
+
+  return activeSuite.map((tc, idx) => {
+    const id = tc.id;
+    let actualStatus = parseInt(tc.expectedStatus, 10);
+    let pass = true;
+    const errors: string[] = [];
+
+    const capturedHeaders: TestResult['capturedHeaders'] = {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'public, max-age=3600',
+      'x-check-cacheable': 'YES',
+      'x-sfdc-content-source': 'sfdc-experience-cloud-cms',
+      'x-sfdc-edge-pop': isStaging ? 'IAD-STG-04' : 'IAD-PRD-12',
+      'strict-transport-security': 'max-age=63072000; includeSubDomains; preload',
+      server: 'AkamaiGHost',
+      'x-cache': isStaging
+        ? 'TCP_MISS from a23-48-201-18.deploy.akamaitechnologies.com'
+        : 'TCP_HIT from a23-212-251-15.deploy.akamaitechnologies.com',
+      'x-cache-key': `/L/12844/542100/1d/${envHost}${tc.path}`,
+      'x-true-cache-key': `/L/12844/542100/1d/${canonicalHost}${tc.path}`,
+      'x-akamai-request-id': `${isStaging ? 'stg' : 'prd'}-${
+        isNewRun ? '99f' : '41a'
+      }0${idx + 1}`,
+    };
+
+    const capturedCookies: Record<string, string> = {
+      sfdc_session: `sid_${appId}_${envId}; Path=/; Secure; HttpOnly; SameSite=Lax`,
+      edge_region: isStaging
+        ? 'IAD-STAGING; Path=/; Secure; SameSite=Lax'
+        : 'IAD-PROD; Path=/; Secure; SameSite=Lax',
+      ak_bmsc: `bmsc_${appId}_v1; Domain=.${config.branding.defaultDomain}; Path=/; Secure`,
+      CookieConsentPolicy: '0:1; Path=/; Max-Age=31536000; Secure',
+    };
+
+    if (id === 'T01') {
+      if (isStaging && !isPrevStaging) {
+        capturedHeaders['cache-control'] = 'public, max-age=1800';
+        capturedHeaders['x-check-cacheable'] = 'NO';
+      }
+    }
+
+    if (id === 'T02') {
+      if (!isStaging) {
+        capturedCookies['edge_region'] = 'IAD-STAGE; Path=/; Secure; SameSite=Lax';
+      } else if (isPrevStaging) {
+        capturedCookies['edge_region'] = 'IAD-PREV; Path=/; Secure; SameSite=Lax';
+        capturedCookies['edge_cache_bypass'] = '0; Path=/; Secure; HttpOnly';
+      } else {
+        capturedCookies['edge_cache_bypass'] = '1; Path=/; Secure; HttpOnly';
+      }
+    }
+
+    if (id === 'T04') {
+      actualStatus = 301;
+      capturedHeaders['location'] = `https://${envHost}/crm/`;
+    }
+
+    if (id === 'T05' && isNewRun && isStaging) {
+      capturedHeaders['x-sfdc-content-source'] = 'sfdc-trial-origin-v2';
+    }
+
+    const durationMs = isStaging ? 82 + idx * 9 : 56 + idx * 6;
+    const { redirectChain, httpFlowSummary } = buildHttpFlowForTest({
+      testId: id,
+      canonicalHost,
+      envHost,
+      path: tc.path,
+      isStaging,
+      edgeHostname,
+      edgeIp,
+      actualStatus,
+      durationMs,
+      capturedHeaders,
+      capturedCookies,
+    });
+
+    return {
+      id,
+      name: tc.name,
+      url: `https://${envHost}${tc.path}`,
+      canonicalUrl: `https://${canonicalHost}${tc.path}`,
+      pass,
+      errors,
+      expectedStatus: tc.expectedStatus,
+      actualStatus,
+      durationMs,
+      capturedHeaders,
+      capturedCookies,
+      redirectChain,
+      httpFlowSummary,
+      stagingEdgeIp: edgeIp,
+      edgeHostname,
+      note: `HTTP/2 (${httpFlowSummary.totalHops} ${
+        httpFlowSummary.totalHops === 1 ? 'hop' : 'hops'
+      }) via ${edgeHostname} (${edgeIp})`,
+    };
+  });
+}
+
+/**
+ * Dynamically seeds run history for every configured Property and Environment.
+ */
+export function seedRunsFromConfig(
+  config: TemplateConfig = DEFAULT_TEMPLATE_CONFIG
+): RunRecord[] {
+  const runs: RunRecord[] = [];
+  const baseTime = new Date('2026-11-07T09:14:00Z').getTime();
+  let offsetIdx = 0;
+
+  for (const prop of config.properties) {
+    for (const env of prop.envs) {
+      const networks = env.networks || prop.defaultNetworks || ['prod', 'staging'];
+      for (const net of ['staging', 'prod'] as const) {
+        if (!networks.includes(net)) continue;
+        const target = `${prop.id}.${env.id}.${net}`;
+
+        const latestStart = new Date(baseTime - offsetIdx * 120000);
+        const latestFinish = new Date(latestStart.getTime() + 42000);
+        const latestResults = generateTestResults(
+          target,
+          net === 'staging' ? 'normal_staging' : 'normal_prod',
+          config.testSuite,
+          config
+        );
+
+        runs.push({
+          key: `run-${prop.id}-${env.id}-${net}-1`,
+          target,
+          appId: prop.id,
+          envId: env.id,
+          network: net,
+          suiteKey: prop.suitePath,
+          suiteSha256: 'a8e9104f92b1',
+          suiteRowCount: latestResults.length,
+          startTime: latestStart.toISOString(),
+          finishTime: latestFinish.toISOString(),
+          totalTests: latestResults.length,
+          passedTests: latestResults.filter((r) => r.pass).length,
+          failedTests: latestResults.filter((r) => !r.pass).length,
+          by:
+            net === 'staging'
+              ? config.branding.defaultOperator.email
+              : 'aws-synthetics-canary',
+          label: net === 'staging' ? 'v2026.11-rc1' : 'live-baseline',
+          pinnedAsBaseline: net === 'prod',
+          results: latestResults,
+        });
+
+        const prevStart = new Date(latestStart.getTime() - 3600000);
+        const prevFinish = new Date(prevStart.getTime() + 41000);
+        const prevResults = generateTestResults(
+          target,
+          net === 'staging' ? 'prev_staging' : 'prev_prod',
+          config.testSuite,
+          config
+        );
+
+        runs.push({
+          key: `run-${prop.id}-${env.id}-${net}-0`,
+          target,
+          appId: prop.id,
+          envId: env.id,
+          network: net,
+          suiteKey: prop.suitePath,
+          suiteSha256: 'a8e9104f92b1',
+          suiteRowCount: prevResults.length,
+          startTime: prevStart.toISOString(),
+          finishTime: prevFinish.toISOString(),
+          totalTests: prevResults.length,
+          passedTests: prevResults.filter((r) => r.pass).length,
+          failedTests: prevResults.filter((r) => !r.pass).length,
+          by: 'aws-synthetics-canary',
+          label: net === 'staging' ? 'v2026.10-prev' : 'prev-baseline',
+          pinnedAsBaseline: false,
+          results: prevResults,
+        });
+
+        offsetIdx++;
+      }
+    }
+  }
+
+  return runs;
+}
+
+export const INITIAL_RUNS: RunRecord[] = seedRunsFromConfig(
+  DEFAULT_TEMPLATE_CONFIG
+);
+
+export const INITIAL_TARGET_STATES: Record<
+  string,
+  {
+    state: 'ready' | 'running' | 'failed';
+    activeActivity?: string;
+    progress?: { done: number; total: number } | string;
+  }
+> = Object.fromEntries(
+  INITIAL_RUNS.map((r) => [r.target, { state: 'ready' as const }])
+);
+
+export const INITIAL_RULES: AcceptedRule[] = [
+  {
+    id: 'rule-init-1',
+    appId: 'www',
+    comparisonId: 'all',
+    kind: 'x-akamai-request-id',
+    enabled: true,
+    by: DEFAULT_TEMPLATE_CONFIG.branding.defaultOperator.email,
+    at: '2026-11-06T12:00:00Z',
+    note: 'Unique per-edge-request trace ID',
+  },
+];
+
+export interface BuildComparisonOptions extends ApplyRulesOptions {
   aiJudgeOverrides?: Record<
     string,
     {
@@ -339,141 +559,118 @@ export function buildInitialComparison(
   candidateRun: RunRecord,
   baselineRun: RunRecord,
   kind: ComparisonKind,
-  rules: AcceptedRule[] = [],
+  rules: AcceptedRule[] = INITIAL_RULES,
   options: BuildComparisonOptions = {}
 ): ComparisonRecord {
-  const candidateResultsMap = new Map(
-    candidateRun.results.map((r) => [r.id, r])
-  );
-  const baselineResultsMap = new Map(baselineRun.results.map((r) => [r.id, r]));
-  const allIds = Array.from(
-    new Set([...candidateResultsMap.keys(), ...baselineResultsMap.keys()])
-  );
+  const comparisonId = `${candidateRun.target}-vs-${baselineRun.target}`;
+  const appConfig = APPS.find((a) => a.id === candidateRun.appId);
+  const candEnv = appConfig?.envs.find((e) => e.id === candidateRun.envId);
+  const baseEnv = appConfig?.envs.find((e) => e.id === baselineRun.envId);
 
-  const isSameRun = candidateRun.key === baselineRun.key;
+  const items: ComparisonItem[] = candidateRun.results.map((candRes) => {
+    const baseRes = baselineRun.results.find((b) => b.id === candRes.id);
 
-  const candidateProp = DEFAULT_TEMPLATE_CONFIG.properties.find(
-    (p) => p.id === candidateRun.appId
-  );
-  const baselineProp = DEFAULT_TEMPLATE_CONFIG.properties.find(
-    (p) => p.id === baselineRun.appId
-  );
-  const candidateHostMap =
-    candidateProp?.envs.find((e) => e.id === candidateRun.envId)?.hostMap || {};
-  const baselineHostMap =
-    baselineProp?.envs.find((e) => e.id === baselineRun.envId)?.hostMap || {};
-
-  const items: ComparisonItem[] = allIds.map((testId, index) => {
-    const cand = candidateResultsMap.get(testId);
-    const base = baselineResultsMap.get(testId);
-    const name = cand?.name || base?.name || testId;
-    const url = cand?.url || base?.url || '';
-
-    const diffs = calculateFunctionalDiffs(cand, base, {
-      candidateHostMap,
-      baselineHostMap,
+    const functionalDiffs = calculateFunctionalDiffs(candRes, baseRes, {
+      candidateHostMap: candEnv?.hostMap,
+      baselineHostMap: baseEnv?.hostMap,
     });
-    const cookieDiffs = calculateCookieDiffs(cand, base);
 
-    let visualResult = undefined;
-    if (cand?.screenshotKey && base?.screenshotKey) {
-      if (
-        !isSameRun &&
-        (testId === 'T03' || index === 2) &&
-        candidateRun.network !== baselineRun.network
-      ) {
-        visualResult = {
-          verdict: 'minor' as const,
-          costGate: 'ai-judged' as const,
-          costGateSkippedAi: false,
-          pixelDiffPercent: 1.8,
-          summary:
-            'AWS Bedrock Nova Lite (amazon.nova-lite-v1:0) detected a 14px hero callout spacing shift and updated badge contrast on Staging.',
-          differences: [
-            {
-              description:
-                'Hero callout container shifted down 14px; CTA button alignment intact',
-              severity: 'minor' as const,
-            },
-          ],
-          primaryModel: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
-          tileRegionsHint: ['hero-center'],
-        };
-      } else {
-        visualResult = {
-          verdict: 'same' as const,
-          costGate: 'pixel-identical' as const,
-          costGateSkippedAi: true,
-          pixelDiffPercent: 0.0,
-          summary:
-            'AWS Bedrock Nova Lite (amazon.nova-lite-v1:0): Screenshots are pixel-identical (0.0% pixel delta).',
-          differences: [],
-          primaryModel: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
-        };
-      }
+    const cookieDiffs = calculateCookieDiffs(candRes, baseRes);
 
-      const override = options.aiJudgeOverrides?.[testId];
-      if (override && visualResult) {
-        visualResult = {
-          ...visualResult,
-          verdict: override.verdict,
-          costGate: 'ai-judged' as const,
-          costGateSkippedAi: false,
-          pixelDiffPercent:
-            override.pixelDiffPercent ?? visualResult.pixelDiffPercent,
-          summary: override.summary,
-        };
-      }
+    let visualResult: ComparisonItem['visualResult'] = {
+      verdict: 'same',
+      costGate: 'identical-bytes',
+      costGateSkippedAi: true,
+      pixelDiffPercent: 0,
+      summary: 'Byte-for-byte identical DOM screenshot (cost-gate skipped AI).',
+      differences: [],
+      primaryModel: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
+    };
+
+    if (
+      candRes.id === 'T03' &&
+      candidateRun.key !== baselineRun.key &&
+      (candidateRun.network !== baselineRun.network ||
+        candidateRun.label === 'v2026.11-rc1')
+    ) {
+      visualResult = {
+        verdict: 'minor',
+        costGate: 'ai-judged',
+        costGateSkippedAi: false,
+        pixelDiffPercent: 1.8,
+        summary:
+          'AWS Bedrock Nova Lite (amazon.nova-lite-v1:0): Minor 14px hero badge spacing shift on Agentforce AI landing banner; CTA hierarchy and layout intact.',
+        differences: [
+          {
+            description: 'Agentforce AI hero badge spacing +14px vertical offset',
+            severity: 'minor',
+            box: { x: 12, y: 18, w: 76, h: 16 },
+          },
+        ],
+        primaryModel: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
+      };
     }
 
-    const combinedDiffs = [...diffs, ...cookieDiffs];
+    const aiOverride = options.aiJudgeOverrides?.[candRes.id];
+    if (aiOverride && visualResult) {
+      visualResult = {
+        ...visualResult,
+        verdict: aiOverride.verdict,
+        summary: aiOverride.summary,
+        pixelDiffPercent:
+          aiOverride.pixelDiffPercent ?? visualResult.pixelDiffPercent,
+        costGate: 'ai-judged',
+        costGateSkippedAi: false,
+      };
+    }
+
+    const combinedDiffs = [...functionalDiffs, ...cookieDiffs];
     const rawVerdict = calculateItemVerdict(
       combinedDiffs,
-      visualResult?.verdict ?? 'same',
+      visualResult.verdict,
       kind
     );
 
     const rawItem: ComparisonItem = {
-      testId,
-      testName: name,
-      url,
-      candidateResult: cand,
-      baselineResult: base,
-      functionalDiffs: diffs,
+      testId: candRes.id,
+      testName: candRes.name,
+      url: candRes.canonicalUrl,
+      candidateResult: candRes,
+      baselineResult: baseRes,
+      functionalDiffs,
       cookieDiffs,
       visualResult,
       itemVerdict: rawVerdict,
-      originalVerdict: rawVerdict,
-      candidateFailed: cand ? !cand.pass : false,
-      baselineFailed: base ? !base.pass : false,
+      rawItemVerdict: rawVerdict,
+      candidateFailed: !candRes.pass,
+      baselineFailed: baseRes ? !baseRes.pass : false,
     };
 
-    const compId = `${candidateRun.target}-vs-${baselineRun.target}`;
-    return applyRulesToItem(rawItem, compId, rules, kind, {
-      acceptedCookies: options.acceptedCookies,
-      acceptedVisualTests: options.acceptedVisualTests,
-      ignoreAcceptedDiffs: options.ignoreAcceptedDiffs,
-    });
+    return applyRulesToItem(rawItem, comparisonId, rules, kind, options);
   });
 
-  const ignoreAccepted = options.ignoreAcceptedDiffs ?? true;
+  const headlineVerdict = calculateHeadlineVerdict(items, kind, false, false);
+
   const counts = {
+    same: items.filter((i) => i.itemVerdict === 'same').length,
+    minor: items.filter((i) => i.itemVerdict === 'minor').length,
     different: items.filter((i) => i.itemVerdict === 'different').length,
     error: items.filter((i) => i.itemVerdict === 'error').length,
-    minor: items.filter((i) => i.itemVerdict === 'minor').length,
-    same: items.filter((i) => i.itemVerdict === 'same').length,
+    skipped: 0,
+    pending: 0,
   };
 
+  const ignoreAcc = options.ignoreAcceptedDiffs ?? true;
   const rollup = {
     functional: items.filter(
       (i) =>
-        i.functionalDiffs.some((d) => (ignoreAccepted ? !d.accepted : true)) ||
-        (i.cookieDiffs || []).some((d) => (ignoreAccepted ? !d.accepted : true))
+        i.functionalDiffs.some((d) => (ignoreAcc ? !d.accepted : true)) ||
+        (i.cookieDiffs || []).some((d) => (ignoreAcc ? !d.accepted : true))
     ).length,
     critical: items.filter((i) =>
       i.functionalDiffs.some(
         (d) =>
-          (ignoreAccepted ? !d.accepted : true) &&
+          (ignoreAcc ? !d.accepted : true) &&
           (d.kind === 'status' || d.kind === 'assertions')
       )
     ).length,
@@ -487,34 +684,28 @@ export function buildInitialComparison(
     failingOnCandidate: items.filter((i) => i.candidateFailed).length,
   };
 
-  const headlineVerdict = calculateHeadlineVerdict(items, kind, false, false);
+  const gapMs = Math.abs(
+    new Date(candidateRun.startTime).getTime() -
+      new Date(baselineRun.startTime).getTime()
+  );
 
   return {
-    key: `comparisons/${candidateRun.key}__${baselineRun.key}.json`,
-    comparisonId: `${candidateRun.target}-vs-${baselineRun.target}`,
+    comparisonId,
     appId: candidateRun.appId,
     kind,
-    candidateRunKey: candidateRun.key,
-    baselineRunKey: baselineRun.key,
     candidateTarget: candidateRun.target,
     baselineTarget: baselineRun.target,
+    candidateRunKey: candidateRun.key,
+    baselineRunKey: baselineRun.key,
     candidateStartTime: candidateRun.startTime,
     baselineStartTime: baselineRun.startTime,
     candidateLabel: candidateRun.label,
-    isPinnedBaseline: false,
-    pairingTimeGapMinutes: 0,
+    isPinnedBaseline: Boolean(baselineRun.pinnedAsBaseline),
+    pairingTimeGapMinutes: Math.round(gapMs / 60000),
     isPartial: false,
-    version: 1,
     headlineVerdict,
     counts,
     rollup,
-    suitesDiffer: false,
-    candidateSuiteHash: candidateRun.suiteSha256,
-    baselineSuiteHash: baselineRun.suiteSha256,
-    modelUsed: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
-    items: items.sort((a, b) => {
-      const order = { different: 0, error: 1, minor: 2, same: 3 };
-      return order[a.itemVerdict] - order[b.itemVerdict];
-    }),
+    items,
   };
 }

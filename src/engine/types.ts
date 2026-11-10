@@ -1,106 +1,84 @@
-/**
- * Akamai Synthetic Release Gate - Domain Types & Data Contracts
- * Reflects PRD (synthetics-tests) specification
- */
-
-export type Network = 'prod' | 'staging';
-
-export type ComparisonKind = 'network' | 'env' | 'adhoc';
-
-export type OverallVerdict = 'GO' | 'REVIEW' | 'NO-GO' | 'PARTIAL' | 'COMPARING' | 'NONE';
-
-export type ItemVerdict = 'different' | 'error' | 'minor' | 'same';
-
+export type OverallVerdict = 'GO' | 'REVIEW' | 'NO-GO' | 'COMPARING' | 'PARTIAL' | 'NONE';
+export type ItemVerdict = 'same' | 'minor' | 'different' | 'error';
 export type VisualVerdict = 'same' | 'minor' | 'different' | 'error';
+export type ComparisonKind = 'network' | 'env' | 'adhoc';
+export type TargetState = 'ready' | 'running' | 'failed';
 
-export type UserRole = 'viewer' | 'operator' | 'admin' | 'owner';
-
-export type TargetState = 'ready' | 'starting' | 'running' | 'stopping' | 'crashed';
-
-export type TestClass = 'stable' | 'failing in all' | 'regressed' | 'flaky' | 'n/N failed';
+export type TestClass =
+  | 'stable'
+  | 'failing in all'
+  | 'regressed'
+  | 'flaky'
+  | 'n/N failed';
 
 export interface HostMap {
-  [canonicalHost: string]: string; // e.g. "www.salesforce.com" -> "www-uat1.salesforce.com"
+  [canonicalHost: string]: string;
 }
 
-export interface EnvConfig {
+export interface EnvironmentConfig {
   id: string;
   name: string;
   hostMap: HostMap;
-  headers?: Record<string, string>;
-  networks?: Network[]; // defaults to ['prod', 'staging']
-  runSchedule?: string;
-  comparisonSchedule?: string;
-}
-
-export interface EnvComparisonConfig {
-  candidateEnv: string;
-  baselineEnv: string;
-  network?: Network; // defaults to 'prod'
-  schedule?: string;
+  networks?: ('staging' | 'prod')[];
+  pinnedBaselineRunKey?: string;
 }
 
 export interface AppConfig {
-  id: string; // ^[a-z][a-z0-9-]{0,11}$
-  name: string;
-  suitePath: string;
-  defaultNetworks?: Network[];
-  headers?: Record<string, string>;
-  envs: EnvConfig[];
-  compareEnvs?: EnvComparisonConfig[];
-}
-
-export interface TargetTopology {
-  targetId: string; // <app>.<env>.<network>
-  appId: string;
-  envId: string;
-  network: Network;
-  runnerName: string; // prefix-app-env-p|s (<= 21 chars)
-}
-
-export interface ComparisonTopology {
-  comparisonId: string; // <app>.<env>.staging-vs-prod or <app>.<cand>-vs-<base>.<net>
-  appId: string;
-  kind: ComparisonKind;
-  candidateTarget: string;
-  baselineTarget: string;
-  name: string;
-}
-
-export interface Topology {
-  versionHash: string;
-  apps: AppConfig[];
-  targets: TargetTopology[];
-  comparisons: ComparisonTopology[];
-  headerNames: string[];
-}
-
-export interface SuiteRow {
   id: string;
   name: string;
-  url: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'HEAD';
-  body?: string;
-  requestHeaders?: string;
-  expectedStatus: string; // e.g. "200" or "301,302"
-  expectedHeaders?: string;
-  bodyContains?: string;
-  runOn?: string; // all, bare prod, staging, net:x, env:y, uat.staging
-  screenshot: 'yes' | 'no';
-  screenshotDelay?: number;
-  screenshotWaitFor?: string;
-  enabled: boolean;
+  suitePath: string;
+  defaultNetworks: ('staging' | 'prod')[];
+  envs: EnvironmentConfig[];
+  headers?: Record<string, string>;
+}
+
+export interface HttpHopTimings {
+  dnsMs: number;
+  tcpMs: number;
+  tlsMs: number;
+  ttfbMs: number;
+  transferMs: number;
+  totalMs: number;
 }
 
 export interface RedirectHop {
+  hopNumber?: number;
   method: string;
   url: string;
+  protocol?: string;
   status: number;
+  statusText?: string;
   startOffsetMs: number;
   durationMs: number;
-  edgeIp: string;
-  cacheHeader?: string;
-  location?: string;
+  timings?: HttpHopTimings;
+  edgeIp?: string;
+  edgeCname?: string;
+  tlsProtocol?: string;
+  tlsCipher?: string;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
+  cookiesSet?: string[];
+  redirectLocation?: string;
+  bytesTransferred?: number;
+}
+
+export interface HttpFlowSummary {
+  totalHops: number;
+  redirectCount: number;
+  totalDnsMs: number;
+  totalTcpMs: number;
+  totalTlsMs: number;
+  totalTtfbMs: number;
+  totalTransferMs: number;
+  totalDurationMs: number;
+  finalUrl: string;
+  protocol: string;
+  tlsVersion: string;
+  tlsCipher?: string;
+  resolvedEdgeIp?: string;
+  resolvedEdgeCname?: string;
+  liveCaptured?: boolean;
+  capturedAt?: string;
 }
 
 export interface TestResult {
@@ -109,75 +87,89 @@ export interface TestResult {
   url: string;
   canonicalUrl: string;
   pass: boolean;
-  acceptedPass?: boolean;
+  acceptedPass?: boolean; // After applying accepted rules
   errors: string[];
   expectedStatus: string;
   actualStatus: number;
   durationMs: number;
-  capturedHeaders: Record<string, string>;
+  capturedHeaders: {
+    location?: string;
+    'content-type'?: string;
+    'cache-control'?: string;
+    'x-check-cacheable'?: string;
+    'x-sfdc-content-source'?: string;
+    'x-cache'?: string;
+    'x-cache-key'?: string;
+    'x-true-cache-key'?: string;
+    'x-akamai-request-id'?: string;
+    [key: string]: string | undefined;
+  };
   capturedCookies?: Record<string, string>;
   redirectChain: RedirectHop[];
+  httpFlowSummary?: HttpFlowSummary;
+  screenshotUrl?: string;
   stagingEdgeIp?: string;
   edgeHostname?: string;
-  fallbackDns?: boolean;
   note?: string;
-  screenshotKey?: string;
-  screenshotUrl?: string;
-  screenshotError?: string;
-  loadingFlag?: 'ready' | 'still loading';
 }
 
 export interface RunRecord {
-  key: string; // results/<app>/<env>/<network>/<ts>.json
-  target: string;
+  key: string;
+  target: string; // e.g. "www.prod.staging"
   appId: string;
   envId: string;
-  network: Network;
+  network: 'staging' | 'prod';
   suiteKey: string;
   suiteSha256: string;
   suiteRowCount: number;
   startTime: string;
-  finishTime: string;
+  finishTime?: string;
   totalTests: number;
   passedTests: number;
   failedTests: number;
-  subset?: string[]; // test IDs if subset run
-  by: string; // user name or "schedule"
-  label?: string; // e.g. "CHG-1234"
-  pinnedBaselineKey?: string;
+  by: string;
+  label?: string;
+  pinnedAsBaseline?: boolean;
   results: TestResult[];
 }
 
+export type DifferenceKind =
+  | 'status'
+  | 'assertions'
+  | 'only_ran_on'
+  | 'header'
+  | 'cookie'
+  | 'visual';
+
 export interface DifferenceItem {
-  kind: 'status' | 'header' | 'cookie' | 'assertions' | 'only_ran_on' | 'visual';
-  field?: string;
+  kind: DifferenceKind;
+  field?: string; // e.g., "x-check-cacheable", "location", "cache-control", "content-type"
   candidateValue: string;
   baselineValue: string;
-  severity: 'minor' | 'major';
-  isHostNormalizedMatch?: boolean;
+  severity: 'critical' | 'major' | 'minor';
   accepted?: boolean;
   acceptedRuleId?: string;
+  isHostNormalizedMatch?: boolean;
 }
 
-export interface VisualJudgeDifference {
+export interface VisualDifferenceRegion {
   description: string;
-  severity: 'minor' | 'major';
+  severity: 'major' | 'minor';
+  box?: { x: number; y: number; w: number; h: number }; // percentage 0-100
   accepted?: boolean;
-  ruleTag?: string;
 }
 
 export interface VisualJudgeResult {
   verdict: VisualVerdict;
-  costGate: 'pixel-identical' | 'visually-identical (<0.1%)' | 'ai-judged' | 'error';
+  costGate: 'identical-bytes' | 'pixel-gate-passed' | 'ai-judged';
   costGateSkippedAi: boolean;
   pixelDiffPercent?: number;
   summary: string;
-  differences: VisualJudgeDifference[];
+  differences: VisualDifferenceRegion[];
   primaryModel: string;
-  verificationModel?: string;
-  secondOpinionChecked?: boolean;
-  firstOpinionVerdict?: VisualVerdict;
-  tileRegionsHint?: string[];
+  shadowModel?: string;
+  shadowVerdict?: VisualVerdict;
+  shadowAgreed?: boolean;
   acceptedRulesAppliedCount?: number;
 }
 
@@ -190,38 +182,46 @@ export interface ComparisonItem {
   functionalDiffs: DifferenceItem[];
   cookieDiffs?: DifferenceItem[];
   visualResult?: VisualJudgeResult;
-  itemVerdict: ItemVerdict;
-  originalVerdict?: ItemVerdict;
-  isOnlyOnOneSide?: 'candidate_only' | 'baseline_only';
+  itemVerdict: ItemVerdict; // Recomputed dynamically after applying accepted rules
+  rawItemVerdict?: ItemVerdict; // Before rules
   candidateFailed?: boolean;
   baselineFailed?: boolean;
 }
 
+export interface AcceptedRule {
+  id: string;
+  appId: string;
+  comparisonId: string; // specific comparison ID or "all"
+  testId?: string; // specific test ID or undefined for all tests
+  kind: string; // e.g. "x-check-cacheable", "cache-control", "status", "visual: cookie banner"
+  enabled: boolean;
+  by: string;
+  at: string;
+  note?: string;
+}
+
 export interface ComparisonRecord {
-  key: string;
   comparisonId: string;
   appId: string;
   kind: ComparisonKind;
-  candidateRunKey: string;
-  baselineRunKey: string;
   candidateTarget: string;
   baselineTarget: string;
+  candidateRunKey: string;
+  baselineRunKey: string;
   candidateStartTime: string;
   baselineStartTime: string;
   candidateLabel?: string;
   isPinnedBaseline: boolean;
   pairingTimeGapMinutes: number;
   isPartial: boolean;
-  version: number;
-  versionType?: 'initial' | 'rerun' | 'rejudge';
-  versionAuthor?: string;
-  versionTime?: string;
   headlineVerdict: OverallVerdict;
   counts: {
+    same: number;
+    minor: number;
     different: number;
     error: number;
-    minor: number;
-    same: number;
+    skipped: number;
+    pending: number;
   };
   rollup: {
     functional: number;
@@ -231,50 +231,5 @@ export interface ComparisonRecord {
     error: number;
     failingOnCandidate: number;
   };
-  suitesDiffer: boolean;
-  candidateSuiteHash: string;
-  baselineSuiteHash: string;
-  modelUsed: string;
   items: ComparisonItem[];
-}
-
-export interface AcceptedRule {
-  id: string; // e.g. rule-174128...
-  appId: string;
-  comparisonId: string; // target comparison or "all"
-  kind: string; // header name like "x-check-cacheable", "status", "assertions", "visual: <desc>", "error: <msg>"
-  testId?: string; // specific test ID or undefined for all tests of the comparison
-  enabled: boolean;
-  example?: string;
-  by: string;
-  at: string;
-}
-
-export interface AuditEvent {
-  id: string;
-  time: string;
-  user: string;
-  role: UserRole;
-  action: string;
-  ok: boolean;
-  status: number;
-  scope?: {
-    appId?: string;
-    envId?: string;
-    targetId?: string;
-    comparisonId?: string;
-  };
-  detail: string;
-  clientIp: string;
-  userAgent: string;
-  outcome?: string;
-}
-
-export interface UserAccount {
-  username: string;
-  role: UserRole;
-  enabled: boolean;
-  passwordHash: string;
-  mustChangePassword?: boolean;
-  lastLoginAt?: string;
 }

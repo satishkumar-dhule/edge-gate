@@ -247,8 +247,8 @@ export function getOpenApiEndpointCatalog(
       description:
         'Creates a new operator account with PBKDF2-HMAC-SHA256 salted password hashing and records an audit event (`make user-add EMAIL=... PASSWORD=...`).',
       sampleBody: {
-        email: 'edge-sre@company.com',
-        displayName: 'Edge SRE Operator',
+        email: 'edge-sre@salesforce.com',
+        displayName: 'Salesforce Edge SRE Operator',
         role: 'operator',
         password: 'ChangeMe#2026!',
       },
@@ -262,7 +262,7 @@ export function getOpenApiEndpointCatalog(
       description:
         'Rotates a user password with a fresh 128-bit cryptographic salt and increments passwordResetCount (`make user-reset-password EMAIL=... PASSWORD=...`).',
       sampleBody: {
-        email: 'sre-lead@company.com',
+        email: 'sre-lead@salesforce.com',
         newPassword: 'NewSecurePassword#2026!',
       },
     },
@@ -798,6 +798,32 @@ resource "aws_apigatewayv2_api" "control_plane_http_api" {
 }
 
 # 9B. Amazon CloudFront Distribution (S3 SPA Origin + /api/* Scale-to-Zero Lambda Origin)
+locals {
+  spa_dist_dir = "\${path.module}/../../dist"
+  spa_dist_files = toset([
+    for f in fileset(local.spa_dist_dir, "**/*") : f
+    if !startswith(f, "assets/aistudio/")
+  ])
+  spa_mime_types = {
+    ".html" = "text/html; charset=utf-8"
+    ".js"   = "application/javascript; charset=utf-8"
+    ".css"  = "text/css; charset=utf-8"
+    ".json" = "application/json; charset=utf-8"
+    ".svg"  = "image/svg+xml"
+    ".png"  = "image/png"
+    ".ico"  = "image/x-icon"
+  }
+}
+
+resource "aws_s3_object" "portal_spa_bundle" {
+  for_each     = local.spa_dist_files
+  bucket       = aws_s3_bucket.synthetics_artifacts.id
+  key          = "portal-ui/\${each.value}"
+  source       = "\${local.spa_dist_dir}/\${each.value}"
+  etag         = filemd5("\${local.spa_dist_dir}/\${each.value}")
+  content_type = try(lookup(local.spa_mime_types, regex("\\\\.[^.]+$", each.value), "application/octet-stream"), "application/octet-stream")
+}
+
 resource "aws_cloudfront_origin_access_control" "portal_oac" {
   count                             = var.deploy_cloudfront_distribution ? 1 : 0
   name                              = "akamai-gate-s3-oac-\${var.environment}"

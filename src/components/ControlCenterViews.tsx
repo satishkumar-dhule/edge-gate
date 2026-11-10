@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AcceptedRule, AppConfig, RunRecord } from '../engine/types';
+import { buildDomScreenshotDataUri } from '../engine/domScreenshotRenderer';
 import {
   DEFAULT_TEMPLATE_CONFIG,
   TemplateConfig,
@@ -274,29 +275,42 @@ export const PageMiniThumb: React.FC<{
   hasVisualDiff?: boolean;
   isRedirect?: boolean;
   onClick?: () => void;
-}> = ({ testId, testName, url, hasVisualDiff, isRedirect, onClick }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    title={`${testId}: ${testName}\nURL: ${url}\n${
-      isRedirect
-        ? '301 Edge Redirect Check'
-        : hasVisualDiff
-        ? 'Visual AI Diff Detected (Click to inspect DOM snapshot)'
-        : 'DOM Visual Snapshot Matched'
-    }`}
-    className={`group relative w-9 h-6 rounded border overflow-hidden shrink-0 flex flex-col justify-between p-0.5 transition-transform hover:scale-105 cursor-pointer ${
-      hasVisualDiff
-        ? 'border-amber-500 bg-amber-500/10'
-        : isRedirect
-        ? 'border-sky-500/40 bg-sky-500/5'
-        : 'border-border bg-muted/40'
-    }`}
-  >
-    <div className="flex items-center justify-between gap-0.5">
-      <span className="w-2.5 h-0.5 rounded-xs bg-foreground/60" />
+}> = ({ testId, testName, url, hasVisualDiff, isRedirect, onClick }) => {
+  const thumbUri = buildDomScreenshotDataUri({
+    testId,
+    testName,
+    url,
+    side: 'A',
+    highlightDiff: hasVisualDiff,
+  });
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`${testId}: ${testName}\nURL: ${url}\n${
+        isRedirect
+          ? '301 Edge Redirect Check'
+          : hasVisualDiff
+          ? 'Visual AI Diff Detected (Click to inspect DOM snapshot)'
+          : 'DOM Visual Snapshot Matched'
+      }`}
+      className={`group relative w-11 h-7 rounded border overflow-hidden shrink-0 transition-transform hover:scale-105 cursor-pointer ${
+        hasVisualDiff
+          ? 'border-amber-500 ring-1 ring-amber-500/40'
+          : isRedirect
+          ? 'border-sky-500/50'
+          : 'border-border'
+      }`}
+    >
+      <img
+        src={thumbUri}
+        alt={`${testId} ${testName} thumbnail`}
+        data-testid={`page-mini-thumb-img-${testId}`}
+        className="w-full h-full object-cover object-top block"
+      />
       <span
-        className={`w-1.5 h-1.5 rounded-full ${
+        className={`absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full ring-1 ring-background ${
           hasVisualDiff
             ? 'bg-amber-500'
             : isRedirect
@@ -304,22 +318,9 @@ export const PageMiniThumb: React.FC<{
             : 'bg-emerald-500'
         }`}
       />
-    </div>
-    <div
-      className={`w-full h-2 rounded-[1px] ${
-        hasVisualDiff
-          ? 'bg-amber-500/30'
-          : isRedirect
-          ? 'bg-sky-500/20'
-          : 'bg-foreground/15'
-      }`}
-    />
-    <div className="flex gap-0.5">
-      <span className="w-1/2 h-0.5 bg-muted-foreground/40 rounded-xs" />
-      <span className="w-1/3 h-0.5 bg-muted-foreground/30 rounded-xs" />
-    </div>
-  </button>
-);
+    </button>
+  );
+};
 
 // ============================================================================
 // REUSABLE COMPONENT A: COMPACT NETWORK ENDPOINT CELL (STAGING / PROD)
@@ -3111,7 +3112,7 @@ export interface TestSuitesViewProps {
   onRunAndCompareTargets: (targetA: string, targetB: string) => void;
   onOpenTestInDiff: (
     testId: string,
-    explicitTab?: 'headers' | 'cookies' | 'image'
+    explicitTab?: 'flow' | 'headers' | 'cookies' | 'image'
   ) => void;
   onOpenTestInSingleRun: (testId: string, targetId: string) => void;
   onOpenDiffPair: (
@@ -3257,6 +3258,10 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
         : 'TCP_MISS';
 
       const diffInfo = liveDiffSummaryByTestId[tc.id];
+      const hopCount = latestStg?.redirectChain?.length || 1;
+      const hopSummary = (latestStg?.redirectChain || [])
+        .map((h) => `${h.method} ${h.status} (${h.durationMs}ms)`)
+        .join(' -> ');
 
       return {
         tc,
@@ -3275,6 +3280,8 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
         stgCacheStatus,
         prdCacheStatus,
         actualStatus: latestStg?.actualStatus || Number(tc.expectedStatus),
+        hopCount,
+        hopSummary,
         canonicalUrl:
           latestStg?.canonicalUrl ||
           `https://${resolvePropertyHostname(currentApp.id, firstEnv)}${tc.path}`,
@@ -3396,7 +3403,7 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
                   {totalRunsCount} Runs · {totalExecutionsCount} Checks
                 </div>
                 <div className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400">
-                  {overallPassRate}% Pass ({ stagingRuns.length} STG / {prodRuns.length} PRD)
+                  {overallPassRate}% Pass ({stagingRuns.length} STG / {prodRuns.length} PRD)
                 </div>
               </div>
               <div className="w-9 h-9 rounded-lg bg-sky-500/10 text-sky-500 flex items-center justify-center shrink-0">
@@ -3453,7 +3460,7 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
             <CardContent className="p-3 flex items-center justify-between gap-3">
               <div className="space-y-0.5 min-w-0">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  3-Dimension Gate Drift
+                  4-Dimension Gate Drift
                 </div>
                 <div className="text-lg font-bold font-mono text-foreground">
                   {testsMatchedCount} Match · {testsWithDriftCount} Drift
@@ -3469,15 +3476,15 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
           </Card>
         </div>
 
-        {/* ROW 2: CONDENSED PER-TEST TELEMETRY WITH VISUAL THUMBNAILS & HOVER TOOLTIPS */}
-        <Card className="overflow-hidden">
+        {/* ROW 2: CONDENSED PER-TEST TELEMETRY WITH HTTP FLOW HOPS & HOVER TOOLTIPS */}
+        <Card>
           <CardHeader className="py-2 px-4 border-b border-border bg-muted/20 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
             <div className="flex items-center gap-2">
               <CardTitle className="text-sm">
-                Canary Check Telemetry ({currentApp.id} · {perTestStats.length} Checks)
+                Canary Check & HTTP Flow Telemetry ({currentApp.id} · {perTestStats.length} Checks)
               </CardTitle>
               <span className="text-[11px] text-muted-foreground hidden md:inline">
-                Hover any thumbnail, cache badge, or diff icon for full telemetry details.
+                Click any HTTP Flow badge, cache badge, or diff icon to inspect full request-to-response trace.
               </span>
             </div>
             <div className="relative">
@@ -3497,7 +3504,7 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
               <TableRow>
                 <TableHead className="w-16 py-2">Preview</TableHead>
                 <TableHead className="py-2">Canary Journey</TableHead>
-                <TableHead className="w-32 py-2">Pass Rate</TableHead>
+                <TableHead className="w-36 py-2">HTTP Flow & Status</TableHead>
                 <TableHead className="w-48 py-2">
                   Latency (STG / PRD)
                 </TableHead>
@@ -3566,20 +3573,20 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
                       className="py-1.5 font-mono text-xs"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onOpenTestInDiff(tc.id, 'headers');
+                        onOpenTestInDiff(tc.id, 'flow');
                       }}
-                      title={`${row.passCount} of ${row.runsCount} runs passed (${row.passRatePct}%) · Expected HTTP ${tc.expectedStatus}, Observed HTTP ${row.actualStatus} — Click to inspect Headers`}
+                      title={`HTTP Flow (${row.hopCount} hop(s)): ${row.hopSummary}\n${row.passCount} of ${row.runsCount} runs passed (${row.passRatePct}%) — Click to inspect full HTTP Flow waterfall`}
                     >
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <Badge
+                          variant={row.hopCount > 1 ? 'warning' : 'outline'}
+                          className="font-mono text-[10px] px-1.5 py-0"
+                        >
+                          {row.hopCount} {row.hopCount === 1 ? 'Hop' : 'Hops'}
+                        </Badge>
                         <Badge
                           variant="success"
                           className="font-mono text-[10px] px-1.5 py-0"
-                        >
-                          {row.passCount}/{row.runsCount}
-                        </Badge>
-                        <Badge
-                          variant="outline"
-                          className="font-mono text-[10px] px-1 py-0"
                         >
                           {row.actualStatus}
                         </Badge>
@@ -3590,9 +3597,9 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
                       className="py-1.5 font-mono text-xs"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onOpenTestInDiff(tc.id, 'headers');
+                        onOpenTestInDiff(tc.id, 'flow');
                       }}
-                      title={`Staging Avg: ${row.avgStg}ms · Production Avg: ${row.avgPrd}ms · Range across runs: ${row.minMs}ms – ${row.maxMs}ms`}
+                      title={`Staging Avg: ${row.avgStg}ms · Production Avg: ${row.avgPrd}ms · Range across runs: ${row.minMs}ms – ${row.maxMs}ms — Click to inspect HTTP Flow`}
                     >
                       <div className="flex items-center justify-between text-[11px]">
                         <span className="text-sky-600 dark:text-sky-400">
@@ -3691,8 +3698,8 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
                       ) : (
                         <button
                           type="button"
-                          onClick={() => onOpenTestInDiff(tc.id, 'headers')}
-                          title="All 3 dimensions matched (Headers, Cookies, Visual AI)"
+                          onClick={() => onOpenTestInDiff(tc.id, 'flow')}
+                          title="All dimensions matched — Click to inspect HTTP Flow"
                           className="cursor-pointer"
                         >
                           <Badge variant="success" className="text-[10px] px-1.5 py-0 gap-0.5">
@@ -3711,9 +3718,9 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
                         <Button
                           variant="outline"
                           size="icon-xs"
-                          onClick={() => onOpenTestInDiff(tc.id)}
-                          aria-label={`Open Diff for ${tc.id}`}
-                          title={`Open Comparative Diff for ${tc.id} (${tc.name})`}
+                          onClick={() => onOpenTestInDiff(tc.id, 'flow')}
+                          aria-label={`Open Flow & Diff for ${tc.id}`}
+                          title={`Open HTTP Flow & Comparative Diff for ${tc.id} (${tc.name})`}
                         >
                           <GitCompare className="!size-3" />
                         </Button>
@@ -3724,7 +3731,7 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
                             onOpenTestInSingleRun(tc.id, stagingTarget)
                           }
                           aria-label={`Inspect Run for ${tc.id}`}
-                          title={`Inspect Single Run Artifact for ${tc.id} on ${stagingTarget}`}
+                          title={`Inspect Single Run Artifact & HTTP Flow for ${tc.id} on ${stagingTarget}`}
                         >
                           <Eye className="!size-3.5" />
                         </Button>

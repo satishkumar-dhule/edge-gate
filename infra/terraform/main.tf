@@ -509,23 +509,24 @@ resource "aws_iam_role_policy" "synthetics_bedrock_s3_policy" {
         Resource = [aws_sns_topic.release_gate_alerts.arn]
       },
       {
-        Sid    = "CloudWatchSyntheticsAndLambdaControl"
+        Sid    = "LambdaSelfAndRunnerInvoke"
+        Effect = "Allow"
+        Action = ["lambda:InvokeFunction"]
+        Resource = [
+          "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.project_name}-*"
+        ]
+      },
+      {
+        Sid    = "CloudWatchLogsWrite"
         Effect = "Allow"
         Action = [
-          "cloudwatch:PutMetricData",
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
-          "logs:PutLogEvents",
-          "lambda:InvokeFunction",
-          "synthetics:StartCanary",
-          "synthetics:StopCanary",
-          "synthetics:GetCanary",
-          "synthetics:GetCanaryRuns",
-          "synthetics:DescribeCanaries",
-          "xray:PutTraceSegments",
-          "xray:PutTelemetryRecords"
+          "logs:PutLogEvents"
         ]
-        Resource = "*"
+        Resource = [
+          "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/*"
+        ]
       }
     ]
   })
@@ -535,13 +536,13 @@ resource "aws_iam_role_policy" "synthetics_bedrock_s3_policy" {
 # 8. AD-HOC / RUN-ONCE CLOUDWATCH SYNTHETICS CANARIES, LOG GROUPS & ALARMS
 # ============================================================================
 resource "aws_cloudwatch_log_group" "canary_logs" {
-  for_each          = { for t in local.canary_targets : t.key => t }
+  for_each          = var.deploy_synthetics_canaries ? { for t in local.canary_targets : t.key => t } : {}
   name              = "/aws/lambda/cwsyn-${each.value.canary_name}"
   retention_in_days = var.log_retention_days
 }
 
 resource "aws_synthetics_canary" "property_gate" {
-  for_each                 = { for t in local.canary_targets : t.key => t }
+  for_each                 = var.deploy_synthetics_canaries ? { for t in local.canary_targets : t.key => t } : {}
   name                     = each.value.canary_name
   artifact_s3_location     = "s3://${aws_s3_bucket.synthetics_artifacts.id}/runs/${each.value.target_id}/"
   execution_role_arn       = aws_iam_role.synthetics_canary_role.arn
@@ -564,7 +565,7 @@ resource "aws_synthetics_canary" "property_gate" {
     memory_in_mb       = var.canary_memory_mb
     active_tracing     = var.canary_active_tracing
     environment_variables = {
-      AWS_REGION                       = var.aws_region
+      TARGET_AWS_REGION                = var.aws_region
       ENVIRONMENT                      = var.environment
       TARGET_ID                        = each.value.target_id
       APP_ID                           = each.value.app_id
@@ -603,7 +604,7 @@ resource "aws_synthetics_canary" "property_gate" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "canary_failed_alarm" {
-  for_each            = { for t in local.canary_targets : t.key => t }
+  for_each            = var.deploy_synthetics_canaries ? { for t in local.canary_targets : t.key => t } : {}
   alarm_name          = "AkamaiGateCanaryAlarm-${each.value.canary_name}"
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = var.alarm_evaluation_periods
@@ -688,6 +689,27 @@ resource "aws_lambda_function" "adhoc_edge_runner" {
   ]
 }
 
+resource "aws_cloudwatch_metric_alarm" "adhoc_runner_lambda_alarm" {
+  count               = var.deploy_serverless_lambda ? 1 : 0
+  alarm_name          = "${var.project_name}-adhoc-runner-errors-${var.environment}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  alarm_description   = "Triggers when the Salesforce Ad-Hoc Edge Synthetic Runner Lambda encounters execution errors"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.adhoc_edge_runner[0].function_name
+  }
+
+  alarm_actions = [aws_sns_topic.release_gate_alerts.arn]
+  ok_actions    = [aws_sns_topic.release_gate_alerts.arn]
+}
+
 resource "aws_cloudwatch_log_group" "control_plane_logs" {
   count             = var.deploy_serverless_lambda ? 1 : 0
   name              = "/aws/lambda/${var.project_name}-control-plane-${var.environment}"
@@ -734,6 +756,27 @@ resource "aws_lambda_function" "control_plane_api" {
     aws_cloudwatch_log_group.control_plane_logs,
     aws_lambda_function.adhoc_edge_runner
   ]
+}
+
+resource "aws_cloudwatch_metric_alarm" "control_plane_lambda_alarm" {
+  count               = var.deploy_serverless_lambda ? 1 : 0
+  alarm_name          = "${var.project_name}-control-plane-errors-${var.environment}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  alarm_description   = "Triggers when the Salesforce Control Plane API/MCP Lambda encounters execution errors"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.control_plane_api[0].function_name
+  }
+
+  alarm_actions = [aws_sns_topic.release_gate_alerts.arn]
+  ok_actions    = [aws_sns_topic.release_gate_alerts.arn]
 }
 
 resource "aws_lambda_function_url" "control_plane_url" {
@@ -798,23 +841,33 @@ resource "aws_lambda_permission" "apigw_invoke" {
 # ============================================================================
 # 9B. AMAZON CLOUDFRONT DISTRIBUTION (S3 SPA ORIGIN + /api/* LAMBDA ORIGIN)
 # ============================================================================
-resource "aws_s3_object" "portal_index_fallback" {
-  bucket       = aws_s3_bucket.synthetics_artifacts.id
-  key          = "${trimprefix(var.cloudfront_spa_origin_path, "/")}/index.html"
-  content_type = "text/html"
-  content      = <<-EOT
-    <!doctype html>
-    <html lang="en">
-      <head>
-        <meta charset="utf-8" />
-        <title>Akamai Synthetic Release Gate — CloudFront Edge Portal</title>
-      </head>
-      <body style="background:#07090e;color:#f8fafc;font-family:monospace;padding:2rem;">
-        <h1>Akamai Synthetic Release Gate — CloudFront Distribution Active</h1>
-        <p>Run <code>make sync-ui</code> or <code>make deploy-cloudfront</code> to upload the compiled Vite SPA bundle to <code>s3://${aws_s3_bucket.synthetics_artifacts.id}${var.cloudfront_spa_origin_path}/</code>.</p>
-      </body>
-    </html>
-  EOT
+locals {
+  spa_dist_dir   = "${path.module}/../../dist"
+  spa_dist_files = toset([
+    for f in fileset(local.spa_dist_dir, "**/*") : f
+    if !startswith(f, "assets/aistudio/")
+  ])
+  spa_mime_types = {
+    ".html" = "text/html; charset=utf-8"
+    ".js"   = "application/javascript; charset=utf-8"
+    ".css"  = "text/css; charset=utf-8"
+    ".json" = "application/json; charset=utf-8"
+    ".svg"  = "image/svg+xml"
+    ".png"  = "image/png"
+    ".ico"  = "image/x-icon"
+  }
+}
+
+resource "aws_s3_object" "portal_spa_bundle" {
+  for_each      = local.spa_dist_files
+  bucket        = aws_s3_bucket.synthetics_artifacts.id
+  key           = "${trimprefix(var.cloudfront_spa_origin_path, "/")}/${each.value}"
+  source        = "${local.spa_dist_dir}/${each.value}"
+  etag          = filemd5("${local.spa_dist_dir}/${each.value}")
+  content_type  = try(lookup(local.spa_mime_types, regex("\\.[^.]+$", each.value), "application/octet-stream"), "application/octet-stream")
+  cache_control = each.value == "index.html" ? "no-cache, no-store, must-revalidate" : "public, max-age=31536000, immutable"
+
+  depends_on = [aws_s3_bucket_versioning.synthetics_versioning]
 }
 
 resource "aws_cloudfront_origin_access_control" "portal_oac" {
@@ -856,7 +909,7 @@ resource "aws_cloudfront_distribution" "portal_cdn" {
     }
   }
 
-  # Default Behavior: Serve React SPA from S3 with OAC
+  # Default Behavior: Serve React SPA from S3 with OAC (honors S3 Cache-Control)
   default_cache_behavior {
     allowed_methods        = ["GET", "HEAD", "OPTIONS"]
     cached_methods         = ["GET", "HEAD"]
@@ -864,7 +917,7 @@ resource "aws_cloudfront_distribution" "portal_cdn" {
     viewer_protocol_policy = "redirect-to-https"
     compress               = true
     min_ttl                = 0
-    default_ttl            = 300
+    default_ttl            = 0
     max_ttl                = 86400
 
     forwarded_values {
@@ -922,7 +975,7 @@ resource "aws_cloudfront_distribution" "portal_cdn" {
   }
 
   depends_on = [
-    aws_s3_object.portal_index_fallback,
+    aws_s3_object.portal_spa_bundle,
     aws_apigatewayv2_stage.default_stage
   ]
 }
@@ -959,7 +1012,8 @@ resource "aws_dynamodb_table_item" "seeded_operator_users" {
 
   item = jsonencode({
     target      = { S = "__USER__" }
-    startTime   = { S = each.value.email }
+    runKey      = { S = each.value.email }
+    appId       = { S = "__USERS__" }
     userEmail   = { S = each.value.email }
     payloadJson = {
       S = jsonencode({

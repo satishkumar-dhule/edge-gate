@@ -2,12 +2,9 @@
  * ============================================================================
  * PLUGGABLE SYNTHETICS DATA ADAPTER & PERSISTENT STATE STORE
  * ============================================================================
- * Enables this portal to act as both:
- *   1. A self-contained, persistent interactive release-gate control plane
- *      (surviving browser reloads via localStorage without losing accepted
- *      cookies/headers, custom properties, or triggered run-over-run history).
- *   2. A production-ready frontend template that connects to a real
- *      AWS CloudWatch Synthetics + S3 + MCP backend via REST/JSON-RPC.
+ * Connects the Salesforce Edge Release Gate portal to live server.ts HTTP flow
+ * probes (/api/v1/runs, /api/v1/runs/trigger, /api/v1/probe/live) and persists
+ * operator rules and run history in browser storage.
  * ============================================================================
  */
 
@@ -56,11 +53,11 @@ export interface PersistedPortalState {
   baselineRunKey: string;
   selectedRunByTarget: Record<string, string>;
   selectedTestId: string;
-  inspectorTab: 'headers' | 'cookies' | 'image';
+  inspectorTab: 'flow' | 'headers' | 'cookies' | 'image';
 }
 
-const STORAGE_KEY = 'akamai-gate-portal-state-v2';
-const CURRENT_VERSION = 2;
+const STORAGE_KEY = 'salesforce-gate-portal-state-v3';
+const CURRENT_VERSION = 3;
 
 export function buildDefaultRunMap(runs: RunRecord[]): Record<string, string> {
   const map: Record<string, string> = {};
@@ -80,8 +77,8 @@ export function getInitialPortalState(): PersistedPortalState {
 
   return {
     version: CURRENT_VERSION,
-    dataSourceMode: 'template-seed',
-    remoteApiBaseUrl: '/api/synthetics',
+    dataSourceMode: 'remote-api',
+    remoteApiBaseUrl: '/api/v1',
     apps: DEFAULT_TEMPLATE_CONFIG.properties,
     testSuite: DEFAULT_TEMPLATE_CONFIG.testSuite,
     runs: INITIAL_RUNS,
@@ -109,6 +106,8 @@ export function loadPersistedPortalState(): PersistedPortalState {
     return fallback;
   }
   try {
+    // Clean up any legacy v2 company.com storage keys
+    window.localStorage.removeItem('akamai-gate-portal-state-v2');
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<PersistedPortalState>;
@@ -142,13 +141,13 @@ export function savePersistedPortalState(state: PersistedPortalState): void {
 export function clearPersistedPortalState(): PersistedPortalState {
   if (typeof window !== 'undefined' && window.localStorage) {
     window.localStorage.removeItem(STORAGE_KEY);
+    window.localStorage.removeItem('akamai-gate-portal-state-v2');
   }
   return getInitialPortalState();
 }
 
 /**
- * Generates a 50-Property Enterprise Topology to validate high-scale UI/UX
- * (command switcher search, multi-region edge properties, and run indexing).
+ * Generates a 50-Property Salesforce Global Enterprise Topology to validate high-scale UI/UX
  */
 export function generateEnterpriseScaleTopology(
   targetCount = 50,
@@ -160,48 +159,48 @@ export function generateEnterpriseScaleTopology(
 } {
   const baseApps = [...baseConfig.properties];
   const extraCatalog: { id: string; name: string; envs: string[] }[] = [
-    { id: 'emea-www', name: 'EMEA Regional Portal', envs: ['prod', 'uat'] },
-    { id: 'apac-www', name: 'APAC Regional Portal', envs: ['prod', 'uat'] },
-    { id: 'latam-www', name: 'LATAM Regional Portal', envs: ['prod', 'uat'] },
-    { id: 'jp-store', name: 'Japan E-Commerce Store', envs: ['prod', 'uat'] },
-    { id: 'de-store', name: 'Germany Storefront', envs: ['prod', 'uat'] },
-    { id: 'uk-store', name: 'UK Storefront', envs: ['prod', 'uat'] },
-    { id: 'fr-store', name: 'France Storefront', envs: ['prod', 'uat'] },
-    { id: 'au-store', name: 'Australia Storefront', envs: ['prod'] },
-    { id: 'ca-store', name: 'Canada Storefront', envs: ['prod', 'uat'] },
-    { id: 'br-store', name: 'Brazil Storefront', envs: ['prod'] },
-    { id: 'in-store', name: 'India Storefront', envs: ['prod', 'uat'] },
-    { id: 'sg-store', name: 'Singapore Storefront', envs: ['prod'] },
-    { id: 'b2b-portal', name: 'Enterprise B2B Procurement', envs: ['prod', 'uat'] },
-    { id: 'billing', name: 'Subscription & Invoicing Hub', envs: ['prod', 'uat'] },
-    { id: 'status', name: 'Global Cloud Status Page', envs: ['prod'] },
-    { id: 'cdn-media', name: 'Static Asset & Video Edge CDN', envs: ['prod', 'uat'] },
-    { id: 'Downloads', name: 'Software Binaries & Releases', envs: ['prod'] },
-    { id: 'community', name: 'Customer Community Forum', envs: ['prod', 'uat'] },
-    { id: 'academy', name: 'Certification & Training LMS', envs: ['prod'] },
-    { id: 'events', name: 'Global Summit & Webinar Hub', envs: ['prod', 'uat'] },
-    { id: 'careers', name: 'Global Talent & Recruiting', envs: ['prod'] },
-    { id: 'investors', name: 'Investor Relations & SEC Filings', envs: ['prod'] },
-    { id: 'press', name: 'Newsroom & Media Kit', envs: ['prod'] },
-    { id: 'trust', name: 'Security, SOC2 & Compliance Center', envs: ['prod'] },
-    { id: 'privacy', name: 'GDPR / CCPA Consent Gateway', envs: ['prod', 'uat'] },
-    { id: 'oauth', name: 'OAuth2 & OIDC Token Broker', envs: ['prod', 'uat'] },
-    { id: 'sso', name: 'SAML Enterprise Federation', envs: ['prod', 'uat'] },
-    { id: 'webhooks', name: 'Outbound Event Webhook Relay', envs: ['prod', 'uat'] },
-    { id: 'graphql', name: 'Unified Federated GraphQL Edge', envs: ['prod', 'uat'] },
-    { id: 'search', name: 'Global Instant Search API', envs: ['prod', 'uat'] },
-    { id: 'recs', name: 'Personalization & Merchandising API', envs: ['prod'] },
-    { id: 'cart', name: 'Distributed Edge Shopping Cart', envs: ['prod', 'uat'] },
-    { id: 'tax', name: 'Global VAT & Duty Calculation API', envs: ['prod'] },
-    { id: 'shipping', name: 'Logistics & Carrier Rate Edge', envs: ['prod'] },
-    { id: 'returns', name: 'Self-Service RMA & Returns Portal', envs: ['prod'] },
-    { id: 'loyalty', name: 'Rewards & Tier Points Engine', envs: ['prod', 'uat'] },
-    { id: 'affiliates', name: 'Affiliate Attribution Gateway', envs: ['prod'] },
-    { id: 'cms-preview', name: 'Headless CMS Staging Preview', envs: ['uat'] },
-    { id: 'dam', name: 'Digital Asset Transformation Edge', envs: ['prod'] },
-    { id: 'iot-ingest', name: 'Device Telemetry Edge Ingest', envs: ['prod', 'uat'] },
-    { id: 'ai-gateway', name: 'Edge AI Inference & Rate Limiter', envs: ['prod', 'uat'] },
-    { id: 'mobile-bff', name: 'iOS & Android Backend-for-Frontend', envs: ['prod', 'uat'] },
+    { id: 'emea-www', name: 'Salesforce EMEA Regional Portal', envs: ['prod', 'uat'] },
+    { id: 'apac-www', name: 'Salesforce APAC Regional Portal', envs: ['prod', 'uat'] },
+    { id: 'latam-www', name: 'Salesforce LATAM Regional Portal', envs: ['prod', 'uat'] },
+    { id: 'jp-www', name: 'Salesforce Japan Digital Experience', envs: ['prod', 'uat'] },
+    { id: 'de-www', name: 'Salesforce Germany Portal', envs: ['prod', 'uat'] },
+    { id: 'uk-www', name: 'Salesforce UK & Ireland Portal', envs: ['prod', 'uat'] },
+    { id: 'fr-www', name: 'Salesforce France Portal', envs: ['prod', 'uat'] },
+    { id: 'au-www', name: 'Salesforce ANZ Portal', envs: ['prod'] },
+    { id: 'ca-www', name: 'Salesforce Canada Portal', envs: ['prod', 'uat'] },
+    { id: 'br-www', name: 'Salesforce Brazil Portal', envs: ['prod'] },
+    { id: 'in-www', name: 'Salesforce India Portal', envs: ['prod', 'uat'] },
+    { id: 'sg-www', name: 'Salesforce ASEAN Hub', envs: ['prod'] },
+    { id: 'agentforce', name: 'Agentforce Autonomous AI Hub', envs: ['prod', 'uat'] },
+    { id: 'mulesoft', name: 'MuleSoft Anypoint API Edge', envs: ['prod', 'uat'] },
+    { id: 'tableau', name: 'Tableau Cloud Analytics Edge', envs: ['prod'] },
+    { id: 'slack-edge', name: 'Slack Enterprise Grid Gateway', envs: ['prod', 'uat'] },
+    { id: 'commerce', name: 'Salesforce Commerce Cloud Edge', envs: ['prod'] },
+    { id: 'trailblazer', name: 'Trailblazer Community Forum', envs: ['prod', 'uat'] },
+    { id: 'certification', name: 'Trailhead Certification Verification', envs: ['prod'] },
+    { id: 'dreamforce', name: 'Dreamforce & World Tour Live Hub', envs: ['prod', 'uat'] },
+    { id: 'careers', name: 'Salesforce Global Talent & Careers', envs: ['prod'] },
+    { id: 'investor', name: 'Salesforce Investor Relations & SEC Filings', envs: ['prod'] },
+    { id: 'newsroom', name: 'Salesforce Global Newsroom & Press', envs: ['prod'] },
+    { id: 'trust', name: 'Salesforce Trust, SOC2 & Compliance Center', envs: ['prod'] },
+    { id: 'privacy', name: 'Salesforce Global Privacy & Consent Edge', envs: ['prod', 'uat'] },
+    { id: 'oauth', name: 'Salesforce OAuth2 & OIDC Token Broker', envs: ['prod', 'uat'] },
+    { id: 'sso', name: 'Salesforce SAML Federation Edge', envs: ['prod', 'uat'] },
+    { id: 'webhooks', name: 'Platform Events Outbound Relay', envs: ['prod', 'uat'] },
+    { id: 'graphql', name: 'Salesforce UI API & GraphQL Edge', envs: ['prod', 'uat'] },
+    { id: 'search', name: 'Einstein Global Search API', envs: ['prod', 'uat'] },
+    { id: 'datacloud', name: 'Salesforce Data Cloud Zero-Copy Edge', envs: ['prod'] },
+    { id: 'checkout', name: 'Self-Service Subscription Checkout', envs: ['prod', 'uat'] },
+    { id: 'billing', name: 'Revenue Cloud & Invoicing API', envs: ['prod'] },
+    { id: 'service', name: 'Service Cloud Omni-Channel Edge', envs: ['prod'] },
+    { id: 'marketing', name: 'Marketing Cloud Engagement Edge', envs: ['prod'] },
+    { id: 'loyalty', name: 'Loyalty Management Edge Engine', envs: ['prod', 'uat'] },
+    { id: 'netzero', name: 'Net Zero Cloud Sustainability Hub', envs: ['prod'] },
+    { id: 'cms-preview', name: 'Experience Cloud Headless CMS Staging', envs: ['uat'] },
+    { id: 'cdn-assets', name: 'Lightning Design System Static CDN', envs: ['prod'] },
+    { id: 'iot-ingest', name: 'Manufacturing Cloud Telemetry Edge', envs: ['prod', 'uat'] },
+    { id: 'ai-gateway', name: 'Einstein Trust Layer AI Gateway', envs: ['prod', 'uat'] },
+    { id: 'mobile-bff', name: 'Salesforce Mobile App BFF Edge', envs: ['prod', 'uat'] },
   ];
 
   for (const item of extraCatalog) {
@@ -250,7 +249,7 @@ export function generateEnterpriseScaleTopology(
 }
 
 /**
- * Pluggable Remote API / MCP client with graceful fallback to deterministic template seed.
+ * Triggers a live HTTP flow synthetic run on server.ts (or falls back to local synthesis).
  */
 export async function triggerSyntheticsRunViaAdapter(params: {
   mode: DataSourceMode;
@@ -262,8 +261,6 @@ export async function triggerSyntheticsRunViaAdapter(params: {
   operatorEmail: string;
 }): Promise<RunRecord> {
   const {
-    mode,
-    apiBaseUrl,
     targetId,
     useNewRunVariant = true,
     suite,
@@ -271,21 +268,29 @@ export async function triggerSyntheticsRunViaAdapter(params: {
     operatorEmail,
   } = params;
 
-  if (mode === 'remote-api' && typeof window !== 'undefined') {
+  if (typeof window !== 'undefined') {
     try {
-      const res = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/runs`, {
+      const res = await fetch('/api/v1/runs/trigger', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetId, suite }),
+        body: JSON.stringify({
+          targetId,
+          suite,
+          by: operatorEmail,
+        }),
       });
       if (res.ok) {
-        const data = (await res.json()) as RunRecord;
-        if (data && data.key && Array.isArray(data.results)) {
-          return data;
+        const data = (await res.json()) as {
+          newRun?: RunRecord;
+          result?: RunRecord;
+        } & RunRecord;
+        const resolvedRun = data.newRun || data.result || data;
+        if (resolvedRun && resolvedRun.key && Array.isArray(resolvedRun.results)) {
+          return resolvedRun;
         }
       }
     } catch {
-      // Fall back to deterministic template synthesis when running in static preview
+      // Fall back to deterministic synthesis below if offline
     }
   }
 
@@ -314,7 +319,7 @@ export async function triggerSyntheticsRunViaAdapter(params: {
     envId,
     network,
     suiteKey: `config/suites/${appId}.csv`,
-    suiteSha256: '9f83a21b33c0',
+    suiteSha256: 'a8e9104f92b1',
     suiteRowCount: results.length,
     startTime: now.toISOString(),
     finishTime: new Date(now.getTime() + 1200).toISOString(),

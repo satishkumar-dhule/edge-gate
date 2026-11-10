@@ -725,20 +725,20 @@ test('UserManager supports user creation, PBKDF2 password hashing, password rese
 
   // 3. Create new user
   const created = mgr.createUser({
-    email: 'new-sre@company.com',
+    email: 'new-sre@salesforce.com',
     name: 'New Edge SRE',
     role: 'Staff Edge SRE',
     password: 'InitialPassword#123',
     actor: 'cli-admin',
     source: 'cli',
   });
-  assert.equal(created.email, 'new-sre@company.com');
+  assert.equal(created.email, 'new-sre@salesforce.com');
   assert.equal(created.role, 'Staff Edge SRE');
   assert.equal(created.status, 'active');
 
   // 4. Authenticate with initial password
   const authOk = mgr.authenticateUser({
-    email: 'new-sre@company.com',
+    email: 'new-sre@salesforce.com',
     password: 'InitialPassword#123',
     source: 'cli',
   });
@@ -747,7 +747,7 @@ test('UserManager supports user creation, PBKDF2 password hashing, password rese
 
   // 5. Reset password and verify old password fails while new password succeeds
   const resetRes = mgr.resetPassword({
-    email: 'new-sre@company.com',
+    email: 'new-sre@salesforce.com',
     newPassword: 'RotatedPassword#999',
     actor: 'cli-admin',
     source: 'cli',
@@ -755,14 +755,14 @@ test('UserManager supports user creation, PBKDF2 password hashing, password rese
   assert.equal(resetRes.passwordResetCount, 1);
 
   const oldAuth = mgr.authenticateUser({
-    email: 'new-sre@company.com',
+    email: 'new-sre@salesforce.com',
     password: 'InitialPassword#123',
     source: 'cli',
   });
   assert.equal(oldAuth.authenticated, false);
 
   const newAuth = mgr.authenticateUser({
-    email: 'new-sre@company.com',
+    email: 'new-sre@salesforce.com',
     password: 'RotatedPassword#999',
     source: 'cli',
   });
@@ -770,13 +770,13 @@ test('UserManager supports user creation, PBKDF2 password hashing, password rese
 
   // 6. Track user actions and verify aggregated stats
   mgr.trackUserAction({
-    email: 'new-sre@company.com',
+    email: 'new-sre@salesforce.com',
     action: 'SYNTHETIC_RUN_TRIGGERED',
     target: 'www.prod.staging',
     source: 'cli',
   });
   mgr.trackUserAction({
-    email: 'new-sre@company.com',
+    email: 'new-sre@salesforce.com',
     action: 'COMPARISON_EVALUATED',
     target: 'www.prod.staging vs www.prod.prod',
     source: 'cli',
@@ -784,7 +784,7 @@ test('UserManager supports user creation, PBKDF2 password hashing, password rese
 
   const stats = mgr.getStatsSummary();
   assert.equal(stats.totalUsers, 4);
-  const trackedUser = stats.users.find((u) => u.email === 'new-sre@company.com')!;
+  const trackedUser = stats.users.find((u) => u.email === 'new-sre@salesforce.com')!;
   assert.equal(trackedUser.stats.runsTriggered, 1);
   assert.equal(trackedUser.stats.comparisonsEvaluated, 1);
   assert.equal(trackedUser.stats.loginCount, 2);
@@ -792,21 +792,229 @@ test('UserManager supports user creation, PBKDF2 password hashing, password rese
 
   // 7. Disable user -> authentication blocked
   mgr.updateUserStatusOrRole({
-    email: 'new-sre@company.com',
+    email: 'new-sre@salesforce.com',
     status: 'disabled',
   });
   const disabledAuth = mgr.authenticateUser({
-    email: 'new-sre@company.com',
+    email: 'new-sre@salesforce.com',
     password: 'RotatedPassword#999',
     source: 'cli',
   });
   assert.equal(disabledAuth.authenticated, false);
 
   // 8. Delete user
-  const deleted = mgr.deleteUser('new-sre@company.com');
+  const deleted = mgr.deleteUser('new-sre@salesforce.com');
   assert.equal(deleted, true);
   assert.equal(mgr.listUsers().length, 3);
 });
+
+// ---------------------------------------------------------------------------
+// 11. Real Salesforce.com HTTP Flow Tracking & .env AWS Credential Loader
+// ---------------------------------------------------------------------------
+import { buildHttpFlowForTest } from '../data/mockStore';
+import { loadDotEnvCredentials } from './httpFlowProber';
+
+test('Salesforce.com HTTP Flow tracking captures multi-hop redirects, DNS/TCP/TLS/TTFB/Transfer waterfall timings, request/response headers, and cookies', () => {
+  assert.equal(DEFAULT_TEMPLATE_CONFIG.branding.defaultDomain, 'salesforce.com');
+  assert.ok(
+    DEFAULT_TEMPLATE_CONFIG.properties.every((p) =>
+      p.name.toLowerCase().includes('salesforce.com')
+    )
+  );
+
+  // Multi-hop 301 -> 200 redirect check (T04: /crm -> /crm/)
+  const flow301 = buildHttpFlowForTest({
+    testId: 'T04',
+    canonicalHost: 'www.salesforce.com',
+    envHost: 'www.salesforce.com',
+    path: '/crm',
+    isStaging: true,
+    edgeHostname: 'www.salesforce.com.edgekey-staging.net',
+    edgeIp: '23.48.201.18',
+    actualStatus: 301,
+    durationMs: 68,
+    capturedHeaders: {
+      location: 'https://www.salesforce.com/crm/',
+      'x-check-cacheable': 'YES',
+      'cache-control': 'max-age=86400',
+    },
+    capturedCookies: {
+      ak_bmsc: '1A9F88C; Domain=.salesforce.com; Path=/; Secure; HttpOnly',
+    },
+  });
+
+  assert.equal(flow301.redirectChain.length, 2);
+  assert.equal(flow301.redirectChain[0].status, 301);
+  assert.equal(
+    flow301.redirectChain[0].redirectLocation,
+    'https://www.salesforce.com/crm/'
+  );
+  assert.equal(flow301.redirectChain[1].status, 200);
+  assert.equal(
+    flow301.redirectChain[1].url,
+    'https://www.salesforce.com/crm/'
+  );
+  assert.ok(flow301.redirectChain[0].timings!.dnsMs >= 1);
+  assert.ok(flow301.redirectChain[0].timings!.tlsMs >= 1);
+  assert.ok(flow301.redirectChain[0].requestHeaders?.['user-agent']);
+  assert.equal(flow301.httpFlowSummary.totalHops, 2);
+  assert.equal(flow301.httpFlowSummary.redirectCount, 1);
+  assert.equal(
+    flow301.httpFlowSummary.finalUrl,
+    'https://www.salesforce.com/crm/'
+  );
+
+  // Verify .env credential loader parses active account without exposing secrets in summary
+  const creds = loadDotEnvCredentials();
+  assert.equal(creds.accountId, '030771555103');
+  assert.equal(creds.operatorUsername, 'user-wbbmbfobdqdu');
+  assert.equal(creds.loaded, true);
+});
+
+test('CloudFront SPA Portal Bundle, Terraform portal_spa_bundle & Makefile pipeline eliminate placeholder HTML', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { verifyCompiledSpaBundle } = await import(
+    '../../scripts/deploy-aws-portal'
+  );
+
+  // 1. Verify Terraform main.tf uploads dist/ via aws_s3_object.portal_spa_bundle and has NO portal_index_fallback
+  const mainTf = fs.readFileSync(
+    path.resolve(process.cwd(), 'infra/terraform/main.tf'),
+    'utf8'
+  );
+  assert.ok(
+    mainTf.includes('resource "aws_s3_object" "portal_spa_bundle"'),
+    'infra/terraform/main.tf must define aws_s3_object.portal_spa_bundle'
+  );
+  assert.ok(
+    !mainTf.includes('resource "aws_s3_object" "portal_index_fallback"'),
+    'infra/terraform/main.tf must NOT define placeholder portal_index_fallback'
+  );
+  assert.ok(
+    !mainTf.includes('Run <code>make sync-ui</code> or <code>make deploy-cloudfront</code>'),
+    'infra/terraform/main.tf must NOT contain placeholder fallback HTML'
+  );
+
+  // 2. Verify awsBlueprint.ts also generates aws_s3_object.portal_spa_bundle
+  const generatedBundle = generateTerraformBundle(DEFAULT_TEMPLATE_CONFIG);
+  assert.ok(
+    generatedBundle.mainTf.includes('resource "aws_s3_object" "portal_spa_bundle"')
+  );
+
+  // 3. Verify compiled dist/ SPA bundle integrity if dist/ exists
+  const distDir = path.resolve(process.cwd(), 'dist');
+  if (fs.existsSync(distDir)) {
+    const bundleCheck = verifyCompiledSpaBundle(distDir, 'portal-ui');
+    assert.equal(
+      bundleCheck.valid,
+      true,
+      `SPA bundle validation failed: ${bundleCheck.errors.join(', ')}`
+    );
+    assert.ok(
+      bundleCheck.files.some(
+        (f) =>
+          f.s3Key === 'portal-ui/index.html' &&
+          f.contentType.startsWith('text/html')
+      )
+    );
+    assert.ok(
+      bundleCheck.files.some(
+        (f) =>
+          f.s3Key.startsWith('portal-ui/assets/index-') &&
+          f.s3Key.endsWith('.js') &&
+          f.contentType.startsWith('application/javascript')
+      )
+    );
+    assert.ok(
+      bundleCheck.files.some(
+        (f) =>
+          f.s3Key.startsWith('portal-ui/assets/index-') &&
+          f.s3Key.endsWith('.css') &&
+          f.contentType.startsWith('text/css')
+      )
+    );
+  }
+
+  // 4. Verify Makefile defines unified all/deploy/tf-apply/sync-ui/test-e2e/user-* targets
+  const makefile = fs.readFileSync(
+    path.resolve(process.cwd(), 'Makefile'),
+    'utf8'
+  );
+  assert.ok(makefile.includes('.DEFAULT_GOAL := all'));
+  assert.ok(makefile.includes('deploy-all:'));
+  assert.ok(makefile.includes('tf-apply:'));
+  assert.ok(makefile.includes('sync-ui:'));
+  assert.ok(makefile.includes('test-e2e:'));
+  assert.ok(makefile.includes('scripts/deploy-aws-portal.ts'));
+  assert.ok(makefile.includes('scripts/verify-cloudfront-e2e.ts'));
+});
+
+test('DOM Screenshot Renderer generates high-resolution webpage snapshots and T03 visual diff overlays for Side A vs Side B', async () => {
+  const { buildDomScreenshotDataUri, resolvePageVisualTheme } = await import(
+    './domScreenshotRenderer'
+  );
+
+  // 1. Verify T01 Side A and Side B match when highlightDiff is false
+  const t01SideA = buildDomScreenshotDataUri({
+    testId: 'T01',
+    testName: 'Salesforce Global Home & Hero Experience',
+    url: 'https://www.salesforce.com/',
+    side: 'A',
+    highlightDiff: false,
+  });
+  const t01SideB = buildDomScreenshotDataUri({
+    testId: 'T01',
+    testName: 'Salesforce Global Home & Hero Experience',
+    url: 'https://www.salesforce.com/',
+    side: 'B',
+    highlightDiff: false,
+  });
+  assert.ok(t01SideA.startsWith('data:image/svg+xml;utf8,'));
+  assert.ok(t01SideB.startsWith('data:image/svg+xml;utf8,'));
+  assert.ok(decodeURIComponent(t01SideA).includes('viewBox="0 0 1280 760"'));
+
+  // 2. Verify T03 Side A with highlightDiff=true renders the +14px staging promo shift & Bedrock Nova Lite diff overlay
+  const t03SideA = buildDomScreenshotDataUri({
+    testId: 'T03',
+    testName: 'Agentforce AI & Einstein Copilot Overview',
+    url: 'https://www.salesforce.com/ai/',
+    side: 'A',
+    highlightDiff: true,
+    showOverlay: true,
+    overlayText: 'AI Region: +14px vertical offset',
+  });
+  const t03SideB = buildDomScreenshotDataUri({
+    testId: 'T03',
+    testName: 'Agentforce AI & Einstein Copilot Overview',
+    url: 'https://www.salesforce.com/ai/',
+    side: 'B',
+    highlightDiff: false,
+  });
+  assert.notEqual(t03SideA, t03SideB);
+  const decodedT03A = decodeURIComponent(t03SideA);
+  assert.ok(decodedT03A.includes('STAGING CANDIDATE BANNER'));
+  assert.ok(decodedT03A.includes('Bedrock Nova Lite Diff: AI Region: +14px vertical offset'));
+
+  // 3. Verify property-specific themes across all 8 Salesforce subdomains
+  assert.ok(
+    resolvePageVisualTheme('https://login.salesforce.com/').propertyBadge.includes(
+      'Identity'
+    )
+  );
+  assert.ok(
+    resolvePageVisualTheme('https://developer.salesforce.com/').propertyBadge.includes(
+      'Developers'
+    )
+  );
+  assert.ok(
+    resolvePageVisualTheme('https://trailhead.salesforce.com/').propertyBadge.includes(
+      'Trailhead'
+    )
+  );
+});
+
+
 
 
 

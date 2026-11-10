@@ -198,10 +198,10 @@ export function createInitialUserStore(): UserStoreState {
         lastTargetEvaluated: 'www.prod.staging',
       },
     },
-    'sre-oncall@company.com': {
+    'sre-oncall@salesforce.com': {
       userId: 'usr-02-sre-oncall',
-      email: 'sre-oncall@company.com',
-      name: 'Edge SRE On-Call',
+      email: 'sre-oncall@salesforce.com',
+      name: 'Salesforce Edge SRE On-Call',
       role: 'Staff Edge Reliability Engineer',
       account: op.account,
       status: 'active',
@@ -222,12 +222,12 @@ export function createInitialUserStore(): UserStoreState {
         passwordResetCount: 0,
         lastActiveAt: '2026-11-08T03:45:00.000Z',
         lastLoginAt: '2026-11-08T02:10:00.000Z',
-        lastTargetEvaluated: 'checkout.prod.staging',
+        lastTargetEvaluated: 'login.prod.staging',
       },
     },
-    'release-bot@company.com': {
+    'release-bot@salesforce.com': {
       userId: 'usr-03-cicd-bot',
-      email: 'release-bot@company.com',
+      email: 'release-bot@salesforce.com',
       name: 'GitHub Actions / Terraform Release Bot',
       role: 'Automated CI/CD Service Account',
       account: op.account,
@@ -249,7 +249,7 @@ export function createInitialUserStore(): UserStoreState {
         passwordResetCount: 0,
         lastActiveAt: '2026-11-08T04:15:00.000Z',
         lastLoginAt: '2026-11-08T04:15:00.000Z',
-        lastTargetEvaluated: 'api.prod.staging',
+        lastTargetEvaluated: 'developer.prod.staging',
       },
     },
   };
@@ -258,10 +258,10 @@ export function createInitialUserStore(): UserStoreState {
     {
       eventId: 'evt-init-1',
       timestamp: '2026-11-08T04:15:00.000Z',
-      email: 'release-bot@company.com',
+      email: 'release-bot@salesforce.com',
       action: 'SYNTHETIC_RUN_TRIGGERED',
-      target: 'api.prod.staging',
-      actor: 'release-bot@company.com',
+      target: 'developer.prod.staging',
+      actor: 'release-bot@salesforce.com',
       source: 'cli',
       metadata: { engine: 'aws-lambda-adhoc', passRatePct: 100 },
     },
@@ -278,10 +278,10 @@ export function createInitialUserStore(): UserStoreState {
     {
       eventId: 'evt-init-3',
       timestamp: '2026-11-08T03:45:00.000Z',
-      email: 'sre-oncall@company.com',
+      email: 'sre-oncall@salesforce.com',
       action: 'VISUAL_JUDGE_INVOKED',
       target: 'T03 (www.prod.staging)',
-      actor: 'sre-oncall@company.com',
+      actor: 'sre-oncall@salesforce.com',
       source: 'mcp',
       metadata: { model: 'amazon.nova-lite-v1:0', pixelDiffPct: 1.8 },
     },
@@ -307,7 +307,10 @@ export class UserManager {
       try {
         const raw = fs.readFileSync(this.storeFilePath, 'utf8');
         const parsed = JSON.parse(raw) as UserStoreState;
-        if (parsed && parsed.users && parsed.auditEvents) {
+        const hasLegacyCompany = Object.keys(parsed?.users || {}).some((k) =>
+          k.endsWith('@company.com')
+        );
+        if (parsed && parsed.users && parsed.auditEvents && !hasLegacyCompany) {
           return parsed;
         }
       } catch {
