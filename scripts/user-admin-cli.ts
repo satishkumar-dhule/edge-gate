@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * ============================================================================
  * CLI TOOL: USER ADMINISTRATION, PASSWORD RESET, TRACKING & AD-HOC RUNNER

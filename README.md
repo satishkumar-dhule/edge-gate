@@ -8,11 +8,11 @@ For full system design, data flow diagrams, domain rules, and AWS deployment arc
 
 ```bash
 # 1. Install dependencies & run unit tests
-npm install
-npx tsx --test src/engine/rules.test.ts
+pnpm install
+pnpm exec tsx --test src/engine/rules.test.ts
 
 # 2. Start full-stack server (React Portal + Express OpenAPI 3.1 + MCP Server on port 3000)
-npm run dev
+pnpm run dev
 ```
 
 ## Deploy to AWS (`terraform apply`)

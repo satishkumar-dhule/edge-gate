@@ -20,8 +20,8 @@ Never spend LLM or Coding Agent tokens repeating routine operational cycles (`.e
 ## Zero-Token Execution Commands
 ```bash
 # Run the complete .env -> Terraform -> CloudFront -> Live Fleet Seed -> Playwright E2E cycle (0 Tokens):
-npm run zero-token-cycle
+pnpm run zero-token-cycle
 
 # Or watch /.env continuously and auto-apply whenever AWS credentials rotate (0 Tokens):
-npm run zero-token-watch
+pnpm run zero-token-watch
 ```

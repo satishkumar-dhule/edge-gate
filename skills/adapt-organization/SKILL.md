@@ -17,4 +17,4 @@ Use this skill when the user asks to adapt, rebrand, or configure this cloned re
 2. **Sync `infra/terraform/terraform.tfvars.example`**:
    - Update `project_name`, `default_domain`, `staging_edge_suffix`, `staging_edge_ip`, `prod_edge_suffix`, `prod_edge_ip`, `s3_artifact_bucket`, `properties`, and `test_suite`.
 3. **Verify**:
-   - Run `npx --yes tsx --test src/engine/rules.test.ts && npm run lint && npm run build`.
+   - Run `pnpm exec tsx --test src/engine/rules.test.ts && pnpm run lint && pnpm run build`.

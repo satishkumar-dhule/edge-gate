@@ -2440,7 +2440,7 @@ terraform apply -auto-approve`}
                     {zeroTokenSnap.activeEnvFingerprint}
                   </div>
                   <div className="text-[10px] font-mono text-muted-foreground">
-                    Run: <code>npm run zero-token-cycle</code> (0 Agent Tokens)
+                    Run: <code>pnpm run zero-token-cycle</code> (0 Agent Tokens)
                   </div>
                 </div>
               </div>

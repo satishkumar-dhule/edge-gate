@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * ============================================================================
  * SALESFORCE EDGE RELEASE GATE — UNIFIED NPM + TERRAFORM + S3 SPA DEPLOYER
@@ -78,7 +78,7 @@ export function verifyCompiledSpaBundle(
       valid: false,
       distDir,
       files: [],
-      errors: [`Compiled SPA directory not found at ${distDir}. Run 'npm run build' first.`],
+      errors: [`Compiled SPA directory not found at ${distDir}. Run 'pnpm run build' first.`],
     };
   }
 
@@ -572,7 +572,7 @@ async function main() {
   }
 
   if (action === 'build') {
-    if (runCmd('npm', ['run', 'build']) !== 0) process.exit(1);
+    if (runCmd('pnpm', ['run', 'build']) !== 0) process.exit(1);
     const check = verifyCompiledSpaBundle();
     if (!check.valid) {
       console.error('[SPA BUNDLE INVALID]:', check.errors.join('; '));
@@ -595,7 +595,7 @@ async function main() {
   if (action === 'tf-plan') {
     archiveMismatchedTerraformState(awsEnv.accountId);
     if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
-      runCmd('npm', ['run', 'build']);
+      runCmd('pnpm', ['run', 'build']);
     }
     const tf = resolveTerraformBin();
     process.exit(runCmd(tf, [`-chdir=${TF_DIR}`, 'plan', '-input=false']));
@@ -623,7 +623,7 @@ async function main() {
 
   if (action === 'tf-apply') {
     archiveMismatchedTerraformState(awsEnv.accountId);
-    if (runCmd('npm', ['run', 'build']) !== 0) process.exit(1);
+    if (runCmd('pnpm', ['run', 'build']) !== 0) process.exit(1);
     const check = verifyCompiledSpaBundle();
     if (!check.valid) {
       console.error('[SPA BUNDLE INVALID]:', check.errors.join('; '));
@@ -659,7 +659,7 @@ async function main() {
 
   if (action === 'sync-ui') {
     if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
-      if (runCmd('npm', ['run', 'build']) !== 0) process.exit(1);
+      if (runCmd('pnpm', ['run', 'build']) !== 0) process.exit(1);
     }
     const check = verifyCompiledSpaBundle();
     if (!check.valid) {
@@ -712,13 +712,13 @@ async function main() {
   if (action === 'deploy-all' || action === 'deploy') {
     archiveMismatchedTerraformState(awsEnv.accountId);
     if (!fs.existsSync(path.join(ROOT_DIR, 'node_modules'))) {
-      if (runCmd('npm', ['install']) !== 0) process.exit(1);
+      if (runCmd('pnpm', ['install']) !== 0) process.exit(1);
     }
-    if (runCmd('npx', ['--yes', 'tsx', '--test', 'src/engine/rules.test.ts']) !== 0) {
+    if (runCmd('pnpm', ['exec', 'tsx', '--test', 'src/engine/rules.test.ts']) !== 0) {
       process.exit(1);
     }
-    if (runCmd('npm', ['run', 'lint']) !== 0) process.exit(1);
-    if (runCmd('npm', ['run', 'build']) !== 0) process.exit(1);
+    if (runCmd('pnpm', ['run', 'lint']) !== 0) process.exit(1);
+    if (runCmd('pnpm', ['run', 'build']) !== 0) process.exit(1);
 
     const check = verifyCompiledSpaBundle();
     if (!check.valid) {
