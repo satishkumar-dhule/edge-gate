@@ -22,6 +22,7 @@ import {
   TemplateConfig,
   TestCaseDefinition,
   resolvePropertyHostname,
+  getPropertyTestSuite,
 } from '../config/template.config';
 
 export const APPS: AppConfig[] = DEFAULT_TEMPLATE_CONFIG.properties;
@@ -328,7 +329,7 @@ export function generateTestResults(
   const edgeHostname = `${envHost}${netCfg.edgeSuffix}`;
   const edgeIp = netCfg.defaultEdgeIp;
 
-  const activeSuite = (customSuite || config.testSuite).filter(
+  const activeSuite = (customSuite || getPropertyTestSuite(appId, config) || config.testSuite).filter(
     (tc) => tc.enabled !== false
   );
 
@@ -449,10 +450,11 @@ export function seedRunsFromConfig(
 
         const latestStart = new Date(baseTime - offsetIdx * 120000);
         const latestFinish = new Date(latestStart.getTime() + 42000);
+        const propSuite = getPropertyTestSuite(prop.id, config);
         const latestResults = generateTestResults(
           target,
           net === 'staging' ? 'normal_staging' : 'normal_prod',
-          config.testSuite,
+          propSuite,
           config
         );
 
@@ -484,7 +486,7 @@ export function seedRunsFromConfig(
         const prevResults = generateTestResults(
           target,
           net === 'staging' ? 'prev_staging' : 'prev_prod',
-          config.testSuite,
+          propSuite,
           config
         );
 

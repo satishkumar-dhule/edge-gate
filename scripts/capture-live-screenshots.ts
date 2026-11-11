@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * ============================================================================
  * LIVE CHROMIUM SCREENSHOT CAPTURER FOR SALESFORCE.COM PROPERTIES & TEST SUITE

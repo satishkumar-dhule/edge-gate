@@ -17,4 +17,4 @@
 1. **Single-Source-of-Truth Config**: Never hardcode hostnames or edge IPs inside React components or Canary scripts; always resolve through `src/config/template.config.ts` or Terraform-injected environment variables.
 2. **Zero-Secret Reproduction**: Never expose secrets (`Authorization`, `Cookie`, `x-api-key`) in generated `curl --resolve` commands or webhook payloads.
 3. **Cost-Gated AI Visual Judge**: Always keep AWS Bedrock Nova Lite (`amazon.nova-lite-v1:0`) behind the `0.1%` pixel-diff cost gate so identical screenshots cost `$0`.
-4. **TDD Verification**: Always run `npx --yes tsx --test src/engine/rules.test.ts` and `npm run lint` after modifying any file.
+4. **TDD Verification**: Always run `pnpm exec tsx --test src/engine/rules.test.ts` and `pnpm run lint` after modifying any file.

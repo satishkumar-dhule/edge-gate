@@ -532,7 +532,7 @@ export function evaluatePluginPipeline(
         findings: [
           `Active .env Fingerprint: ${snap.activeEnvFingerprint} (Account ${snap.activeAccountId})`,
           `Zero-Token Hit Rate: ${snap.zeroTokenHitRatePercent}% (${snap.totalTokensSaved} tokens saved)`,
-          'Command: npm run zero-token-cycle (or make zero-token-cycle)',
+          'Command: pnpm run zero-token-cycle (or make zero-token-cycle)',
         ],
         executionTimeMs: 1,
       });
@@ -608,10 +608,10 @@ Read \`CLAUDE.md\`, \`AGENTS.md\`, and \`/skills/adapt-organization/SKILL.md\` f
 ## 3. Mandatory Verification Loop
 After editing the files above, run:
 \`\`\`bash
-npx --yes tsx --test src/engine/rules.test.ts
+pnpm exec tsx --test src/engine/rules.test.ts
 node --check aws-synthetics/canary-har-runner.js
-npm run lint
-npm run build
+pnpm run lint
+pnpm run build
 \`\`\`
 Ensure all unit tests, TypeScript checks, and production build checks pass with zero errors.`;
 }
@@ -651,16 +651,16 @@ It is architected around **Deep Modules (DRY / KISS / TDD)** so an AI agent or e
 
 \`\`\`bash
 # 1. Run pure domain & AWS/Terraform blueprint unit tests (node:test)
-npx --yes tsx --test src/engine/rules.test.ts
+pnpm exec tsx --test src/engine/rules.test.ts
 
 # 2. Verify CloudWatch Synthetics Canary script syntax
 node --check aws-synthetics/canary-har-runner.js
 
 # 3. Type-check the entire TypeScript codebase
-npm run lint
+pnpm run lint
 
 # 4. Compile production Vite bundle
-npm run build
+pnpm run build
 \`\`\`
 
 ---
@@ -698,7 +698,7 @@ npm run build
 - Always read \`src/config/template.config.ts\` first when asked to customize properties, environments, edge IPs, or test suites.
 - Keep \`infra/terraform/variables.tf\` and \`infra/terraform/terraform.tfvars.example\` synchronized with any schema changes in \`src/config/template.config.ts\`.
 - Write pure, deterministic TypeScript functions in \`src/engine/\` and add unit tests in \`src/engine/rules.test.ts\`.
-- Verify every change with \`npx --yes tsx --test src/engine/rules.test.ts\` and \`npm run lint\`.
+- Verify every change with \`pnpm exec tsx --test src/engine/rules.test.ts\` and \`pnpm run lint\`.
 `;
 
   const skillAdaptOrg = `---
@@ -720,7 +720,7 @@ Use this skill when the user asks to adapt, rebrand, or configure this cloned re
 2. **Sync \`infra/terraform/terraform.tfvars.example\`**:
    - Update \`project_name\`, \`default_domain\`, \`staging_edge_suffix\`, \`staging_edge_ip\`, \`prod_edge_suffix\`, \`prod_edge_ip\`, \`s3_artifact_bucket\`, \`properties\`, and \`test_suite\`.
 3. **Verify**:
-   - Run \`npx --yes tsx --test src/engine/rules.test.ts && npm run lint && npm run build\`.
+   - Run \`pnpm exec tsx --test src/engine/rules.test.ts && pnpm run lint && pnpm run build\`.
 `;
 
   const skillAddProperty = `---
@@ -860,10 +860,10 @@ Never spend LLM or Coding Agent tokens repeating routine operational cycles (\`.
 ## Zero-Token Execution Commands
 \`\`\`bash
 # Run the complete .env -> Terraform -> CloudFront -> Live Fleet Seed -> Playwright E2E cycle (0 Tokens):
-npm run zero-token-cycle
+pnpm run zero-token-cycle
 
 # Or watch /.env continuously and auto-apply whenever AWS credentials rotate (0 Tokens):
-npm run zero-token-watch
+pnpm run zero-token-watch
 \`\`\`
 `,
     },

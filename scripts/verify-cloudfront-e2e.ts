@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * ============================================================================
  * SALESFORCE EDGE RELEASE GATE — LIVE CLOUDFRONT UI & API E2E TEST SUITE

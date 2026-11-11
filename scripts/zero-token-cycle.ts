@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * ============================================================================
  * ZERO-TOKEN AUTONOMOUS .ENV -> TERRAFORM -> FLEET SEED -> E2E VERIFY CYCLE
@@ -11,8 +11,8 @@
  *   5. Verifies 3-Tier Zero-Token AI Dedup Cache + Playwright UI E2E
  *
  * Modes:
- *   - One-shot: `npm run zero-token-cycle` (or `make zero-token-cycle`)
- *   - Daemon watcher: `npm run zero-token-watch` (auto-triggers on `.env` save)
+ *   - One-shot: `pnpm run zero-token-cycle` (or `make zero-token-cycle`)
+ *   - Daemon watcher: `pnpm run zero-token-watch` (auto-triggers on `.env` save)
  * ============================================================================
  */
 
@@ -72,7 +72,7 @@ export function executeZeroTokenCycle(options: { force?: boolean } = {}): ZeroTo
     }
   }
 
-  const res = spawnSync('npx', ['tsx', 'scripts/deploy-aws-portal.ts'], {
+  const res = spawnSync('pnpm', ['exec', 'tsx', 'scripts/deploy-aws-portal.ts'], {
     cwd: ROOT_DIR,
     stdio: 'inherit',
     env: process.env,

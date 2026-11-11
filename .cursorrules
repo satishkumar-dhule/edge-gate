@@ -4,4 +4,4 @@
 - Keep `infra/terraform/variables.tf` and `infra/terraform/terraform.tfvars.example` synchronized with any schema changes in `src/config/template.config.ts`.
 - Extend release gate checks by adding modular plugins in `src/engine/pluginRegistry.ts` rather than coupling custom rules into UI components.
 - Write pure, deterministic TypeScript functions in `src/engine/` and add unit tests in `src/engine/rules.test.ts`.
-- Verify every change with `npx --yes tsx --test src/engine/rules.test.ts` and `npm run lint`.
+- Verify every change with `pnpm exec tsx --test src/engine/rules.test.ts` and `pnpm run lint`.

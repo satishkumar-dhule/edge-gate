@@ -26,16 +26,16 @@ It is built around **Deep Modules (DRY / KISS / TDD)** so an AI coding agent or 
 
 ```bash
 # 1. Run pure domain, plugin, & AWS/Terraform blueprint unit tests (node:test)
-npx --yes tsx --test src/engine/rules.test.ts
+pnpm exec tsx --test src/engine/rules.test.ts
 
 # 2. Verify CloudWatch Synthetics Canary script syntax
 node --check aws-synthetics/canary-har-runner.js
 
 # 3. Type-check the entire TypeScript codebase
-npm run lint
+pnpm run lint
 
 # 4. Compile production Vite bundle
-npm run build
+pnpm run build
 ```
 
 ---

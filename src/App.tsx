@@ -12,6 +12,7 @@ import {
   ReadyReportDefinition,
   TestCaseDefinition,
   resolvePropertyHostname,
+  getPropertyTestSuite,
 } from './config/template.config';
 import {
   INITIAL_RULES,
@@ -19,8 +20,10 @@ import {
   INITIAL_TARGET_STATES,
   buildInitialComparison,
   generateTestResults,
+  seedRunsFromConfig,
 } from './data/mockStore';
 import {
+  CURRENT_VERSION,
   DataSourceMode,
   buildDefaultRunMap,
   clearPersistedPortalState,
@@ -230,18 +233,20 @@ export default function App() {
     const target = r.target || r.targetId || 'www.prod.staging';
     const [appId = 'www', envId = 'prod'] = target.split('.');
     const canonicalHost = resolvePropertyHostname(appId, envId);
+    const propSuite = getPropertyTestSuite(appId);
     return {
       ...r,
       target,
       appId: r.appId || appId,
       envId: r.envId || envId,
       results: (r.results || []).map((res) => {
-        const fallbackPath = (res as typeof res & { path?: string }).path || '/';
-        const cleanUrl = res.url
-          ? res.url.replace(/^https:\/\/www\.salesforce\.com\b/i, `https://${canonicalHost}`)
-          : `https://${canonicalHost}${fallbackPath}`;
+        const matchingTc = propSuite.find((tc) => tc.id === res.id);
+        const name = matchingTc?.name || res.name;
+        const testPath = matchingTc?.path || (res as typeof res & { path?: string }).path || '/';
+        const cleanUrl = `https://${canonicalHost}${testPath}`;
         return {
           ...res,
+          name,
           url: cleanUrl,
           canonicalUrl: cleanUrl,
           redirectChain: (res.redirectChain || []).map((hop, idx) =>
@@ -249,7 +254,7 @@ export default function App() {
               ? {
                   ...hop,
                   url: hop.url.replace(
-                    /^https:\/\/www\.salesforce\.com\b/i,
+                    /^https:\/\/[^/]+\b/i,
                     `https://${canonicalHost}`
                   ),
                 }
@@ -280,10 +285,14 @@ export default function App() {
             }
             setSelectedRunByTarget(nextRunMap);
 
-            const latestStg = incomingRuns.find((r) => r.target === 'www.prod.staging');
-            const latestPrd = incomingRuns.find((r) => r.target === 'www.prod.prod');
-            if (latestStg) setCandidateRunKey(latestStg.key);
-            if (latestPrd) setBaselineRunKey(latestPrd.key);
+            const activeStg =
+              incomingRuns.find((r) => r.target === `${activeAppId}.prod.staging`) ||
+              incomingRuns.find((r) => r.target === 'www.prod.staging');
+            const activePrd =
+              incomingRuns.find((r) => r.target === `${activeAppId}.prod.prod`) ||
+              incomingRuns.find((r) => r.target === 'www.prod.prod');
+            if (activeStg) setCandidateRunKey(activeStg.key);
+            if (activePrd) setBaselineRunKey(activePrd.key);
 
             // Build live Audit Log reports from actual live runs in DynamoDB
             const seenAppEnvs = new Set<string>();
@@ -354,7 +363,7 @@ export default function App() {
   // Automatically persist portal state across reloads so user state never resets unexpectedly
   useEffect(() => {
     savePersistedPortalState({
-      version: 6,
+      version: CURRENT_VERSION,
       dataSourceMode,
       remoteApiBaseUrl,
       apps,
@@ -485,14 +494,39 @@ export default function App() {
     const baseTarget = `${appId}.${firstEnv}.prod`;
     setCandidateTarget(candTarget);
     setBaselineTarget(baseTarget);
+
     const candRun = runs.find((r) => r.target === candTarget);
     const baseRun = runs.find((r) => r.target === baseTarget);
-    if (candRun) setCandidateRunKey(candRun.key);
-    if (baseRun) setBaselineRunKey(baseRun.key);
+
+    let nextCandKey = candRun?.key;
+    let nextBaseKey = baseRun?.key;
+    if (!candRun || !baseRun) {
+      const seeded = seedRunsFromConfig();
+      const freshCand = candRun || seeded.find((r) => r.target === candTarget);
+      const freshBase = baseRun || seeded.find((r) => r.target === baseTarget);
+      if (freshCand && freshBase) {
+        setRuns((prev) => [
+          freshCand,
+          freshBase,
+          ...prev.filter(
+            (r) => r.target !== candTarget && r.target !== baseTarget
+          ),
+        ]);
+        nextCandKey = freshCand.key;
+        nextBaseKey = freshBase.key;
+      }
+    }
+
+    if (nextCandKey) setCandidateRunKey(nextCandKey);
+    if (nextBaseKey) setBaselineRunKey(nextBaseKey);
     setFocusedTargetId(candTarget);
-    setSelectedTestId(testSuite[0]?.id || 'T01');
+    const nextSuite = getPropertyTestSuite(appId);
+    setTestSuite(nextSuite);
+    setSelectedTestId(nextSuite[0]?.id || 'T01');
     setInspectorTab('headers');
-    setViewMode((prev) => (prev === 'suites' ? 'suites' : 'property'));
+    setViewMode((prev) =>
+      prev === 'diff' ? 'diff' : prev === 'suites' ? 'suites' : 'property'
+    );
   };
 
   // Live Template Adaptation Handler 1: Add a new Property & Environments
@@ -620,11 +654,18 @@ export default function App() {
       if (found) return found;
     }
     const chosenKey = selectedRunByTarget[targetId];
-    return (
-      targetRuns.find((r) => r.key === chosenKey) ||
-      targetRuns[0] ||
-      runs[0]
-    );
+    if (chosenKey) {
+      const foundChosen = targetRuns.find((r) => r.key === chosenKey);
+      if (foundChosen) return foundChosen;
+    }
+    if (targetRuns.length > 0) return targetRuns[0];
+
+    const seeded = seedRunsFromConfig();
+    const fallbackRun =
+      seeded.find((r) => r.target === targetId) ||
+      runs.find((r) => r.target === targetId) ||
+      runs[0];
+    return fallbackRun;
   };
 
   const activeCandidateRun = useMemo(
@@ -645,10 +686,7 @@ export default function App() {
   // Preload live Chromium JPEG screenshots for the active property into browser memory cache for 0ms tab switching
   useEffect(() => {
     const timer = setTimeout(() => {
-      const ids =
-        activeAppId === 'www'
-          ? ['T01', 'T02', 'T03', 'T04', 'T05', 'T06', 'T07', 'T08']
-          : ['T01'];
+      const ids = ['T01', 'T02', 'T03', 'T04', 'T05', 'T06', 'T07', 'T08'];
       for (const id of ids) {
         const imgA = new Image();
         imgA.src = `/screenshots/${activeAppId}-${id}-sideA.jpg`;

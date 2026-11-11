@@ -9,6 +9,7 @@ import {
   TemplateConfig,
   TestCaseDefinition,
   resolvePropertyHostname,
+  getPropertyTestSuite,
 } from '../config/template.config';
 import {
   HttpFlowSummary,
@@ -36,58 +37,70 @@ export interface LoadedAwsEnvStatus {
 export function loadDotEnvCredentials(
   envFilePath: string = path.resolve(process.cwd(), '.env')
 ): LoadedAwsEnvStatus {
-  const candidateFiles = [
-    envFilePath,
-    path.resolve(process.cwd(), '.env.terraform'),
-  ];
-  for (const filePath of candidateFiles) {
-    try {
-      if (fs.existsSync(filePath)) {
+  try {
+    const candidateFiles = [
+      envFilePath,
+      path.resolve(process.cwd(), '.env.terraform'),
+    ];
+    for (const filePath of candidateFiles) {
+      try {
+        if (!fs.existsSync(filePath)) continue;
         const raw = fs.readFileSync(filePath, 'utf8');
+        if (!raw || typeof raw !== 'string') continue;
         const lines = raw.split(/\r?\n/);
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('#')) continue;
+        for (const rawLine of lines) {
+          try {
+            if (!rawLine) continue;
+            const trimmed = rawLine.trim();
+            if (!trimmed || trimmed.startsWith('#')) continue;
 
-          if (trimmed.includes('=') && !trimmed.includes(': ')) {
-            const eqIdx = trimmed.indexOf('=');
-            const k = trimmed.slice(0, eqIdx).trim();
-            const v = trimmed
-              .slice(eqIdx + 1)
-              .trim()
-              .replace(/^['"]|['"]$/g, '');
-            if (k && v && (!process.env[k] || process.env[k] === 'dummy')) {
-              process.env[k] = v;
+            // Support 'export KEY=VALUE' or 'KEY=VALUE'
+            const cleanLine = trimmed.replace(/^export\s+/i, '');
+            if (cleanLine.includes('=') && !cleanLine.includes(': ')) {
+              const eqIdx = cleanLine.indexOf('=');
+              const k = cleanLine.slice(0, eqIdx).trim();
+              const v = cleanLine
+                .slice(eqIdx + 1)
+                .trim()
+                .replace(/^['"]|['"]$/g, '');
+              if (k && v && (!process.env[k] || process.env[k] === 'dummy')) {
+                process.env[k] = v;
+              }
+              continue;
             }
-            continue;
-          }
 
-          const colonIdx = trimmed.indexOf(':');
-          if (colonIdx > 0) {
-            const label = trimmed.slice(0, colonIdx).trim().toLowerCase();
-            const value = trimmed.slice(colonIdx + 1).trim();
-            if (!value) continue;
+            // Support "Label: Value" format (e.g., "AWS Access Key: AKIA...")
+            const colonIdx = trimmed.indexOf(':');
+            if (colonIdx > 0) {
+              const label = trimmed.slice(0, colonIdx).trim().toLowerCase();
+              const value = trimmed.slice(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+              if (!value) continue;
 
-            if (label === 'aws access key' || label === 'aws_access_key_id') {
-              process.env.AWS_ACCESS_KEY_ID = value;
-            } else if (
-              label === 'aws secret key' ||
-              label === 'aws_secret_access_key'
-            ) {
-              process.env.AWS_SECRET_ACCESS_KEY = value;
-            } else if (label === 'account id' || label === 'aws_account_id') {
-              process.env.AWS_ACCOUNT_ID = value;
-            } else if (label === 'username' || label === 'aws_username') {
-              process.env.AWS_OPERATOR_USERNAME = value;
-            } else if (label === 'region' || label === 'aws_region') {
-              process.env.AWS_REGION = value;
+              if (label === 'aws access key' || label === 'aws_access_key_id') {
+                process.env.AWS_ACCESS_KEY_ID = value;
+              } else if (
+                label === 'aws secret key' ||
+                label === 'aws_secret_access_key'
+              ) {
+                process.env.AWS_SECRET_ACCESS_KEY = value;
+              } else if (label === 'account id' || label === 'aws_account_id') {
+                process.env.AWS_ACCOUNT_ID = value;
+              } else if (label === 'username' || label === 'aws_username') {
+                process.env.AWS_OPERATOR_USERNAME = value;
+              } else if (label === 'region' || label === 'aws_region') {
+                process.env.AWS_REGION = value;
+              }
             }
+          } catch {
+            // Never fail on unparseable line
           }
         }
+      } catch {
+        // Never fail on unreadable file
       }
-    } catch {
-      // Ignore file read errors
     }
+  } catch {
+    // Fail-safe wrapper ensures function never throws
   }
 
   const cleanEnvVal = (val: string | undefined, fallback: string) =>
@@ -519,8 +532,8 @@ export async function executeLiveSalesforceRun(params: {
     operatorEmail,
     config = DEFAULT_TEMPLATE_CONFIG,
   } = params;
-  const suite = params.suite || config.testSuite;
   const [appId = 'www', envId = 'prod', net = 'staging'] = targetId.split('.');
+  const suite = params.suite || getPropertyTestSuite(appId, config) || config.testSuite;
   const network = (net === 'staging' ? 'staging' : 'prod') as 'staging' | 'prod';
   const isStaging = network === 'staging';
 

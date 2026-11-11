@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * ============================================================================
  * SALESFORCE EDGE RELEASE GATE — UNIFIED NPM + TERRAFORM + S3 SPA DEPLOYER
@@ -78,7 +78,7 @@ export function verifyCompiledSpaBundle(
       valid: false,
       distDir,
       files: [],
-      errors: [`Compiled SPA directory not found at ${distDir}. Run 'npm run build' first.`],
+      errors: [`Compiled SPA directory not found at ${distDir}. Run 'pnpm run build' first.`],
     };
   }
 
@@ -433,53 +433,73 @@ export function syncAccountConfigWithDotEnv(
   accountId: string,
   operatorUsername: string
 ): void {
-  if (!accountId || !operatorUsername) return;
-  const envTfPath = path.join(ROOT_DIR, '.env.terraform');
-  if (fs.existsSync(envTfPath)) {
-    const rawEnvTf = fs.readFileSync(envTfPath, 'utf8');
-    const tfAcctMatch = rawEnvTf.match(/^AWS_ACCOUNT_ID=(\d+)/m);
-    if (tfAcctMatch && tfAcctMatch[1] !== accountId) {
-      fs.rmSync(envTfPath, { force: true });
+  try {
+    if (!accountId || !operatorUsername) return;
+    const envTfPath = path.join(ROOT_DIR, '.env.terraform');
+    if (fs.existsSync(envTfPath)) {
+      try {
+        const rawEnvTf = fs.readFileSync(envTfPath, 'utf8');
+        const tfAcctMatch = rawEnvTf.match(/^AWS_ACCOUNT_ID=(\d+)/m);
+        if (tfAcctMatch && tfAcctMatch[1] !== accountId) {
+          fs.rmSync(envTfPath, { force: true });
+        }
+      } catch {
+        // Ignore transient file error
+      }
     }
-  }
 
-  const tfvarsPath = path.join(TF_DIR, 'terraform.tfvars');
-  if (fs.existsSync(tfvarsPath)) {
-    let tfvars = fs.readFileSync(tfvarsPath, 'utf8');
-    tfvars = tfvars
-      .replace(
-        /operator_email\s*=\s*"[^"]+"/,
-        `operator_email         = "${operatorUsername}@salesforce.com"`
-      )
-      .replace(
-        /akamai_account_context\s*=\s*"[^"]+"/,
-        `akamai_account_context = "SFDC-EDGE-${accountId} (AWS ${accountId} · Akamai Prod + Staging)"`
-      );
-    fs.writeFileSync(tfvarsPath, tfvars, 'utf8');
-  }
+    const tfvarsPath = path.join(TF_DIR, 'terraform.tfvars');
+    if (fs.existsSync(tfvarsPath)) {
+      try {
+        let tfvars = fs.readFileSync(tfvarsPath, 'utf8');
+        tfvars = tfvars
+          .replace(
+            /operator_email\s*=\s*"[^"]+"/,
+            `operator_email         = "${operatorUsername}@salesforce.com"`
+          )
+          .replace(
+            /akamai_account_context\s*=\s*"[^"]+"/,
+            `akamai_account_context = "SFDC-EDGE-${accountId} (AWS ${accountId} · Akamai Prod + Staging)"`
+          );
+        fs.writeFileSync(tfvarsPath, tfvars, 'utf8');
+      } catch {
+        // Ignore error
+      }
+    }
 
-  const varsTfPath = path.join(TF_DIR, 'variables.tf');
-  if (fs.existsSync(varsTfPath)) {
-    let varsTf = fs.readFileSync(varsTfPath, 'utf8');
-    varsTf = varsTf
-      .replace(/SFDC-EDGE-\d{12}/g, `SFDC-EDGE-${accountId}`)
-      .replace(/AWS \d{12}/g, `AWS ${accountId}`)
-      .replace(/user-[a-z0-9]+@salesforce\.com/g, `${operatorUsername}@salesforce.com`);
-    fs.writeFileSync(varsTfPath, varsTf, 'utf8');
-  }
+    const varsTfPath = path.join(TF_DIR, 'variables.tf');
+    if (fs.existsSync(varsTfPath)) {
+      try {
+        let varsTf = fs.readFileSync(varsTfPath, 'utf8');
+        varsTf = varsTf
+          .replace(/SFDC-EDGE-\d{12}/g, `SFDC-EDGE-${accountId}`)
+          .replace(/AWS \d{12}/g, `AWS ${accountId}`)
+          .replace(/user-[a-z0-9]+@salesforce\.com/g, `${operatorUsername}@salesforce.com`);
+        fs.writeFileSync(varsTfPath, varsTf, 'utf8');
+      } catch {
+        // Ignore error
+      }
+    }
 
-  const tplCfgPath = path.join(ROOT_DIR, 'src/config/template.config.ts');
-  if (fs.existsSync(tplCfgPath)) {
-    let tpl = fs.readFileSync(tplCfgPath, 'utf8');
-    tpl = tpl
-      .replace(/awsAccountId:\s*'\d{12}'/g, `awsAccountId: '${accountId}'`)
-      .replace(/SFDC-EDGE-\d{12}/g, `SFDC-EDGE-${accountId}`)
-      .replace(/AWS \d{12}/g, `AWS ${accountId}`)
-      .replace(/salesforce-akamai-synthetics-\d{12}-us-east-1/g, `salesforce-akamai-synthetics-${accountId}-us-east-1`)
-      .replace(/arn:aws:iam::\d{12}:user\/user-[a-z0-9]+/g, `arn:aws:iam::${accountId}:user/${operatorUsername}`)
-      .replace(/user-[a-z0-9]+@salesforce\.com/g, `${operatorUsername}@salesforce.com`)
-      .replace(/awsIamUsername:\s*'user-[a-z0-9]+'/g, `awsIamUsername: '${operatorUsername}'`);
-    fs.writeFileSync(tplCfgPath, tpl, 'utf8');
+    const tplCfgPath = path.join(ROOT_DIR, 'src/config/template.config.ts');
+    if (fs.existsSync(tplCfgPath)) {
+      try {
+        let tpl = fs.readFileSync(tplCfgPath, 'utf8');
+        tpl = tpl
+          .replace(/awsAccountId:\s*'\d{12}'/g, `awsAccountId: '${accountId}'`)
+          .replace(/SFDC-EDGE-\d{12}/g, `SFDC-EDGE-${accountId}`)
+          .replace(/AWS \d{12}/g, `AWS ${accountId}`)
+          .replace(/salesforce-akamai-synthetics-\d{12}-us-east-1/g, `salesforce-akamai-synthetics-${accountId}-us-east-1`)
+          .replace(/arn:aws:iam::\d{12}:user\/user-[a-z0-9]+/g, `arn:aws:iam::${accountId}:user/${operatorUsername}`)
+          .replace(/user-[a-z0-9]+@salesforce\.com/g, `${operatorUsername}@salesforce.com`)
+          .replace(/awsIamUsername:\s*'user-[a-z0-9]+'/g, `awsIamUsername: '${operatorUsername}'`);
+        fs.writeFileSync(tplCfgPath, tpl, 'utf8');
+      } catch {
+        // Ignore error
+      }
+    }
+  } catch {
+    // Non-fatal sync
   }
 }
 
@@ -572,7 +592,7 @@ async function main() {
   }
 
   if (action === 'build') {
-    if (runCmd('npm', ['run', 'build']) !== 0) process.exit(1);
+    if (runCmd('pnpm', ['run', 'build']) !== 0) process.exit(1);
     const check = verifyCompiledSpaBundle();
     if (!check.valid) {
       console.error('[SPA BUNDLE INVALID]:', check.errors.join('; '));
@@ -595,7 +615,7 @@ async function main() {
   if (action === 'tf-plan') {
     archiveMismatchedTerraformState(awsEnv.accountId);
     if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
-      runCmd('npm', ['run', 'build']);
+      runCmd('pnpm', ['run', 'build']);
     }
     const tf = resolveTerraformBin();
     process.exit(runCmd(tf, [`-chdir=${TF_DIR}`, 'plan', '-input=false']));
@@ -623,7 +643,7 @@ async function main() {
 
   if (action === 'tf-apply') {
     archiveMismatchedTerraformState(awsEnv.accountId);
-    if (runCmd('npm', ['run', 'build']) !== 0) process.exit(1);
+    if (runCmd('pnpm', ['run', 'build']) !== 0) process.exit(1);
     const check = verifyCompiledSpaBundle();
     if (!check.valid) {
       console.error('[SPA BUNDLE INVALID]:', check.errors.join('; '));
@@ -659,7 +679,7 @@ async function main() {
 
   if (action === 'sync-ui') {
     if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
-      if (runCmd('npm', ['run', 'build']) !== 0) process.exit(1);
+      if (runCmd('pnpm', ['run', 'build']) !== 0) process.exit(1);
     }
     const check = verifyCompiledSpaBundle();
     if (!check.valid) {
@@ -712,13 +732,13 @@ async function main() {
   if (action === 'deploy-all' || action === 'deploy') {
     archiveMismatchedTerraformState(awsEnv.accountId);
     if (!fs.existsSync(path.join(ROOT_DIR, 'node_modules'))) {
-      if (runCmd('npm', ['install']) !== 0) process.exit(1);
+      if (runCmd('pnpm', ['install']) !== 0) process.exit(1);
     }
-    if (runCmd('npx', ['--yes', 'tsx', '--test', 'src/engine/rules.test.ts']) !== 0) {
+    if (runCmd('pnpm', ['exec', 'tsx', '--test', 'src/engine/rules.test.ts']) !== 0) {
       process.exit(1);
     }
-    if (runCmd('npm', ['run', 'lint']) !== 0) process.exit(1);
-    if (runCmd('npm', ['run', 'build']) !== 0) process.exit(1);
+    if (runCmd('pnpm', ['run', 'lint']) !== 0) process.exit(1);
+    if (runCmd('pnpm', ['run', 'build']) !== 0) process.exit(1);
 
     const check = verifyCompiledSpaBundle();
     if (!check.valid) {

@@ -56,8 +56,8 @@ export interface PersistedPortalState {
   inspectorTab: 'flow' | 'headers' | 'cookies' | 'image';
 }
 
-const STORAGE_KEY = 'salesforce-gate-portal-state-v6-live';
-const CURRENT_VERSION = 6;
+export const STORAGE_KEY = 'salesforce-gate-portal-state-v8-live';
+export const CURRENT_VERSION = 8;
 
 export function isDummySeededRun(r: Partial<RunRecord>): boolean {
   if (!r) return true;
@@ -125,6 +125,8 @@ export function loadPersistedPortalState(): PersistedPortalState {
     window.localStorage.removeItem('salesforce-gate-portal-state-v3');
     window.localStorage.removeItem('salesforce-gate-portal-state-v4');
     window.localStorage.removeItem('salesforce-gate-portal-state-v5-live');
+    window.localStorage.removeItem('salesforce-gate-portal-state-v6-live');
+    window.localStorage.removeItem('salesforce-gate-portal-state-v7-live');
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<PersistedPortalState>;

@@ -2,7 +2,10 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { DEFAULT_TEMPLATE_CONFIG } from './src/config/template.config';
+import {
+  DEFAULT_TEMPLATE_CONFIG,
+  getPropertyTestSuite,
+} from './src/config/template.config';
 import {
   INITIAL_RUNS,
   buildInitialComparison,
@@ -53,7 +56,7 @@ async function startServer() {
   app.use(express.json({ limit: '5mb' }));
 
   // In-memory server run store populated with live salesforce.com HTTP flow probes
-  let serverRuns = [] as typeof INITIAL_RUNS;
+  let serverRuns = [...INITIAL_RUNS];
 
   const seedLiveFleetOnServer = async () => {
     const fleetTargets = [
@@ -310,7 +313,7 @@ async function startServer() {
       operatorEmail,
       suite: Array.isArray(req.body?.suite)
         ? req.body.suite
-        : DEFAULT_TEMPLATE_CONFIG.testSuite,
+        : getPropertyTestSuite(targetId.split('.')[0] || 'www'),
     });
 
     serverRuns = [newRun, ...serverRuns];
