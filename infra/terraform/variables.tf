@@ -28,7 +28,7 @@ variable "project_name" {
 
 variable "operator_email" {
   type        = string
-  default     = "user-wmgspcbttqts@salesforce.com"
+  default     = "user-baluuezlosgz@salesforce.com"
   description = "Default Principal Edge SRE operator identity seeded into Control Plane config"
 }
 
@@ -405,7 +405,7 @@ variable "initial_operator_users" {
   }))
   default = [
     {
-      email        = "user-wmgspcbttqts@salesforce.com"
+      email        = "user-baluuezlosgz@salesforce.com"
       display_name = "Lead Edge Release Engineer (AWS 373211957869)"
       role         = "admin"
     },

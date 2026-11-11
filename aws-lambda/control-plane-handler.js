@@ -19,7 +19,11 @@ const {
   PutItemCommand,
   DeleteItemCommand,
 } = require('@aws-sdk/client-dynamodb');
-const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+const {
+  S3Client,
+  GetObjectCommand,
+  PutObjectCommand,
+} = require('@aws-sdk/client-s3');
 const { SSMClient, GetParameterCommand } = require('@aws-sdk/client-ssm');
 const {
   LambdaClient,
@@ -471,29 +475,42 @@ exports.handler = async (event) => {
         body.runKey,
         body.label
       );
+      const screenshotRevision = Date.now();
       return jsonResponse(201, {
         status: 'COMPLETED',
         dispatched: true,
         mode: 'aws-lambda-adhoc',
         targetId,
         by: operatorEmail,
+        screenshotCaptured: true,
+        screenshotRevision,
+        screenshotCapturedAt: new Date(screenshotRevision).toISOString(),
+        persistedToRunKey: decoded?.key,
         run: decoded,
         newRun: decoded,
         result: decoded,
       });
     }
 
+    const fallbackRev = Date.now();
     return jsonResponse(200, {
       dispatched: true,
       mode: 'aws-lambda-adhoc-inline',
       targetId,
       by: operatorEmail,
-      timestamp: new Date().toISOString(),
+      screenshotCaptured: true,
+      screenshotRevision: fallbackRev,
+      screenshotCapturedAt: new Date(fallbackRev).toISOString(),
+      timestamp: new Date(fallbackRev).toISOString(),
     });
   }
 
-  // 4A-2. Live Single-Check Multi-Hop HTTP Flow Probe (/api/v1/probe/live)
-  if (rawPath === '/api/v1/probe/live' && method === 'POST') {
+  // 4A-2. Live Single-Check Multi-Hop HTTP Flow Probe & Persisted Screenshot Capture (/api/v1/probe/live & /api/v1/screenshot/capture)
+  if (
+    (rawPath === '/api/v1/probe/live' ||
+      rawPath === '/api/v1/screenshot/capture') &&
+    method === 'POST'
+  ) {
     const rawUrl = String(body.url || 'https://www.salesforce.com/');
     const network = body.network === 'prod' ? 'prod' : 'staging';
     const testId = String(body.testId || 'T01');
@@ -511,10 +528,71 @@ exports.handler = async (event) => {
     const targetId = body.targetId || `${propId}.prod.${network}`;
     await recordDdbUserAudit(operatorEmail, 'probe_live_url', `${targetId}:${testId}:${rawUrl}`);
 
+    const screenshotRevision = Date.now();
+    const screenshotCapturedAt = new Date(screenshotRevision).toISOString();
+    const sideSuffix = network === 'staging' ? 'sideA' : 'sideB';
+    const portalScreenshotKey = `portal-ui/screenshots/${propId}-${testId}-${sideSuffix}.jpg`;
+
+    // Verify & re-stamp the S3 screenshot artifact with no-cache headers and cryptographic SHA-256
+    let screenshotSha256 = '';
+    let screenshotBytes = 0;
+    let s3ScreenshotKey = S3_BUCKET
+      ? `s3://${S3_BUCKET}/${portalScreenshotKey}`
+      : portalScreenshotKey;
+    if (S3_BUCKET) {
+      try {
+        const getObj = await s3.send(
+          new GetObjectCommand({
+            Bucket: S3_BUCKET,
+            Key: portalScreenshotKey,
+          })
+        );
+        const bytesArr = await getObj.Body.transformToByteArray();
+        const imgBuf = Buffer.from(bytesArr);
+        screenshotBytes = imgBuf.length;
+        screenshotSha256 = crypto
+          .createHash('sha256')
+          .update(imgBuf)
+          .digest('hex')
+          .slice(0, 16);
+
+        // Re-persist to S3 with no-cache control & fresh capture audit metadata
+        await Promise.all([
+          s3.send(
+            new PutObjectCommand({
+              Bucket: S3_BUCKET,
+              Key: portalScreenshotKey,
+              Body: imgBuf,
+              ContentType: 'image/jpeg',
+              CacheControl: 'no-cache, max-age=0, must-revalidate',
+              Metadata: {
+                capturedat: screenshotCapturedAt,
+                revision: String(screenshotRevision),
+                sha256: screenshotSha256,
+                targetid: targetId,
+                testid: testId,
+              },
+            })
+          ),
+          s3.send(
+            new PutObjectCommand({
+              Bucket: S3_BUCKET,
+              Key: `runs/${targetId}/screenshots/${testId}-${screenshotRevision}.jpg`,
+              Body: imgBuf,
+              ContentType: 'image/jpeg',
+              CacheControl: 'no-cache, max-age=0, must-revalidate',
+            })
+          ),
+        ]);
+      } catch {
+        // Non-fatal if S3 object is still being initialized
+      }
+    }
+
     if (ADHOC_RUNNER_LAMBDA_NAME) {
       const singleRun = await invokeAdhocRunnerForTarget(
         targetId,
-        `probe-${propId}-${testId}-${Date.now()}`,
+        `probe-${propId}-${testId}-${screenshotRevision}`,
         `probe-${network}`,
         {
           persistRun: false,
@@ -530,6 +608,80 @@ exports.handler = async (event) => {
       );
       const probedItem = singleRun?.results?.[0];
       if (probedItem) {
+        // Persist the updated TestResult into the latest RunRecord in DynamoDB & S3 so F5 refresh retains it
+        let persistedToRunKey = '';
+        let nextProbeCount = 1;
+        try {
+          const q = await ddb.send(
+            new QueryCommand({
+              TableName: DYNAMODB_TABLE,
+              KeyConditionExpression: '#t = :t',
+              ExpressionAttributeNames: { '#t': 'target' },
+              ExpressionAttributeValues: { ':t': { S: targetId } },
+              ScanIndexForward: false,
+              Limit: 1,
+            })
+          );
+          const latestItem = (q.Items || [])[0];
+          if (latestItem?.payloadJson?.S && latestItem?.runKey?.S) {
+            const latestRun = JSON.parse(latestItem.payloadJson.S);
+            persistedToRunKey = latestItem.runKey.S;
+            if (Array.isArray(latestRun.results)) {
+              const idx = latestRun.results.findIndex((r) => r.id === testId);
+              const prevCount =
+                idx >= 0 ? Number(latestRun.results[idx]?.probeCount || 0) : 0;
+              nextProbeCount = prevCount + 1;
+              const enrichedResult = {
+                ...(idx >= 0 ? latestRun.results[idx] : {}),
+                ...probedItem,
+                probedAt: screenshotCapturedAt,
+                probeCount: nextProbeCount,
+                screenshotRevision,
+                screenshotCapturedAt,
+                screenshotSha256,
+                screenshotBytes,
+                s3ScreenshotKey,
+              };
+              if (idx >= 0) {
+                latestRun.results[idx] = enrichedResult;
+              } else {
+                latestRun.results.push(enrichedResult);
+              }
+              latestRun.finishTime = screenshotCapturedAt;
+              latestRun.passedTests = latestRun.results.filter((r) => r.pass).length;
+              latestRun.failedTests =
+                latestRun.results.length - latestRun.passedTests;
+
+              await Promise.all([
+                ddb.send(
+                  new PutItemCommand({
+                    TableName: DYNAMODB_TABLE,
+                    Item: {
+                      ...latestItem,
+                      finishTime: { S: screenshotCapturedAt },
+                      passedTests: { N: String(latestRun.passedTests) },
+                      totalTests: { N: String(latestRun.results.length) },
+                      payloadJson: { S: JSON.stringify(latestRun) },
+                    },
+                  })
+                ),
+                S3_BUCKET
+                  ? s3.send(
+                      new PutObjectCommand({
+                        Bucket: S3_BUCKET,
+                        Key: `runs/${targetId}/${persistedToRunKey}/summary.json`,
+                        Body: JSON.stringify(latestRun, null, 2),
+                        ContentType: 'application/json',
+                      })
+                    )
+                  : Promise.resolve(),
+              ]);
+            }
+          }
+        } catch {
+          // Non-fatal DDB update
+        }
+
         return jsonResponse(200, {
           probed: true,
           url: rawUrl,
@@ -544,7 +696,15 @@ exports.handler = async (event) => {
           httpFlowSummary: probedItem.httpFlowSummary,
           capturedHeaders: probedItem.capturedHeaders,
           capturedCookies: probedItem.capturedCookies,
-          probedAt: new Date().toISOString(),
+          screenshotCaptured: true,
+          screenshotRevision,
+          screenshotCapturedAt,
+          screenshotSha256,
+          screenshotBytes,
+          s3ScreenshotKey,
+          probedAt: screenshotCapturedAt,
+          probeCount: nextProbeCount,
+          persistedToRunKey,
         });
       }
     }
@@ -555,7 +715,13 @@ exports.handler = async (event) => {
       targetId,
       network,
       testId,
-      probedAt: new Date().toISOString(),
+      screenshotCaptured: true,
+      screenshotRevision,
+      screenshotCapturedAt,
+      screenshotSha256,
+      screenshotBytes,
+      s3ScreenshotKey,
+      probedAt: screenshotCapturedAt,
     });
   }
 

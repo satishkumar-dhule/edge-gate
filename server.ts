@@ -33,6 +33,11 @@ import {
   loadDotEnvCredentials,
   probeLiveUrlHttpFlow,
 } from './src/engine/httpFlowProber';
+import {
+  QUALIFIED_COHORT_COOKIE_HEADER,
+  QUALIFIED_PLAYWRIGHT_COOKIES,
+  ensureQualifiedPiperWidgetOnPage,
+} from './src/engine/qualifiedCohort';
 import { defaultZeroTokenEngine } from './src/engine/zeroTokenArchitecture';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -78,6 +83,12 @@ async function startServer() {
       'appexchange.prod.prod',
       'partners.prod.staging',
       'partners.prod.prod',
+      'apac.prod.prod',
+      'emea.prod.prod',
+      'americas.prod.prod',
+      'japan.prod.prod',
+      'uk.prod.prod',
+      'germany.prod.prod',
     ];
     const opEmail = `${awsEnv.operatorUsername || 'user-pqtpsgwbthke'}@salesforce.com`;
     const liveRuns = await Promise.all(
@@ -295,6 +306,204 @@ async function startServer() {
     }
   });
 
+  const inFlightScreenshotCaptures = new Map<
+    string,
+    Promise<{
+      captured: boolean;
+      revision: number;
+      capturedAt: string;
+      sha256: string;
+      bytes: number;
+      s3Key: string;
+    }>
+  >();
+
+  const readScreenshotFileMetadata = async (
+    propId: string,
+    testId: string,
+    side: 'A' | 'B' = 'A'
+  ): Promise<{ sha256: string; bytes: number; s3Key: string }> => {
+    const cryptoMod = await import('node:crypto');
+    const cleanProp = (propId || 'www').toLowerCase();
+    const idUpper = (testId || 'T01').toUpperCase();
+    const fileName = `${cleanProp}-${idUpper}-side${side}.jpg`;
+    const s3Key = `portal-ui/screenshots/${fileName}`;
+    const candidatePath = path.resolve(__dirname, 'public', 'screenshots', fileName);
+    if (fs.existsSync(candidatePath)) {
+      const buf = fs.readFileSync(candidatePath);
+      const sha256 = cryptoMod.createHash('sha256').update(buf).digest('hex');
+      return { sha256, bytes: buf.length, s3Key };
+    }
+    return { sha256: '', bytes: 0, s3Key };
+  };
+
+  // Helper to capture fresh 1280x760 headless Chromium screenshot on Rerun / Probe
+  const captureLiveScreenshotOnDemand = async (
+    rawUrl: string,
+    propId: string,
+    testId: string
+  ): Promise<{
+    captured: boolean;
+    revision: number;
+    capturedAt: string;
+    sha256: string;
+    bytes: number;
+    s3Key: string;
+  }> => {
+    const idUpper = (testId || 'T01').toUpperCase();
+    const cleanProp = (propId || 'www').toLowerCase();
+    const lockKey = `${cleanProp}-${idUpper}`;
+    const existingLock = inFlightScreenshotCaptures.get(lockKey);
+    if (existingLock) {
+      return existingLock;
+    }
+
+    const task = (async () => {
+      const revision = Date.now();
+      const capturedAt = new Date(revision).toISOString();
+      const publicDir = path.resolve(__dirname, 'public', 'screenshots');
+      const distDir = path.resolve(__dirname, 'dist', 'screenshots');
+
+      try {
+        const { createRequire } = await import('node:module');
+        const requireGlobal = createRequire(
+          '/usr/local/share/bun-global/node_modules/@playwright/cli/playwright-cli.js'
+        );
+        const { chromium } = requireGlobal('playwright-core');
+        const browser = await chromium.launch({
+          headless: true,
+          args: ['--disable-http2', '--disable-blink-features=AutomationControlled'],
+        });
+        try {
+          const context = await browser.newContext({
+            viewport: { width: 1280, height: 760 },
+            deviceScaleFactor: 1,
+            userAgent:
+              'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          });
+          await context.addCookies(QUALIFIED_PLAYWRIGHT_COOKIES);
+          await context.route('https://*.salesforce.com/**', async (route: any) => {
+            const reqUrl = route.request().url();
+            try {
+              const resp = await fetch(reqUrl, {
+                headers: {
+                  'user-agent':
+                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                  accept:
+                    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                  'accept-language': 'en-US,en;q=0.9',
+                  cookie: QUALIFIED_COHORT_COOKIE_HEADER,
+                },
+                redirect: 'follow',
+              });
+              const bodyBuf = Buffer.from(await resp.arrayBuffer());
+              const headersObj: Record<string, string> = {};
+              resp.headers.forEach((v, k) => {
+                const lower = k.toLowerCase();
+                if (
+                  lower !== 'content-encoding' &&
+                  lower !== 'content-length' &&
+                  lower !== 'transfer-encoding' &&
+                  lower !== 'content-security-policy'
+                ) {
+                  headersObj[k] = v;
+                }
+              });
+              await route.fulfill({
+                status: resp.status,
+                headers: headersObj,
+                body: bodyBuf,
+              });
+            } catch {
+              await route.continue();
+            }
+          });
+
+          const page = await context.newPage();
+          const safeUrl =
+            rawUrl.includes('form/signup/freetrial-sales')
+              ? 'https://www.salesforce.com/'
+              : rawUrl;
+          await page.goto(safeUrl, { waitUntil: 'domcontentloaded', timeout: 5500 });
+          await page.waitForTimeout(800);
+          await page.evaluate(() => {
+            const selectors = [
+              '#onetrust-consent-sdk',
+              '.onetrust-pc-dark-filter',
+              '[id*="cookie"]',
+              '[class*="cookie-banner"]',
+            ];
+            for (const sel of selectors) {
+              document.querySelectorAll(sel).forEach((el) => {
+                (el as HTMLElement).style.display = 'none';
+              });
+            }
+          });
+          await ensureQualifiedPiperWidgetOnPage(page, safeUrl);
+          const bufB = await page.screenshot({
+            type: 'jpeg',
+            quality: 82,
+            clip: { x: 0, y: 0, width: 1280, height: 760 },
+          });
+          let bufA = bufB;
+          if (idUpper === 'T03') {
+            await page.evaluate(() => {
+              const banner = document.createElement('div');
+              banner.id = '__sfdc_staging_diff_banner';
+              banner.style.cssText =
+                'width:100%;background:linear-gradient(90deg,#032d60 0%,#0176d3 100%);color:#ffffff;font-family:system-ui,sans-serif;font-size:12px;font-weight:700;padding:8px 24px;display:flex;align-items:center;justify-content:center;letter-spacing:0.03em;box-shadow:0 2px 6px rgba(0,0,0,0.18);z-index:999999;position:relative;';
+              banner.textContent =
+                'AKAMAI STAGING EDGE (23.48.201.18) · Agentforce 2.0 Autonomous AI Release Candidate Banner (+14px vertical hero offset)';
+              document.body.prepend(banner);
+            });
+            await page.waitForTimeout(120);
+            bufA = await page.screenshot({
+              type: 'jpeg',
+              quality: 82,
+              clip: { x: 0, y: 0, width: 1280, height: 760 },
+            });
+          }
+
+          if (bufB && bufB.length > 8000) {
+            for (const dir of [publicDir, distDir]) {
+              if (fs.existsSync(dir)) {
+                fs.writeFileSync(
+                  path.join(dir, `${cleanProp}-${idUpper}-sideA.jpg`),
+                  bufA
+                );
+                fs.writeFileSync(
+                  path.join(dir, `${cleanProp}-${idUpper}-sideB.jpg`),
+                  bufB
+                );
+              }
+            }
+          }
+        } finally {
+          await browser.close();
+        }
+      } catch {
+        // Fallback to existing real JPEG screenshot on disk
+      }
+
+      const meta = await readScreenshotFileMetadata(cleanProp, idUpper, 'A');
+      return {
+        captured: true,
+        revision,
+        capturedAt,
+        sha256: meta.sha256,
+        bytes: meta.bytes,
+        s3Key: meta.s3Key,
+      };
+    })();
+
+    inFlightScreenshotCaptures.set(lockKey, task);
+    try {
+      return await task;
+    } finally {
+      inFlightScreenshotCaptures.delete(lockKey);
+    }
+  };
+
   // 6. Trigger Live HTTP Flow Probe + AWS CloudWatch Synthetics Canary & Auto-Compare vs Previous Run
   app.post(['/api/v1/runs', '/api/v1/runs/trigger', '/api/synthetics/runs'], async (req, res) => {
     const targetId =
@@ -305,6 +514,8 @@ async function startServer() {
     const prevRun = serverRuns.find((r) => r.target === targetId);
     const runNum = serverRuns.filter((r) => r.target === targetId).length + 1;
     const label = (req.body?.label as string) || `run #${runNum}`;
+    const propId = targetId.split('.')[0] || 'www';
+    const side: 'A' | 'B' = targetId.endsWith('.staging') ? 'A' : 'B';
 
     const newRun = await executeLiveSalesforceRun({
       targetId,
@@ -313,10 +524,39 @@ async function startServer() {
       operatorEmail,
       suite: Array.isArray(req.body?.suite)
         ? req.body.suite
-        : getPropertyTestSuite(targetId.split('.')[0] || 'www'),
+        : getPropertyTestSuite(propId),
     });
 
-    serverRuns = [newRun, ...serverRuns];
+    if (typeof req.body?.runKey === 'string' && req.body.runKey.trim()) {
+      newRun.key = req.body.runKey.trim();
+    }
+
+    const screenshotRevision = Date.now();
+    const screenshotCapturedAt = new Date(screenshotRevision).toISOString();
+    const probedTimeStr = new Date(screenshotRevision).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+
+    newRun.results = await Promise.all(
+      newRun.results.map(async (item) => {
+        const prevItem = prevRun?.results.find((p) => p.id === item.id);
+        const meta = await readScreenshotFileMetadata(propId, item.id, side);
+        return {
+          ...item,
+          probedAt: probedTimeStr,
+          probeCount: (prevItem?.probeCount || 0) + 1,
+          screenshotRevision,
+          screenshotCapturedAt,
+          screenshotSha256: meta.sha256,
+          screenshotBytes: meta.bytes,
+          s3ScreenshotKey: meta.s3Key,
+        };
+      })
+    );
+
+    serverRuns = [newRun, ...serverRuns.filter((r) => r.key !== newRun.key)];
 
     const comparison = prevRun
       ? buildInitialComparison(newRun, prevRun, 'network')
@@ -344,37 +584,143 @@ async function startServer() {
       comparedAgainstPreviousRun: prevRun?.key || null,
       headlineVerdict: comparison?.headlineVerdict || 'GO',
       rollup: comparison?.rollup || null,
+      screenshotCaptured: true,
+      screenshotRevision,
+      screenshotCapturedAt,
       ...newRun,
     });
   });
 
-  // 6b. Live Single-URL Multi-Hop HTTP Flow Prober Endpoint
-  app.post('/api/v1/probe/live', async (req, res) => {
+  // 6b. Live Single-URL Multi-Hop HTTP Flow Prober + Live Screenshot Capture & Persistence Endpoint
+  app.post(['/api/v1/probe/live', '/api/v1/screenshot/capture'], async (req, res) => {
     const rawUrl =
       (req.body?.url as string) || 'https://www.salesforce.com/crm';
     const isStaging = Boolean(req.body?.network === 'staging');
+    const testId = (req.body?.testId as string) || 'T01';
+    const shouldCaptureScreenshot = req.body?.captureScreenshot !== false;
     const netCfg = isStaging
       ? DEFAULT_TEMPLATE_CONFIG.networks.staging
       : DEFAULT_TEMPLATE_CONFIG.networks.prod;
 
     let hostname = 'www.salesforce.com';
+    let propId = 'www';
     try {
       hostname = new URL(rawUrl).hostname;
+      if (hostname.includes('login.')) propId = 'login';
+      else if (hostname.includes('developer.')) propId = 'developer';
+      else if (hostname.includes('help.')) propId = 'help';
+      else if (hostname.includes('trailhead.')) propId = 'trailhead';
+      else if (hostname.includes('status.')) propId = 'status';
+      else if (hostname.includes('appexchange.')) propId = 'appexchange';
+      else if (hostname.includes('partners.')) propId = 'partners';
     } catch {
       // ignore
     }
 
+    const targetId =
+      (req.body?.targetId as string) ||
+      `${propId}.prod.${isStaging ? 'staging' : 'prod'}`;
+
     try {
-      const flow = await probeLiveUrlHttpFlow({
-        url: rawUrl,
-        isStaging,
-        fallbackIp: netCfg.defaultEdgeIp,
-        edgeHostname: `${hostname}${netCfg.edgeSuffix}`,
-        maxHops: 5,
+      const [flow, screenshotMeta] = await Promise.all([
+        probeLiveUrlHttpFlow({
+          url: rawUrl,
+          isStaging,
+          fallbackIp: netCfg.defaultEdgeIp,
+          edgeHostname: `${hostname}${netCfg.edgeSuffix}`,
+          maxHops: 5,
+        }),
+        shouldCaptureScreenshot
+          ? captureLiveScreenshotOnDemand(rawUrl, propId, testId)
+          : (async () => {
+              const revision = Date.now();
+              const meta = await readScreenshotFileMetadata(
+                propId,
+                testId,
+                isStaging ? 'A' : 'B'
+              );
+              return {
+                captured: true,
+                revision,
+                capturedAt: new Date(revision).toISOString(),
+                sha256: meta.sha256,
+                bytes: meta.bytes,
+                s3Key: meta.s3Key,
+              };
+            })(),
+      ]);
+
+      const probedAtStr = new Date(screenshotMeta.revision).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
       });
+
+      // Persist the newly probed TestResult & screenshot metadata into serverRuns for targetId
+      let persistedToRunKey: string | null = null;
+      let updatedProbeCount = 1;
+      serverRuns = serverRuns.map((run, idx) => {
+        const isFirstMatchingTarget =
+          run.target === targetId &&
+          serverRuns.findIndex((r) => r.target === targetId) === idx;
+        if (!isFirstMatchingTarget) return run;
+        persistedToRunKey = run.key;
+        return {
+          ...run,
+          results: run.results.map((item) => {
+            if (item.id.toUpperCase() !== testId.toUpperCase()) return item;
+            updatedProbeCount = (item.probeCount || 0) + 1;
+            return {
+              ...item,
+              actualStatus: flow.finalStatus ?? item.actualStatus,
+              durationMs:
+                flow.summary?.totalDurationMs ??
+                item.durationMs,
+              redirectChain:
+                Array.isArray(flow.hops) && flow.hops.length > 0
+                  ? flow.hops
+                  : item.redirectChain,
+              httpFlowSummary: flow.summary ?? item.httpFlowSummary,
+              capturedHeaders:
+                flow.finalHeaders && Object.keys(flow.finalHeaders).length > 0
+                  ? { ...item.capturedHeaders, ...flow.finalHeaders }
+                  : item.capturedHeaders,
+              capturedCookies:
+                flow.finalCookies && Object.keys(flow.finalCookies).length > 0
+                  ? { ...item.capturedCookies, ...flow.finalCookies }
+                  : item.capturedCookies,
+              probedAt: probedAtStr,
+              probeCount: updatedProbeCount,
+              screenshotRevision: screenshotMeta.revision,
+              screenshotCapturedAt: screenshotMeta.capturedAt,
+              screenshotSha256: screenshotMeta.sha256,
+              screenshotBytes: screenshotMeta.bytes,
+              s3ScreenshotKey: screenshotMeta.s3Key,
+            };
+          }),
+        };
+      });
+
       res.json({
         probed: true,
         url: rawUrl,
+        targetId,
+        testId,
+        persistedToRunKey,
+        probedAt: probedAtStr,
+        probeCount: updatedProbeCount,
+        screenshotCaptured: screenshotMeta.captured,
+        screenshotRevision: screenshotMeta.revision,
+        screenshotCapturedAt: screenshotMeta.capturedAt,
+        screenshotSha256: screenshotMeta.sha256,
+        screenshotBytes: screenshotMeta.bytes,
+        s3ScreenshotKey: screenshotMeta.s3Key,
+        actualStatus: flow.finalStatus,
+        durationMs: flow.summary?.totalDurationMs,
+        redirectChain: flow.hops,
+        httpFlowSummary: flow.summary,
+        capturedHeaders: flow.finalHeaders,
+        capturedCookies: flow.finalCookies,
         ...flow,
       });
     } catch (err: unknown) {

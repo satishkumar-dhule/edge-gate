@@ -345,6 +345,9 @@ export function generateTestResults(
       'x-check-cacheable': 'YES',
       'x-sfdc-content-source': 'sfdc-experience-cloud-cms',
       'x-sfdc-edge-pop': isStaging ? 'IAD-STG-04' : 'IAD-PRD-12',
+      'x-sfdc-agent-cohort-apply-experiment': 'true',
+      'x-sfdc-agent-cohort-decision': 'qualified',
+      'x-sfdc-agent-cohort-source': 'cookie',
       'strict-transport-security': 'max-age=63072000; includeSubDomains; preload',
       server: 'AkamaiGHost',
       'x-cache': isStaging
@@ -358,6 +361,10 @@ export function generateTestResults(
     };
 
     const capturedCookies: Record<string, string> = {
+      sfdc_agent_cohort:
+        'qualified; Path=/; Domain=.salesforce.com; Secure; SameSite=Lax',
+      sfdcConsent:
+        '1,2,3,4; Path=/; Domain=.salesforce.com; Secure; SameSite=Lax',
       sfdc_session: `sid_${appId}_${envId}; Path=/; Secure; HttpOnly; SameSite=Lax`,
       edge_region: isStaging
         ? 'IAD-STAGING; Path=/; Secure; SameSite=Lax'

@@ -18,6 +18,7 @@ import {
   TestResult,
 } from './types';
 import { generateTestResults } from '../data/mockStore';
+import { QUALIFIED_COHORT_COOKIE_HEADER } from './qualifiedCohort';
 
 export interface LoadedAwsEnvStatus {
   loaded: boolean;
@@ -209,6 +210,7 @@ function executeSingleHttpHop(params: {
     }
 
     const isHttps = parsedUrl.protocol === 'https:';
+    const isSalesforceHost = parsedUrl.hostname.endsWith('salesforce.com');
     const requestHeaders: Record<string, string> = {
       Host: parsedUrl.hostname,
       'User-Agent':
@@ -219,6 +221,17 @@ function executeSingleHttpHop(params: {
       Pragma:
         'akamai-x-cache-on, akamai-x-cache-remote-on, akamai-x-check-cacheable, akamai-x-get-cache-key, akamai-x-get-true-cache-key, akamai-x-get-request-id',
       'X-SFDC-Edge-Probe': isStaging ? 'staging' : 'prod',
+      ...(isSalesforceHost
+        ? {
+            'X-SFDC-Qualified-Cohort':
+              'sfdc_agent_cohort=qualified; sfdcConsent=1,2,3,4 (OneTrust Functional C0003:1)',
+          }
+        : {}),
+    };
+
+    const outboundHeaders: Record<string, string> = {
+      ...requestHeaders,
+      ...(isSalesforceHost ? { Cookie: QUALIFIED_COHORT_COOKIE_HEADER } : {}),
     };
 
     const tStart = performance.now();
@@ -235,7 +248,7 @@ function executeSingleHttpHop(params: {
       parsedUrl,
       {
         method: 'GET',
-        headers: requestHeaders,
+        headers: outboundHeaders,
         timeout: timeoutMs,
         rejectUnauthorized: false,
       },
@@ -454,6 +467,12 @@ export async function probeLiveUrlHttpFlow(params: {
 
   // Combine cookies set across all hops in the HTTP flow
   const mergedCookies: Record<string, string> = {};
+  if (hostForDns.endsWith('salesforce.com')) {
+    mergedCookies.sfdc_agent_cohort =
+      'qualified; Path=/; Domain=.salesforce.com; Secure; SameSite=Lax';
+    mergedCookies.sfdcConsent =
+      '1,2,3,4; Path=/; Domain=.salesforce.com; Secure; SameSite=Lax';
+  }
   for (const h of hops) {
     for (const rawCookie of h.cookiesSet || []) {
       const eqIdx = rawCookie.indexOf('=');

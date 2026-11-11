@@ -22,6 +22,7 @@ export interface DomScreenshotOptions {
   edgeHostname?: string;
   edgeIp?: string;
   cacheStatus?: string;
+  revision?: number | string;
 }
 
 interface PageVisualTheme {
@@ -1422,7 +1423,13 @@ export function buildDomScreenshotDataUri(options: DomScreenshotOptions): string
  * captured from the live salesforce.com property and served from S3 / CloudFront (`/portal-ui/screenshots/*`).
  */
 export function resolveLiveScreenshotUrl(options: DomScreenshotOptions): string {
-  const { testId = 'T01', url = 'https://www.salesforce.com/', side = 'A', highlightDiff = false } = options;
+  const {
+    testId = 'T01',
+    url = 'https://www.salesforce.com/',
+    side = 'A',
+    highlightDiff = false,
+    revision,
+  } = options;
   const lowerUrl = (url || '').toLowerCase();
   const idUpper = (testId || 'T01').toUpperCase();
 
@@ -1446,6 +1453,7 @@ export function resolveLiveScreenshotUrl(options: DomScreenshotOptions): string 
       ? 'sideB'
       : 'sideA';
 
-  return `/screenshots/${propId}-${idUpper}-${effectiveSide}.jpg`;
+  const revSuffix = revision ? `&r=${encodeURIComponent(String(revision))}` : '';
+  return `/screenshots/${propId}-${idUpper}-${effectiveSide}.jpg?v=live3${revSuffix}`;
 }
 

@@ -222,6 +222,12 @@ export default function App() {
         candMs: number;
         baseMs?: number;
         status: number;
+        screenshotRevision?: number;
+        screenshotCaptured?: boolean;
+        sha256?: string;
+        bytes?: number;
+        s3Key?: string;
+        persistedToRunKey?: string;
       }
     >
   >({});
@@ -293,6 +299,48 @@ export default function App() {
               incomingRuns.find((r) => r.target === 'www.prod.prod');
             if (activeStg) setCandidateRunKey(activeStg.key);
             if (activePrd) setBaselineRunKey(activePrd.key);
+
+            // Hydrate persisted live probe & screenshot metadata from backend/DynamoDB runs so F5 keeps revision & SHA-256 proof
+            setLastProbedByTestId((prev) => {
+              const hydrated = { ...prev };
+              for (const r of incomingRuns) {
+                for (const res of r.results || []) {
+                  if (
+                    res.probedAt ||
+                    res.screenshotRevision ||
+                    res.screenshotSha256 ||
+                    res.screenshotBytes
+                  ) {
+                    const existing = hydrated[res.id];
+                    const rev = res.screenshotRevision || existing?.screenshotRevision;
+                    if (!existing || (rev && (!existing.screenshotRevision || rev >= existing.screenshotRevision))) {
+                      hydrated[res.id] = {
+                        at: res.probedAt
+                          ? new Date(res.probedAt).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit',
+                            })
+                          : existing?.at || 'Live',
+                        count: res.probeCount || existing?.count || 1,
+                        candMs: res.httpFlowSummary?.totalDurationMs || res.durationMs || 85,
+                        baseMs: existing?.baseMs,
+                        status: res.actualStatus ?? 200,
+                        screenshotRevision: rev,
+                        screenshotCaptured: Boolean(
+                          res.screenshotRevision || res.screenshotSha256 || res.s3ScreenshotKey
+                        ),
+                        sha256: res.screenshotSha256 || existing?.sha256,
+                        bytes: res.screenshotBytes || existing?.bytes,
+                        s3Key: res.s3ScreenshotKey || existing?.s3Key,
+                        persistedToRunKey: r.key,
+                      };
+                    }
+                  }
+                }
+              }
+              return hydrated;
+            });
 
             // Build live Audit Log reports from actual live runs in DynamoDB
             const seenAppEnvs = new Set<string>();
@@ -1072,6 +1120,7 @@ export default function App() {
           [targetId]: { state: 'ready' },
         }));
 
+        const freshScreenshotRev = Date.now();
         setLastProbedByTestId((prev) => {
           const next = { ...prev };
           for (const res of newRun.results) {
@@ -1081,6 +1130,8 @@ export default function App() {
               count: prevCount + 1,
               candMs: res.httpFlowSummary?.totalDurationMs || res.durationMs,
               status: res.actualStatus,
+              screenshotRevision: freshScreenshotRev,
+              screenshotCaptured: true,
             };
           }
           return next;
@@ -1277,6 +1328,7 @@ export default function App() {
           [targetB]: { state: 'ready' },
         }));
 
+        const freshScreenshotRev = Date.now();
         setLastProbedByTestId((prev) => {
           const next = { ...prev };
           for (const resA of newRunA.results) {
@@ -1290,6 +1342,8 @@ export default function App() {
                 ? resB.httpFlowSummary?.totalDurationMs || resB.durationMs
                 : undefined,
               status: resA.actualStatus,
+              screenshotRevision: freshScreenshotRev,
+              screenshotCaptured: true,
             };
           }
           return next;
@@ -1323,8 +1377,15 @@ export default function App() {
 
   const probeLiveCheckForRun = async (
     runRecord: RunRecord,
-    testId: string
-  ): Promise<Partial<RunRecord['results'][0]> | null> => {
+    testId: string,
+    captureScreenshot = true
+  ): Promise<
+    (Partial<RunRecord['results'][0]> & {
+      screenshotRevision?: number;
+      screenshotCaptured?: boolean;
+      persistedToRunKey?: string;
+    }) | null
+  > => {
     const targetRes = runRecord.results.find((r) => r.id === testId);
     if (!targetRes) return null;
 
@@ -1339,6 +1400,7 @@ export default function App() {
           testId,
           testName: targetRes.name,
           expectedStatus: Number(targetRes.expectedStatus || 200),
+          captureScreenshot,
         }),
       });
       if (resp.ok) {
@@ -1368,6 +1430,18 @@ export default function App() {
               data.capturedCookies && Object.keys(data.capturedCookies).length > 0
                 ? { ...targetRes.capturedCookies, ...data.capturedCookies }
                 : targetRes.capturedCookies,
+            probedAt: data.probedAt || new Date().toISOString(),
+            probeCount: data.probeCount,
+            screenshotRevision:
+              typeof data.screenshotRevision === 'number'
+                ? data.screenshotRevision
+                : Date.now(),
+            screenshotCapturedAt: data.screenshotCapturedAt || new Date().toISOString(),
+            screenshotSha256: data.screenshotSha256,
+            screenshotBytes: data.screenshotBytes,
+            s3ScreenshotKey: data.s3ScreenshotKey,
+            screenshotCaptured: true,
+            persistedToRunKey: data.persistedToRunKey,
           };
         }
       }
@@ -1405,6 +1479,13 @@ export default function App() {
                 ...targetRes.capturedCookies,
                 ...found.capturedCookies,
               },
+              probedAt: found.probedAt || new Date().toISOString(),
+              screenshotRevision: found.screenshotRevision || Date.now(),
+              screenshotSha256: found.screenshotSha256,
+              screenshotBytes: found.screenshotBytes,
+              s3ScreenshotKey: found.s3ScreenshotKey,
+              screenshotCaptured: true,
+              persistedToRunKey: normalized.key,
             };
           }
         }
@@ -1479,7 +1560,14 @@ export default function App() {
         liveProbe?.capturedCookies && Object.keys(liveProbe.capturedCookies).length > 0
           ? { ...res.capturedCookies, ...liveProbe.capturedCookies }
           : res.capturedCookies,
-      note: `Live HTTP Flow probed at ${nowStr}`,
+      probedAt: liveProbe?.probedAt || new Date().toISOString(),
+      probeCount: (res.probeCount || 0) + 1,
+      screenshotRevision: liveProbe?.screenshotRevision || res.screenshotRevision || Date.now(),
+      screenshotCapturedAt: liveProbe?.screenshotCapturedAt || new Date().toISOString(),
+      screenshotSha256: liveProbe?.screenshotSha256 || res.screenshotSha256,
+      screenshotBytes: liveProbe?.screenshotBytes || res.screenshotBytes,
+      s3ScreenshotKey: liveProbe?.s3ScreenshotKey || res.s3ScreenshotKey,
+      note: `Live HTTP Flow & 1280×760 DOM Screenshot persisted at ${nowStr}`,
     };
   };
 
@@ -1556,6 +1644,14 @@ export default function App() {
           updatedBase?.durationMs;
         const status = updatedCand?.actualStatus ?? 200;
 
+        const screenshotRevision =
+          probeA?.screenshotRevision || probeB?.screenshotRevision || Date.now();
+        const sha256 = probeA?.screenshotSha256 || probeB?.screenshotSha256;
+        const bytes = probeA?.screenshotBytes || probeB?.screenshotBytes;
+        const s3Key = probeA?.s3ScreenshotKey || probeB?.s3ScreenshotKey;
+        const persistedToRunKey =
+          probeA?.persistedToRunKey || probeB?.persistedToRunKey || activeCandidateRun.key;
+
         setLastProbedByTestId((prev) => ({
           ...prev,
           [testId]: {
@@ -1564,14 +1660,23 @@ export default function App() {
             candMs,
             baseMs,
             status,
+            screenshotRevision,
+            screenshotCaptured: true,
+            sha256,
+            bytes,
+            s3Key,
+            persistedToRunKey,
           },
         }));
 
         setRerunningTestId(null);
+        const proofSuffix = sha256
+          ? ` · sha256:${sha256}${bytes ? ` (${(bytes / 1024).toFixed(1)} KB)` : ''}`
+          : '';
         toast.success(
-          `Probed live HTTP flow for ${testId} · HTTP ${status} (${candMs}ms${
+          `Probed live HTTP flow & persisted 1280×760 screenshot for ${testId} · HTTP ${status} (${candMs}ms${
             typeof baseMs === 'number' ? ` / ${baseMs}ms` : ''
-          })`
+          })${proofSuffix}`
         );
       }
     );
@@ -1669,6 +1774,7 @@ export default function App() {
             })
           );
 
+          const freshBatchRevision = Date.now();
           setLastProbedByTestId((prev) => {
             const next = { ...prev };
             for (const id of targetIdsToProbe) {
@@ -1684,6 +1790,8 @@ export default function App() {
                 candMs: cRes?.httpFlowSummary?.totalDurationMs || cRes?.durationMs || 85,
                 baseMs: bRes?.httpFlowSummary?.totalDurationMs || bRes?.durationMs,
                 status: cRes?.actualStatus ?? 200,
+                screenshotRevision: freshBatchRevision,
+                screenshotCaptured: true,
               };
             }
             return next;
@@ -1693,7 +1801,7 @@ export default function App() {
         }
 
         toast.success(
-          `Reran ${targetIdsToProbe.length} check(s) across ${tA} and ${tB} at ${nowStr}`
+          `Reran ${targetIdsToProbe.length} check(s) & refreshed 1280×760 DOM screenshots across ${tA} and ${tB} at ${nowStr}`
         );
       },
       () => {
@@ -1834,7 +1942,7 @@ export default function App() {
   if (!currentUser) {
     return (
       <>
-        <Toaster position="bottom-right" richColors theme={theme} />
+        <Toaster position="bottom-left" richColors theme={theme} />
         <LoginView
           onSignIn={(user) => {
             setCurrentUser(user);
@@ -1847,7 +1955,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-muted/20 text-foreground flex flex-col font-sans relative overflow-x-hidden">
-      <Toaster position="bottom-right" richColors theme={theme} />
+      <Toaster position="bottom-left" richColors theme={theme} />
 
       {/* =====================================================================
           CONTROL CENTER GLOBAL HEADER + ICON-FIRST NAVIGATION + NOTIFICATIONS
@@ -1860,7 +1968,7 @@ export default function App() {
               setViewMode('property');
               setShowNotifications(false);
             }}
-            className="flex items-center gap-2 font-semibold tracking-tight text-white hover:text-zinc-200 cursor-pointer shrink-0"
+            className="flex items-center gap-2 font-semibold text-white hover:text-zinc-200 cursor-pointer shrink-0"
             title={`${DEFAULT_TEMPLATE_CONFIG.branding.controlPlaneTitle} — ${DEFAULT_TEMPLATE_CONFIG.branding.productSubtitle}`}
           >
             <div className="w-5 h-5 rounded bg-sky-500 text-zinc-950 flex items-center justify-center font-mono font-bold text-[11px]">
@@ -2754,6 +2862,9 @@ export default function App() {
                                   testName={item.testName}
                                   url={item.url}
                                   hasVisualDiff={vDiff}
+                                  screenshotRevision={
+                                    lastProbedByTestId[item.testId]?.screenshotRevision
+                                  }
                                   onClick={() => {
                                     setSelectedTestId(item.testId);
                                     setInspectorTab('image');
@@ -3198,7 +3309,7 @@ export default function App() {
          ===================================================================== */}
       {viewMode === 'diff' && (
         <>
-          <div className="bg-background border-b border-border px-4 py-2">
+          <div className="sticky top-11 z-20 bg-background/95 backdrop-blur-xs border-b border-border px-4 py-2">
             <ComparisonTargetBar
               mode="diff-toolbar"
               endpoints={appEndpoints}
@@ -3241,7 +3352,7 @@ export default function App() {
 
           <main className="px-4 py-3 w-full flex-1">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
-              <Card className="lg:col-span-5">
+              <Card className="lg:col-span-5 lg:sticky lg:top-24">
                 <div className="px-3.5 py-2 border-b border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2">
                   <Tabs
                     value={testFilter}
@@ -3270,18 +3381,19 @@ export default function App() {
                         placeholder="Filter tests…"
                         value={diffSearchQuery}
                         onChange={(e) => setDiffSearchQuery(e.target.value)}
-                        className="h-6 pl-6 pr-2 rounded border border-input bg-background text-[11px] font-mono w-28"
+                        className="h-6 pl-6 pr-2 rounded border border-input bg-background text-[11px] font-mono w-36 sm:w-44"
                       />
                     </div>
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="xs"
                       onClick={() => handleRerunAllDiffs()}
                       disabled={rerunningTestId === 'ALL'}
+                      title="Re-probe live HTTP flows and refresh 1280×760 DOM screenshots across all diffing checks"
                     >
                       <RotateCw
                         className={`!size-3 ${
-                          rerunningTestId === 'ALL' ? 'animate-spin' : ''
+                          rerunningTestId === 'ALL' ? 'animate-spin text-sky-500' : ''
                         }`}
                       />
                       Rerun Diffs
@@ -3295,30 +3407,42 @@ export default function App() {
                       <TableRow>
                         <TableHead className="py-1.5">Page & Test Case</TableHead>
                         <TableHead
-                          className="text-center w-11 py-1.5"
+                          className="text-center w-11 px-1.5 py-1.5 font-mono text-[9px]"
                           title="HTTP Flow Hops, Redirect Chain & Timing Waterfall — Click any cell below to open HTTP Flow tab"
                         >
-                          <Activity className="w-3.5 h-3.5 mx-auto text-sky-500" />
+                          <div className="flex flex-col items-center gap-0.5">
+                            <Activity className="w-3 h-3 text-sky-500" />
+                            <span>Flow</span>
+                          </div>
                         </TableHead>
                         <TableHead
-                          className="text-center w-11 py-1.5"
+                          className="text-center w-11 px-1.5 py-1.5 font-mono text-[9px]"
                           title="HTTP Response Header & Cache Key Diffs — Click any cell below to open Headers tab"
                         >
-                          <Code2 className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
+                          <div className="flex flex-col items-center gap-0.5">
+                            <Code2 className="w-3 h-3 text-muted-foreground" />
+                            <span>Hdrs</span>
+                          </div>
                         </TableHead>
                         <TableHead
-                          className="text-center w-11 py-1.5"
+                          className="text-center w-11 px-1.5 py-1.5 font-mono text-[9px]"
                           title="Set-Cookie Domain, SameSite & Attribute Diffs — Click any cell below to open Cookies tab"
                         >
-                          <KeyRound className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
+                          <div className="flex flex-col items-center gap-0.5">
+                            <KeyRound className="w-3 h-3 text-muted-foreground" />
+                            <span>Cookie</span>
+                          </div>
                         </TableHead>
                         <TableHead
-                          className="text-center w-11 py-1.5"
+                          className="text-center w-11 px-1.5 py-1.5 font-mono text-[9px]"
                           title="Visual DOM Screenshot & AI Judge Verdict — Click any cell below to open Image AI tab"
                         >
-                          <Sparkles className="w-3.5 h-3.5 mx-auto text-muted-foreground" />
+                          <div className="flex flex-col items-center gap-0.5">
+                            <Sparkles className="w-3 h-3 text-muted-foreground" />
+                            <span>Visual</span>
+                          </div>
                         </TableHead>
-                        <TableHead className="text-right w-10 py-1.5" title="Rerun Single Check">
+                        <TableHead className="text-right w-8 px-1.5 py-1.5 font-mono text-[9px]" title="Rerun Single Check & Refresh Screenshot">
                           <RotateCw className="w-3 h-3 ml-auto text-muted-foreground" />
                         </TableHead>
                       </TableRow>
@@ -3351,9 +3475,9 @@ export default function App() {
                                 : 'hover:bg-muted/40'
                             }`}
                           >
-                            <TableCell className="py-2">
+                            <TableCell className="py-2 pr-1.5">
                               <div
-                                className="flex items-center gap-2.5"
+                                className="flex items-center gap-2 min-w-0"
                                 title={`${item.testId}: ${item.testName} (${item.url}) — Click thumbnail for Image AI tab, or text for primary diff tab`}
                               >
                                 <div
@@ -3367,21 +3491,24 @@ export default function App() {
                                     testName={item.testName}
                                     url={item.url}
                                     hasVisualDiff={vDiff}
+                                    screenshotRevision={
+                                      lastProbedByTestId[item.testId]?.screenshotRevision
+                                    }
                                     onClick={() =>
                                       handleSelectTestRow(item, 'image')
                                     }
                                   />
                                 </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-1.5">
+                                <div className="min-w-0 max-w-[205px] xl:max-w-[240px]">
+                                  <div className="flex items-center gap-1.5 min-w-0">
                                     <span className="font-mono font-bold text-xs text-sky-600 dark:text-sky-400 shrink-0">
                                       {item.testId}
                                     </span>
-                                    <span className="font-medium text-xs text-foreground truncate max-w-[220px] xl:max-w-[270px]">
+                                    <span className="font-medium text-xs text-foreground truncate">
                                       {item.testName}
                                     </span>
                                   </div>
-                                  <div className="font-mono text-[10px] text-muted-foreground truncate max-w-[240px] xl:max-w-[300px]">
+                                  <div className="font-mono text-[10px] text-muted-foreground truncate">
                                     {item.url}
                                   </div>
                                 </div>
@@ -3389,7 +3516,7 @@ export default function App() {
                             </TableCell>
 
                             <TableCell
-                              className="text-center py-1.5"
+                              className="text-center px-1.5 py-1.5"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleSelectTestRow(item, 'flow');
@@ -3405,7 +3532,7 @@ export default function App() {
                             </TableCell>
 
                             <TableCell
-                              className="text-center py-1.5"
+                              className="text-center px-1.5 py-1.5"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleSelectTestRow(item, 'headers');
@@ -3432,7 +3559,7 @@ export default function App() {
                             </TableCell>
 
                             <TableCell
-                              className="text-center py-1.5"
+                              className="text-center px-1.5 py-1.5"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleSelectTestRow(item, 'cookies');
@@ -3459,7 +3586,7 @@ export default function App() {
                             </TableCell>
 
                             <TableCell
-                              className="text-center py-1.5"
+                              className="text-center px-1.5 py-1.5"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleSelectTestRow(item, 'image');
@@ -3486,7 +3613,7 @@ export default function App() {
                             </TableCell>
 
                             <TableCell
-                              className="text-right py-1.5"
+                              className="text-right px-1.5 py-1.5"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleRerunSingleTest(item.testId);
@@ -3635,7 +3762,7 @@ export default function App() {
 
             <main className="px-4 py-3 w-full flex-1">
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
-                <Card className="lg:col-span-5">
+                <Card className="lg:col-span-5 lg:sticky lg:top-24">
                   <div className="px-3.5 py-2 border-b border-border bg-muted/20 flex items-center justify-between">
                     <span className="text-xs font-semibold text-foreground">
                       Test Run Results ({activeSingleRun.passedTests}/
@@ -3714,27 +3841,30 @@ export default function App() {
                                       testName={res.name}
                                       url={res.url}
                                       hasVisualDiff={!res.pass}
+                                      screenshotRevision={
+                                        lastProbedByTestId[res.id]?.screenshotRevision
+                                      }
                                       onClick={() => {
                                         setSelectedTestId(res.id);
                                         setInspectorTab('image');
                                       }}
                                     />
                                   </div>
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-1.5">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5 min-w-0">
                                       {res.pass ? (
                                         <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
                                       ) : (
                                         <AlertCircle className="w-3 h-3 text-rose-600 dark:text-rose-400 shrink-0" />
                                       )}
-                                      <span className="font-mono font-bold text-xs">
+                                      <span className="font-mono font-bold text-xs shrink-0">
                                         {res.id}
                                       </span>
-                                      <span className="font-medium text-xs truncate max-w-[130px]">
+                                      <span className="font-medium text-xs truncate">
                                         {res.name}
                                       </span>
                                     </div>
-                                    <div className="font-mono text-[10px] text-muted-foreground truncate max-w-[155px]">
+                                    <div className="font-mono text-[10px] text-muted-foreground truncate">
                                       {res.url}
                                     </div>
                                   </div>

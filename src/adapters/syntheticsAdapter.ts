@@ -56,8 +56,8 @@ export interface PersistedPortalState {
   inspectorTab: 'flow' | 'headers' | 'cookies' | 'image';
 }
 
-export const STORAGE_KEY = 'salesforce-gate-portal-state-v8-live';
-export const CURRENT_VERSION = 8;
+export const STORAGE_KEY = 'salesforce-gate-portal-state-v10-live';
+export const CURRENT_VERSION = 10;
 
 export function isDummySeededRun(r: Partial<RunRecord>): boolean {
   if (!r) return true;
@@ -120,13 +120,15 @@ export function loadPersistedPortalState(): PersistedPortalState {
     return fallback;
   }
   try {
-    // Clean up all legacy storage keys that previously cached seeded/dummy runs
+    // Clean up all legacy storage keys that previously cached older states
     window.localStorage.removeItem('akamai-gate-portal-state-v2');
     window.localStorage.removeItem('salesforce-gate-portal-state-v3');
     window.localStorage.removeItem('salesforce-gate-portal-state-v4');
     window.localStorage.removeItem('salesforce-gate-portal-state-v5-live');
     window.localStorage.removeItem('salesforce-gate-portal-state-v6-live');
     window.localStorage.removeItem('salesforce-gate-portal-state-v7-live');
+    window.localStorage.removeItem('salesforce-gate-portal-state-v8-live');
+    window.localStorage.removeItem('salesforce-gate-portal-state-v9-live');
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<PersistedPortalState>;
@@ -141,9 +143,17 @@ export function loadPersistedPortalState(): PersistedPortalState {
     ) {
       return fallback;
     }
+    // Ensure new template properties (apac, emea, americas, japan, uk, germany) are always merged
+    const existingAppIds = new Set((parsed.apps || []).map((a) => a.id));
+    const mergedApps = [
+      ...(parsed.apps || []),
+      ...DEFAULT_TEMPLATE_CONFIG.properties.filter((p) => !existingAppIds.has(p.id)),
+    ];
+
     return {
       ...fallback,
       ...parsed,
+      apps: mergedApps,
       runs: liveOnlyRuns,
     };
   } catch {

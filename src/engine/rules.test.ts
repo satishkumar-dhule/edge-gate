@@ -953,10 +953,38 @@ test('CloudFront SPA Portal Bundle, Terraform portal_spa_bundle & Makefile pipel
   assert.ok(makefile.includes('scripts/verify-cloudfront-e2e.ts'));
 });
 
-test('DOM Screenshot Renderer generates high-resolution webpage snapshots and T03 visual diff overlays for Side A vs Side B', async () => {
-  const { buildDomScreenshotDataUri, resolvePageVisualTheme } = await import(
-    './domScreenshotRenderer'
+test('DOM Screenshot Renderer generates high-resolution webpage snapshots, live screenshot URLs with revision cache-busting, and T03 visual diff overlays for Side A vs Side B', async () => {
+  const {
+    buildDomScreenshotDataUri,
+    resolvePageVisualTheme,
+    resolveLiveScreenshotUrl,
+  } = await import('./domScreenshotRenderer');
+
+  // 0. Verify resolveLiveScreenshotUrl produces distinct paths per property & test and appends revision cache-buster on rerun
+  const urlWwwT01 = resolveLiveScreenshotUrl({
+    testId: 'T01',
+    url: 'https://www.salesforce.com/',
+    side: 'A',
+  });
+  const urlWwwT01Rev = resolveLiveScreenshotUrl({
+    testId: 'T01',
+    url: 'https://www.salesforce.com/',
+    side: 'A',
+    revision: 1731300000123,
+  });
+  const urlLoginT01 = resolveLiveScreenshotUrl({
+    testId: 'T01',
+    url: 'https://login.salesforce.com/',
+    side: 'A',
+  });
+  assert.equal(urlWwwT01, '/screenshots/www-T01-sideA.jpg?v=live3');
+  assert.equal(
+    urlWwwT01Rev,
+    '/screenshots/www-T01-sideA.jpg?v=live3&r=1731300000123'
   );
+  assert.equal(urlLoginT01, '/screenshots/login-T01-sideA.jpg?v=live3');
+  assert.notEqual(urlWwwT01, urlWwwT01Rev);
+  assert.notEqual(urlWwwT01, urlLoginT01);
 
   // 1. Verify T01 Side A and Side B match when highlightDiff is false
   const t01SideA = buildDomScreenshotDataUri({

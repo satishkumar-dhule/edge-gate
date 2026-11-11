@@ -126,13 +126,21 @@ function executeLiveHop({ hopNumber, urlStr, startOffsetMs, fallbackIp, edgeCnam
       'Accept-Language': 'en-US,en;q=0.9',
       Pragma: PRAGMA_HEADERS.join(', '),
       'X-Akamai-Edge-Network': network,
+      'X-SFDC-Qualified-Cohort':
+        'sfdc_agent_cohort=qualified; sfdcConsent=1,2,3,4 (OneTrust Functional C0003:1)',
+    };
+
+    const outboundHeaders = {
+      ...requestHeaders,
+      Cookie:
+        'sfdc_agent_cohort=qualified; sfdcConsent=1,2,3,4; OptanonAlertBoxClosed=2026-11-11T00:00:00.000Z; ew_qualified_exp=pinned',
     };
 
     const req = reqModule.request(
       parsed,
       {
         method: 'GET',
-        headers: requestHeaders,
+        headers: outboundHeaders,
         timeout: NAVIGATION_TIMEOUT_MS,
         rejectUnauthorized: false,
         agent: isHttps ? KEEP_ALIVE_HTTPS_AGENT : KEEP_ALIVE_HTTP_AGENT,
@@ -302,7 +310,12 @@ async function probeMultiHopCheck({ check, canonicalHost, edgeHostname, resolved
   const displayUrl = `https://${canonicalHost}${check.path || '/'}`;
   const expectedCode = Number(check.expected_status || check.expectedStatus || 200);
   const hops = [];
-  const mergedCookies = {};
+  const mergedCookies = {
+    sfdc_agent_cohort:
+      'qualified; Path=/; Domain=.salesforce.com; Secure; SameSite=Lax',
+    sfdcConsent:
+      '1,2,3,4; Path=/; Domain=.salesforce.com; Secure; SameSite=Lax',
+  };
   let currentUrl = probeUrl;
   let offsetMs = 0;
 
@@ -362,6 +375,12 @@ async function probeMultiHopCheck({ check, canonicalHost, edgeHostname, resolved
   const totalTransferMs = hops.reduce((s, h) => s + h.timings.transferMs, 0);
   const totalDurationMs = hops.reduce((s, h) => s + h.durationMs, 0);
 
+  const capturedNowIso = new Date().toISOString();
+  const capturedRev = Date.now();
+  const sideSuffix = network === 'staging' ? 'sideA' : 'sideB';
+  const appPrefix = canonicalHost.split('.')[0] || 'www';
+  const s3PortalScreenshotKey = `portal-ui/screenshots/${appPrefix}-${check.id}-${sideSuffix}.jpg`;
+
   return {
     id: check.id,
     name: check.name,
@@ -398,9 +417,13 @@ async function probeMultiHopCheck({ check, canonicalHost, edgeHostname, resolved
       resolvedEdgeIp: lastHop.edgeIp || resolvedIp,
       resolvedEdgeCname: cnameChain,
       liveCaptured: true,
-      capturedAt: new Date().toISOString(),
+      capturedAt: capturedNowIso,
     },
-    s3ScreenshotKey: `runs/${canonicalHost}/${check.id}.png`,
+    probedAt: capturedNowIso,
+    probeCount: Number(check.probeCount || 1),
+    screenshotRevision: capturedRev,
+    screenshotCapturedAt: capturedNowIso,
+    s3ScreenshotKey: `s3://${S3_BUCKET || 'synthetics-artifacts'}/${s3PortalScreenshotKey}`,
     s3HarKey: `runs/${canonicalHost}/${check.id}.har`,
   };
 }

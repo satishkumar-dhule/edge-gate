@@ -867,7 +867,7 @@ resource "aws_s3_object" "portal_spa_bundle" {
   source        = "${local.spa_dist_dir}/${each.value}"
   etag          = filemd5("${local.spa_dist_dir}/${each.value}")
   content_type  = try(lookup(local.spa_mime_types, regex("\\.[^.]+$", each.value), "application/octet-stream"), "application/octet-stream")
-  cache_control = each.value == "index.html" ? "no-cache, no-store, must-revalidate" : "public, max-age=31536000, immutable"
+  cache_control = (each.value == "index.html" || startswith(each.value, "screenshots/")) ? "no-cache, max-age=0, must-revalidate" : "public, max-age=31536000, immutable"
 
   depends_on = [aws_s3_bucket_versioning.synthetics_versioning]
 }
@@ -911,7 +911,7 @@ resource "aws_cloudfront_distribution" "portal_cdn" {
     }
   }
 
-  # Default Behavior: Serve React SPA from S3 with OAC (honors S3 Cache-Control)
+  # Default Behavior: Serve React SPA & screenshots from S3 with OAC (honors S3 Cache-Control + query string revision)
   default_cache_behavior {
     allowed_methods        = ["GET", "HEAD", "OPTIONS"]
     cached_methods         = ["GET", "HEAD"]
@@ -923,7 +923,7 @@ resource "aws_cloudfront_distribution" "portal_cdn" {
     max_ttl                = 86400
 
     forwarded_values {
-      query_string = false
+      query_string = true
       cookies {
         forward = "none"
       }

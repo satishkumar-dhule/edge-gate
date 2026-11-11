@@ -376,7 +376,7 @@ export async function runCloudFrontE2ETests(baseUrl?: string): Promise<void> {
     await page.locator('button[role="tab"]:has-text("Cookies")').click();
     await page.waitForSelector('th:has-text("Cookie")', { timeout: 8000 });
 
-    // 8. Select T03 & verify AI Visual Comparison is active (AI Verdict: MINOR, Δ 1.8%) + trigger "Run Nova Lite Judge" & "Rerun Probe"
+    // 8. Select T03 & verify AI Visual Comparison is active (AI Verdict: MINOR, Δ 1.8%) + trigger "Rerun Probe" & verify screenshot revision update
     await page.locator('[data-testid="page-mini-thumb-img-T03"]').first().click();
     if (await imageAiTab.count() > 0) {
       await imageAiTab.click();
@@ -386,12 +386,16 @@ export async function runCloudFrontE2ETests(baseUrl?: string): Promise<void> {
     const rerunProbeBtn = page.locator('button:has-text("Rerun Probe")').first();
     if (await rerunProbeBtn.count() > 0) {
       await rerunProbeBtn.click();
-      await page.waitForTimeout(900);
+      await page.waitForSelector('text=Screenshot Captured', { timeout: 15000 });
+      await page.waitForFunction(() => {
+        const a = document.querySelector('[data-testid="dom-snapshot-img-A"]');
+        return Boolean(a && (a.getAttribute('src') || '').includes('&r='));
+      }, { timeout: 10000 });
     }
     const judgeBtn = page.locator('button:has-text("Run Nova Lite Judge")');
     if (await judgeBtn.count() > 0) {
       await judgeBtn.click();
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(600);
     }
 
     // Assert ZERO dummy tokens in Diff view too

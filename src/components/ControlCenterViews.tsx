@@ -278,8 +278,17 @@ export const PageMiniThumb: React.FC<{
   url: string;
   hasVisualDiff?: boolean;
   isRedirect?: boolean;
+  screenshotRevision?: number | string;
   onClick?: () => void;
-}> = ({ testId, testName, url, hasVisualDiff, isRedirect, onClick }) => {
+}> = ({
+  testId,
+  testName,
+  url,
+  hasVisualDiff,
+  isRedirect,
+  screenshotRevision,
+  onClick,
+}) => {
   const [fallback, setFallback] = useState(false);
   const liveThumbUrl = resolveLiveScreenshotUrl({
     testId,
@@ -287,7 +296,11 @@ export const PageMiniThumb: React.FC<{
     url,
     side: 'A',
     highlightDiff: hasVisualDiff,
+    revision: screenshotRevision,
   });
+  React.useEffect(() => {
+    setFallback(false);
+  }, [liveThumbUrl]);
   const svgFallback = buildDomScreenshotDataUri({
     testId,
     testName,

@@ -111,6 +111,13 @@ export interface TestResult {
   stagingEdgeIp?: string;
   edgeHostname?: string;
   note?: string;
+  probedAt?: string;
+  probeCount?: number;
+  screenshotRevision?: number;
+  screenshotCapturedAt?: string;
+  screenshotSha256?: string;
+  screenshotBytes?: number;
+  s3ScreenshotKey?: string;
 }
 
 export interface RunRecord {

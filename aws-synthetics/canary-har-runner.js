@@ -139,6 +139,43 @@ exports.handler = async () => {
     'X-Akamai-Release-Gate-Target': targetId,
     ...propertyHeaders,
   });
+  // Set Akamai EdgeWorker Qualified Cohort & OneTrust Functional Consent cookies so Qualified Piper AI SDR loads
+  if (typeof page.setCookie === 'function') {
+    await page.setCookie(
+      {
+        name: 'sfdc_agent_cohort',
+        value: 'qualified',
+        domain: `.${domain}`,
+        path: '/',
+        secure: true,
+        sameSite: 'Lax',
+      },
+      {
+        name: 'sfdcConsent',
+        value: '1,2,3,4',
+        domain: `.${domain}`,
+        path: '/',
+        secure: true,
+        sameSite: 'Lax',
+      },
+      {
+        name: 'OptanonAlertBoxClosed',
+        value: '2026-11-11T00:00:00.000Z',
+        domain: `.${domain}`,
+        path: '/',
+        secure: true,
+        sameSite: 'Lax',
+      },
+      {
+        name: 'ew_qualified_exp',
+        value: 'pinned',
+        domain: `.${domain}`,
+        path: '/',
+        secure: true,
+        sameSite: 'Lax',
+      }
+    );
+  }
 
   const results = [];
   for (const check of suiteChecks) {

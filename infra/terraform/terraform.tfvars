@@ -7,7 +7,7 @@
 aws_region             = "us-east-1"
 environment            = "prod"
 project_name           = "salesforce-edge-release-gate"
-operator_email         = "user-wmgspcbttqts@salesforce.com"
+operator_email         = "user-baluuezlosgz@salesforce.com"
 operator_role          = "Lead Edge Release Engineer"
 akamai_account_context = "SFDC-EDGE-373211957869 (AWS 373211957869 · Akamai Prod + Staging)"
 
