@@ -71,14 +71,7 @@ export function evaluateNovaLiteVisualDiff(
   req: NovaLiteJudgeRequest,
   config: TemplateConfig = DEFAULT_TEMPLATE_CONFIG
 ): NovaLiteJudgeResponse {
-  const isCrossNetwork = req.candidateTarget !== req.baselineTarget;
-  const isHeroLayoutTest = req.testId === 'T03';
-  const deltaPct =
-    req.pixelDiffPercent !== undefined
-      ? req.pixelDiffPercent
-      : isCrossNetwork && isHeroLayoutTest
-      ? 1.8
-      : 0.0;
+  const deltaPct = req.pixelDiffPercent !== undefined ? req.pixelDiffPercent : 0.0;
 
   if (deltaPct > 0.1) {
     return {
@@ -89,13 +82,14 @@ export function evaluateNovaLiteVisualDiff(
       verdict: deltaPct > 5.0 ? 'different' : 'minor',
       pixelDiffPercent: deltaPct,
       confidence: 0.97,
-      summary: `AWS Bedrock ${config.infrastructure.visualJudgeModel} detected a 14px hero callout spacing shift and updated badge contrast on ${req.candidateTarget} vs ${req.baselineTarget}.`,
+      summary: `AWS Bedrock ${config.infrastructure.visualJudgeModel} evaluated ${deltaPct.toFixed(
+        2
+      )}% measured pixel delta between ${req.candidateTarget} and ${req.baselineTarget}.`,
       differences: [
         {
-          region: 'hero-center (y: 180..340)',
-          description:
-            'Hero callout container shifted down 14px; primary CTA button alignment and typography intact.',
-          severity: 'minor',
+          region: 'measured-viewport',
+          description: `Measured ${deltaPct.toFixed(2)}% pixel variance between captured screenshots.`,
+          severity: deltaPct > 5.0 ? 'different' : 'minor',
         },
       ],
       evaluatedAt: new Date().toISOString(),
@@ -1550,12 +1544,13 @@ export async function judgeVisualScreenshotsWithNovaLite(params: {
   }
 
   // Local / preview fallback before AWS deployment
+  const delta = typeof params.pixelDiffPercent === 'number' ? params.pixelDiffPercent : 0;
   return {
     modelId: BEDROCK_NOVA_LITE_MODEL_ID,
-    verdict: params.testId === 'T03' ? 'minor' : 'same',
+    verdict: delta > 5.0 ? 'different' : delta > 0.1 ? 'minor' : 'same',
     summary:
-      params.testId === 'T03'
-        ? 'AWS Bedrock amazon.nova-lite-v1:0 detected a 14px hero callout spacing shift on Staging.'
+      delta > 0.1
+        ? \`AWS Bedrock amazon.nova-lite-v1:0 evaluated \${delta.toFixed(2)}% measured pixel delta.\`
         : 'Screenshots match (0.0% delta).',
   };
 }

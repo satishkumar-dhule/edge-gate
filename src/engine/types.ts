@@ -118,6 +118,7 @@ export interface TestResult {
   screenshotSha256?: string;
   screenshotBytes?: number;
   s3ScreenshotKey?: string;
+  pixelDiffPercent?: number;
 }
 
 export interface RunRecord {

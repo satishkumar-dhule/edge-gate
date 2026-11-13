@@ -9,7 +9,10 @@
  * ============================================================================
  */
 
+import { inferPropertyIdFromUrl } from '../config/template.config';
+
 export interface DomScreenshotOptions {
+  appId?: string;
   testId?: string;
   testName?: string;
   url?: string;
@@ -36,15 +39,6 @@ interface PageVisualTheme {
   primaryCta: string;
   secondaryCta: string;
   cards: Array<{ title: string; metric: string; subtitle: string }>;
-}
-
-function escapeXml(unsafe: string): string {
-  return String(unsafe || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 export function resolvePageVisualTheme(
@@ -1049,6 +1043,122 @@ export function resolvePageVisualTheme(
     }
   }
 
+  const regionalPropId = inferPropertyIdFromUrl(url);
+  if (regionalPropId === 'japan') {
+    return {
+      propertyBadge: 'セールスフォース・ジャパン (Salesforce Japan) · 東京 NRT Edge PoP',
+      accentHex: '#0176d3',
+      SecondaryHex: '#032d60',
+      heroBgGradient: ['#eff6ff', '#dbeafe'],
+      announcementBanner: '人とAIエージェントが共創する「エージェンティック エンタープライズ」へ · NRT-STG-01 / NRT-PRD-08',
+      headline: 'No.1のAgentic CRMで、次の一歩を (世界No.1 AI CRM)',
+      subheadline:
+        '自律型AIエージェント「Agentforce」とCustomer 360・Data Cloudを統合し、営業・サービス・マーケティング・コマースの生産性を飛躍的に向上させます。',
+      primaryCta: '無料で試す',
+      secondaryCta: 'デモを見る',
+      cards: [
+        { title: 'Agentforce自律型AI', metric: '世界No.1', subtitle: '日本語最適化AIエージェント' },
+        { title: '国内導入事例', metric: '150+ 社', subtitle: '製造・金融・小売のDX推進' },
+        { title: '東京 NRT Edge PoP', metric: '23.54.18.92', subtitle: 'ja-JP · prorigin=JP1' },
+      ],
+    };
+  }
+  if (regionalPropId === 'germany') {
+    return {
+      propertyBadge: 'Salesforce Deutschland (DACH) · Frankfurt FRA Edge PoP',
+      accentHex: '#0176d3',
+      SecondaryHex: '#032d60',
+      heroBgGradient: ['#eff6ff', '#e0f2fe'],
+      announcementBanner: 'Menschen und KI-Agenten gemeinsam für Ihren Kundenerfolg · FRA-STG-01 / FRA-PRD-06',
+      headline: 'Das weltweit führende KI-CRM für das Agentic Enterprise',
+      subheadline:
+        'Verbinden Sie Vertrieb, Service, Marketing, Commerce und Data Cloud mit autonomen Agentforce KI-Agenten – DSGVO-konform auf EU-Hyperforce.',
+      primaryCta: 'Kostenlos testen',
+      secondaryCta: 'Demo ansehen',
+      cards: [
+        { title: 'Agentforce KI-Plattform', metric: '#1 KI-CRM', subtitle: 'Autonome KI-Agenten (de-DE)' },
+        { title: 'DSGVO & EU-Cloud', metric: '100% Konform', subtitle: 'Frankfurt Hyperforce Region' },
+        { title: 'Frankfurt FRA Edge', metric: '2.16.106.34', subtitle: 'de-DE · prorigin=DE1' },
+      ],
+    };
+  }
+  if (regionalPropId === 'uk') {
+    return {
+      propertyBadge: 'Salesforce UK & Ireland · London LHR Edge PoP',
+      accentHex: '#0176d3',
+      SecondaryHex: '#032d60',
+      heroBgGradient: ['#eff6ff', '#dbeafe'],
+      announcementBanner: 'Humans with Agents Drive Customer Success Across the UK · LHR-STG-02 / LHR-PRD-07',
+      headline: 'The World’s #1 AI CRM for UK Enterprises & SMBs',
+      subheadline:
+        'Deliver autonomous customer experiences across Sales, Service, Marketing, and Commerce with GBP (£) Editions and UK GDPR compliance.',
+      primaryCta: 'Start Free Trial',
+      secondaryCta: 'Watch UK Demos',
+      cards: [
+        { title: 'UK Editions & Pricing', metric: '£20/user', subtitle: 'Transparent GBP Billing' },
+        { title: 'Agentforce UK', metric: '24/7 AI', subtitle: 'Autonomous Service & SDR' },
+        { title: 'London LHR Edge PoP', metric: '2.21.34.72', subtitle: 'en-GB · prorigin=UK1' },
+      ],
+    };
+  }
+  if (regionalPropId === 'apac') {
+    return {
+      propertyBadge: 'Salesforce Asia Pacific (APAC) · Singapore SIN Edge PoP',
+      accentHex: '#0176d3',
+      SecondaryHex: '#032d60',
+      heroBgGradient: ['#eff6ff', '#e0f2fe'],
+      announcementBanner: 'APAC Multi-Hub Routing (Singapore, Sydney & Mumbai) · SIN-STG-02 / SIN-PRD-09',
+      headline: 'Powering Digital Transformation Across Asia Pacific',
+      subheadline:
+        'Unite customer data and autonomous Agentforce AI across ASEAN, Australia & New Zealand, and India with low-latency Akamai Edge routing.',
+      primaryCta: 'Try For Free',
+      secondaryCta: 'APAC Customer Stories',
+      cards: [
+        { title: 'ASEAN & ANZ Hub', metric: 'SIN / SYD', subtitle: 'Multi-Currency & Locale' },
+        { title: 'India Growth Hub', metric: 'BOM Edge', subtitle: 'High-Scale CRM Delivery' },
+        { title: 'Singapore SIN PoP', metric: '23.216.148.44', subtitle: 'en-SG · prorigin=AP1' },
+      ],
+    };
+  }
+  if (regionalPropId === 'emea') {
+    return {
+      propertyBadge: 'Salesforce Europe, Middle East & Africa · Amsterdam AMS Edge PoP',
+      accentHex: '#0176d3',
+      SecondaryHex: '#032d60',
+      heroBgGradient: ['#eff6ff', '#dbeafe'],
+      announcementBanner: 'Pan-European Multi-Locale Edge Routing (/eu/, /fr/, /es/, /it/, /nl/) · AMS-STG-03',
+      headline: 'Le CRM IA n° 1 au monde · El CRM con IA n.º 1 del mundo',
+      subheadline:
+        'Multi-language European Customer 360 and Agentforce AI platform with strict EU GDPR data residency and sovereign cloud controls.',
+      primaryCta: 'Essayer gratuitement',
+      secondaryCta: 'Voir la démo',
+      cards: [
+        { title: 'EU Locales', metric: 'FR · ES · IT · NL', subtitle: 'Localized Edge Variants' },
+        { title: 'EU Data Residency', metric: 'GDPR Verified', subtitle: 'Zero-Data Retention AI' },
+        { title: 'Amsterdam AMS PoP', metric: '2.18.64.112', subtitle: 'fr-FR / es-ES · prorigin=EU1' },
+      ],
+    };
+  }
+  if (regionalPropId === 'americas') {
+    return {
+      propertyBadge: 'Salesforce Americas (LATAM & Canada) · GRU / MEX / YYZ Edge PoP',
+      accentHex: '#0176d3',
+      SecondaryHex: '#032d60',
+      heroBgGradient: ['#eff6ff', '#e0f2fe'],
+      announcementBanner: 'El CRM con IA #1 del mundo · O CRM com IA nº 1 do mundo · GRU-STG-02 / GRU-PRD-05',
+      headline: 'Impulsa el éxito de tus clientes con Agentforce y Customer 360',
+      subheadline:
+        'Conecta ventas, servicio, marketing y comercio en México (/mx/), Brasil (/br/) y Canadá (/ca/, /fr-ca/) en una sola plataforma integrada.',
+      primaryCta: 'Prueba gratis',
+      secondaryCta: 'Ver demostración',
+      cards: [
+        { title: 'LATAM Español & PT-BR', metric: 'MX · BR', subtitle: 'Localized LATAM Gateways' },
+        { title: 'Canada EN & FR-CA', metric: 'Bilingual', subtitle: 'PIPEDA & Law 25 Compliant' },
+        { title: 'Americas Edge PoP', metric: '23.44.82.19', subtitle: 'es-MX / pt-BR · prorigin=LA1' },
+      ],
+    };
+  }
+
   // www.salesforce.com specific test cases T01..T08
   switch (idUpper) {
     case 'T02':
@@ -1199,261 +1309,23 @@ export function resolvePageVisualTheme(
 }
 
 /**
- * Generates a crisp, self-contained 1280x760 SVG webpage screenshot as a `data:image/svg+xml;utf8,...` URI.
- * When `highlightDiff` is true on `Side A`, renders the actual +14px vertical layout shift
- * caused by the staging promotional sub-banner so Side A and Side B visually demonstrate
- * what Amazon Bedrock Nova Lite (`amazon.nova-lite-v1:0`) evaluates.
- */
-export function buildDomScreenshotDataUri(options: DomScreenshotOptions): string {
-  const {
-    testId = 'T01',
-    testName = 'Salesforce Global Home & Hero Experience',
-    url = 'https://www.salesforce.com/',
-    side = 'A',
-    highlightDiff = false,
-    showOverlay = false,
-    overlayText = 'AI Region: +14px vertical offset',
-    httpStatus = 200,
-    durationMs = 78,
-    edgeHostname = 'www.salesforce.com.edgekey.net',
-    edgeIp = side === 'A' ? '23.48.201.18' : '23.212.251.15',
-    cacheStatus = 'TCP_HIT',
-  } = options;
-
-  const theme = resolvePageVisualTheme(url, testId, testName);
-  const isShiftedStaging = Boolean(highlightDiff && side === 'A');
-  const shiftY = isShiftedStaging ? 26 : 0;
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" width="1280" height="760">
-  <defs>
-    <linearGradient id="heroGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="${theme.heroBgGradient[0]}" />
-      <stop offset="100%" stop-color="${theme.heroBgGradient[1]}" />
-    </linearGradient>
-    <linearGradient id="ctaGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="${theme.accentHex}" />
-      <stop offset="100%" stop-color="#0b5cab" />
-    </linearGradient>
-    <filter id="cardShadow" x="-4%" y="-4%" width="108%" height="112%">
-      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#032d60" flood-opacity="0.08" />
-    </filter>
-  </defs>
-
-  <!-- Page Canvas -->
-  <rect width="1280" height="760" fill="#f8fafc" />
-
-  <!-- Top Global Navigation Bar -->
-  <rect x="0" y="0" width="1280" height="68" fill="#ffffff" />
-  <line x1="0" y1="68" x2="1280" y2="68" stroke="#e2e8f0" stroke-width="1.5" />
-
-  <!-- Salesforce Cloud Emblem -->
-  <g transform="translate(36, 14)">
-    <rect x="0" y="2" width="54" height="36" rx="18" fill="#00a1e0" />
-    <circle cx="18" cy="14" r="12" fill="#00a1e0" />
-    <circle cx="34" cy="12" r="14" fill="#00a1e0" />
-    <text x="27" y="25" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="800" fill="#ffffff" text-anchor="middle">salesforce</text>
-  </g>
-
-  <!-- Primary Nav Links -->
-  <g font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600" fill="#032d60">
-    <text x="116" y="40">Products</text>
-    <text x="196" y="40">Industries</text>
-    <text x="284" y="40">Customers</text>
-    <text x="378" y="40">Learning</text>
-    <text x="458" y="40">Support</text>
-    <text x="534" y="40" fill="${theme.accentHex}">Agentforce AI</text>
-  </g>
-
-  <!-- Right Nav Utility & CTA -->
-  <g transform="translate(880, 16)">
-    <rect x="0" y="4" width="136" height="30" rx="15" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1" />
-    <text x="68" y="23" font-family="ui-monospace, monospace" font-size="11" font-weight="600" fill="#334155" text-anchor="middle">${escapeXml(testId)} · HTTP ${httpStatus}</text>
-    <rect x="150" y="2" width="92" height="34" rx="6" fill="#ffffff" stroke="#0176d3" stroke-width="1.5" />
-    <text x="196" y="24" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="#0176d3" text-anchor="middle">Login</text>
-    <rect x="252" y="2" width="116" height="34" rx="6" fill="#2e844a" />
-    <text x="310" y="24" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">Try for free</text>
-  </g>
-
-  <!-- Announcement Ribbon -->
-  <rect x="0" y="69" width="1280" height="36" fill="#032d60" />
-  <text x="640" y="92" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">
-    ✦ ${escapeXml(theme.announcementBanner)} — Explore Now →
-  </text>
-
-  ${
-    isShiftedStaging
-      ? `<!-- STAGING CANDIDATE EXTRA PROMO BAR CAUSING +14px VERTICAL LAYOUT SHIFT -->
-  <rect x="0" y="105" width="1280" height="26" fill="#fef3c7" stroke="#f59e0b" stroke-width="1" />
-  <text x="640" y="122" font-family="ui-monospace, monospace" font-size="11.5" font-weight="700" fill="#92400e" text-anchor="middle">
-    [STAGING CANDIDATE BANNER] Agentforce 2.0 Autonomous AI Preview — Hero container shifted +14px vertically
-  </text>`
-      : ''
-  }
-
-  <!-- Hero Section Background -->
-  <g transform="translate(0, ${105 + shiftY})">
-    <rect x="0" y="0" width="1280" height="360" fill="url(#heroGrad)" />
-
-    <!-- Left Column: Hero Copy & Actions -->
-    <g transform="translate(56, 38)">
-      <rect x="0" y="0" width="380" height="28" rx="14" fill="#ffffff" stroke="#bfdbfe" stroke-width="1.5" />
-      <circle cx="16" cy="14" r="5" fill="${theme.accentHex}" />
-      <text x="30" y="18" font-family="system-ui, sans-serif" font-size="12" font-weight="700" fill="${theme.SecondaryHex}">
-        ${escapeXml(theme.propertyBadge.slice(0, 48))}
-      </text>
-
-      <text x="0" y="74" font-family="system-ui, -apple-system, sans-serif" font-size="36" font-weight="800" fill="#032d60">
-        ${escapeXml(theme.headline.slice(0, 42))}
-      </text>
-      ${
-        theme.headline.length > 42
-          ? `<text x="0" y="116" font-family="system-ui, -apple-system, sans-serif" font-size="34" font-weight="800" fill="${theme.accentHex}">
-        ${escapeXml(theme.headline.slice(42, 84))}
-      </text>`
-          : `<text x="0" y="116" font-family="system-ui, -apple-system, sans-serif" font-size="28" font-weight="700" fill="${theme.accentHex}">
-        Powered by Einstein 1 &amp; Autonomous Agents
-      </text>`
-      }
-
-      <text x="0" y="156" font-family="system-ui, sans-serif" font-size="16" font-weight="400" fill="#334155">
-        ${escapeXml(theme.subheadline.slice(0, 74))}
-      </text>
-      <text x="0" y="180" font-family="system-ui, sans-serif" font-size="16" font-weight="400" fill="#334155">
-        ${escapeXml(theme.subheadline.slice(74, 148))}
-      </text>
-
-      <!-- Hero CTA Buttons -->
-      <g transform="translate(0, 210)">
-        <rect x="0" y="0" width="210" height="48" rx="8" fill="url(#ctaGrad)" filter="url(#cardShadow)" />
-        <text x="105" y="30" font-family="system-ui, sans-serif" font-size="15" font-weight="700" fill="#ffffff" text-anchor="middle">
-          ${escapeXml(theme.primaryCta)}
-        </text>
-
-        <rect x="226" y="0" width="196" height="48" rx="8" fill="#ffffff" stroke="#0176d3" stroke-width="2" />
-        <text x="324" y="30" font-family="system-ui, sans-serif" font-size="15" font-weight="700" fill="#0176d3" text-anchor="middle">
-          ${escapeXml(theme.secondaryCta)}
-        </text>
-      </g>
-    </g>
-
-    <!-- Right Column: Interactive Customer 360 / Agentforce Visual Preview Card -->
-    <g transform="translate(740, 32)" filter="url(#cardShadow)">
-      <rect x="0" y="0" width="484" height="296" rx="14" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
-      <rect x="0" y="0" width="484" height="40" rx="14" fill="#032d60" />
-      <circle cx="20" cy="20" r="5" fill="#ef4444" />
-      <circle cx="36" cy="20" r="5" fill="#f59e0b" />
-      <circle cx="52" cy="20" r="5" fill="#10b981" />
-      <text x="74" y="24" font-family="ui-monospace, monospace" font-size="11.5" font-weight="600" fill="#e2e8f0">
-        ${escapeXml(url.replace(/^https?:\/\//, '').slice(0, 44))}
-      </text>
-
-      <!-- Agentforce Live Telemetry Widget inside Hero Card -->
-      <rect x="20" y="56" width="212" height="104" rx="10" fill="#f0f9ff" stroke="#bae6fd" stroke-width="1" />
-      <text x="34" y="80" font-family="system-ui, sans-serif" font-size="12" font-weight="700" fill="#0369a1">AGENTFORCE COPILOT</text>
-      <text x="34" y="112" font-family="system-ui, sans-serif" font-size="26" font-weight="800" fill="#032d60">99.98%</text>
-      <text x="34" y="136" font-family="system-ui, sans-serif" font-size="11.5" fill="#475569">Grounded Data Cloud Resolution</text>
-
-      <rect x="248" y="56" width="216" height="104" rx="10" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1" />
-      <text x="262" y="80" font-family="system-ui, sans-serif" font-size="12" font-weight="700" fill="#15803d">AKAMAI EDGE CACHE</text>
-      <text x="262" y="112" font-family="ui-monospace, monospace" font-size="24" font-weight="800" fill="#14532d">${escapeXml(cacheStatus)}</text>
-      <text x="262" y="136" font-family="ui-monospace, monospace" font-size="11.5" fill="#475569">TTFB: ${durationMs}ms · IP ${escapeXml(edgeIp)}</text>
-
-      <!-- Mini Chart Bars -->
-      <rect x="20" y="176" width="444" height="98" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
-      <text x="36" y="200" font-family="system-ui, sans-serif" font-size="12" font-weight="700" fill="#1e293b">
-        Customer 360 Real-Time Engagement &amp; Edge Telemetry
-      </text>
-      <rect x="36" y="216" width="320" height="12" rx="6" fill="#0176d3" />
-      <rect x="36" y="236" width="265" height="12" rx="6" fill="#00a1e0" />
-      <rect x="36" y="254" width="380" height="10" rx="5" fill="#10b981" />
-      <text x="448" y="226" font-family="ui-monospace, monospace" font-size="11" font-weight="700" fill="#032d60" text-anchor="end">HTTP ${httpStatus}</text>
-    </g>
-  </g>
-
-  <!-- 3 Feature Metric Cards Row -->
-  <g transform="translate(56, ${492 + shiftY})">
-    ${theme.cards
-      .map(
-        (card, idx) => `
-    <g transform="translate(${idx * 396}, 0)" filter="url(#cardShadow)">
-      <rect x="0" y="0" width="376" height="168" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5" />
-      <rect x="0" y="0" width="376" height="6" rx="3" fill="${idx === 0 ? theme.accentHex : idx === 1 ? '#00a1e0' : '#10b981'}" />
-      <text x="24" y="42" font-family="system-ui, sans-serif" font-size="14" font-weight="700" fill="#475569">
-        ${escapeXml(card.title)}
-      </text>
-      <text x="24" y="92" font-family="system-ui, sans-serif" font-size="36" font-weight="800" fill="#032d60">
-        ${escapeXml(card.metric)}
-      </text>
-      <text x="24" y="132" font-family="system-ui, sans-serif" font-size="13.5" font-weight="500" fill="#64748b">
-        ${escapeXml(card.subtitle)}
-      </text>
-    </g>`
-      )
-      .join('')}
-  </g>
-
-  ${
-    isShiftedStaging && showOverlay
-      ? `<!-- BEDROCK NOVA LITE AI DIFF BOUNDING BOX OVERLAY -->
-  <g>
-    <rect x="40" y="102" width="1200" height="270" rx="8" fill="#f59e0b" fill-opacity="0.14" stroke="#d97706" stroke-width="3" stroke-dasharray="10 6" />
-    <rect x="40" y="74" width="460" height="30" rx="6" fill="#d97706" />
-    <text x="54" y="94" font-family="ui-monospace, monospace" font-size="13" font-weight="700" fill="#ffffff">
-      ★ Bedrock Nova Lite Diff: ${escapeXml(overlayText)}
-    </text>
-  </g>`
-      : ''
-  }
-
-  <!-- Bottom Edge Telemetry Footer Bar -->
-  <rect x="0" y="716" width="1280" height="44" fill="#0f172a" />
-  <text x="36" y="743" font-family="ui-monospace, monospace" font-size="12" font-weight="600" fill="#94a3b8">
-    SYNTHETIC SNAPSHOT · ${escapeXml(testId)} · ${escapeXml(url)}
-  </text>
-  <text x="1244" y="743" font-family="ui-monospace, monospace" font-size="12" font-weight="600" fill="#38bdf8" text-anchor="end">
-    ${side === 'A' ? 'SIDE A (CANDIDATE)' : side === 'B' ? 'SIDE B (BASELINE)' : 'CAPTURED SNAPSHOT'} · ${escapeXml(edgeHostname)} (${durationMs}ms)
-  </text>
-</svg>`;
-
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
-
-/**
  * Resolves the real 1280x760 headless Chromium JPEG screenshot URL (`/screenshots/<prop>-<testId>-side<A|B>.jpg`)
  * captured from the live salesforce.com property and served from S3 / CloudFront (`/portal-ui/screenshots/*`).
  */
 export function resolveLiveScreenshotUrl(options: DomScreenshotOptions): string {
   const {
+    appId,
     testId = 'T01',
     url = 'https://www.salesforce.com/',
     side = 'A',
-    highlightDiff = false,
     revision,
   } = options;
-  const lowerUrl = (url || '').toLowerCase();
   const idUpper = (testId || 'T01').toUpperCase();
-
-  let propId = 'www';
-  if (lowerUrl.includes('login.salesforce.com')) propId = 'login';
-  else if (lowerUrl.includes('developer.salesforce.com')) propId = 'developer';
-  else if (lowerUrl.includes('help.salesforce.com')) propId = 'help';
-  else if (lowerUrl.includes('trailhead.salesforce.com')) propId = 'trailhead';
-  else if (lowerUrl.includes('status.salesforce.com')) propId = 'status';
-  else if (lowerUrl.includes('appexchange.salesforce.com')) propId = 'appexchange';
-  else if (lowerUrl.includes('partners.salesforce.com')) propId = 'partners';
-
-  // For T03 when highlightDiff is active on Side A, serve sideA (with the staging edge candidate banner shift);
-  // otherwise serve sideB (clean production edge render) or sideA matching the side parameter.
-  const effectiveSide =
-    idUpper === 'T03'
-      ? side === 'A' && highlightDiff
-        ? 'sideA'
-        : 'sideB'
-      : side === 'B'
-      ? 'sideB'
-      : 'sideA';
+  const propId = inferPropertyIdFromUrl(url, appId);
+  const effectiveSide = side === 'B' ? 'sideB' : 'sideA';
 
   const revSuffix = revision ? `&r=${encodeURIComponent(String(revision))}` : '';
-  return `/screenshots/${propId}-${idUpper}-${effectiveSide}.jpg?v=live3${revSuffix}`;
+  return `/screenshots/${propId}-${idUpper}-${effectiveSide}.jpg?v=live5${revSuffix}`;
 }
+
 

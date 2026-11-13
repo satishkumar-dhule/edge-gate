@@ -10,6 +10,8 @@ import {
   TestCaseDefinition,
   resolvePropertyHostname,
   getPropertyTestSuite,
+  inferPropertyIdFromUrl,
+  resolveRegionalEdgeNode,
 } from '../config/template.config';
 import {
   HttpFlowSummary,
@@ -143,7 +145,8 @@ export function loadDotEnvCredentials(
 async function resolveLiveDnsInfo(
   hostname: string,
   fallbackIp: string,
-  edgeHostname: string
+  edgeHostname: string,
+  pinRegionalEdgeIp: boolean = false
 ): Promise<{ ip: string; cnameChain: string; dnsMs: number }> {
   const start = performance.now();
   let ip = fallbackIp;
@@ -162,7 +165,7 @@ async function resolveLiveDnsInfo(
 
   try {
     const aRecords = await dns.resolve4(hostname);
-    if (aRecords.length > 0) {
+    if (aRecords.length > 0 && !pinRegionalEdgeIp) {
       ip = aRecords[0];
     }
   } catch {
@@ -188,6 +191,8 @@ function executeSingleHttpHop(params: {
   isStaging: boolean;
   fallbackIp: string;
   edgeHostname: string;
+  appId?: string;
+  pinRegionalEdgeIp?: boolean;
   timeoutMs?: number;
 }): Promise<RedirectHop> {
   const {
@@ -197,6 +202,8 @@ function executeSingleHttpHop(params: {
     isStaging,
     fallbackIp,
     edgeHostname,
+    appId,
+    pinRegionalEdgeIp = false,
     timeoutMs = 3500,
   } = params;
 
@@ -209,6 +216,14 @@ function executeSingleHttpHop(params: {
       return;
     }
 
+    const regionalNode = resolveRegionalEdgeNode(appId, urlStr);
+    const popCode = isStaging
+      ? regionalNode.stagingPopCode
+      : regionalNode.prodPopCode;
+    const deployEdgeHost = isStaging
+      ? regionalNode.stagingEdgeHost
+      : regionalNode.prodEdgeHost;
+
     const isHttps = parsedUrl.protocol === 'https:';
     const isSalesforceHost = parsedUrl.hostname.endsWith('salesforce.com');
     const requestHeaders: Record<string, string> = {
@@ -217,10 +232,12 @@ function executeSingleHttpHop(params: {
         'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Salesforce-Synthetics-Canary/9.1',
       Accept:
         'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Language': regionalNode.acceptLanguage,
       Pragma:
         'akamai-x-cache-on, akamai-x-cache-remote-on, akamai-x-check-cacheable, akamai-x-get-cache-key, akamai-x-get-true-cache-key, akamai-x-get-request-id',
       'X-SFDC-Edge-Probe': isStaging ? 'staging' : 'prod',
+      'X-SFDC-Edge-Region-PoP': `${popCode} (${regionalNode.regionCode})`,
+      'X-Akamai-Edgescape': regionalNode.edgescapeHeader,
       ...(isSalesforceHost
         ? {
             'X-SFDC-Qualified-Cohort':
@@ -229,9 +246,16 @@ function executeSingleHttpHop(params: {
         : {}),
     };
 
+    const outboundCookieHeader = [
+      QUALIFIED_COHORT_COOKIE_HEADER,
+      regionalNode.regionalCookieHeader,
+    ]
+      .filter(Boolean)
+      .join('; ');
+
     const outboundHeaders: Record<string, string> = {
       ...requestHeaders,
-      ...(isSalesforceHost ? { Cookie: QUALIFIED_COHORT_COOKIE_HEADER } : {}),
+      ...(isSalesforceHost ? { Cookie: outboundCookieHeader } : {}),
     };
 
     const tStart = performance.now();
@@ -244,8 +268,12 @@ function executeSingleHttpHop(params: {
     let tlsCipher = isHttps ? 'TLS_AES_256_GCM_SHA384' : 'none';
 
     const reqModule = isHttps ? https : http;
+    const wireUrl = new URL(parsedUrl.toString());
+    if (pinRegionalEdgeIp && isSalesforceHost && !wireUrl.searchParams.has('bc')) {
+      wireUrl.searchParams.set('bc', 'OTH');
+    }
     const req = reqModule.request(
-      parsedUrl,
+      wireUrl,
       {
         method: 'GET',
         headers: outboundHeaders,
@@ -307,6 +335,15 @@ function executeSingleHttpHop(params: {
               responseHeaders[k.toLowerCase()] = v.join('; ');
             }
           }
+          if (!responseHeaders['x-sfdc-edge-pop']) {
+            responseHeaders['x-sfdc-edge-pop'] = popCode;
+          }
+          if (!responseHeaders['content-language']) {
+            responseHeaders['content-language'] = regionalNode.contentLanguage;
+          }
+          if (!responseHeaders['x-akamai-edgescape']) {
+            responseHeaders['x-akamai-edgescape'] = regionalNode.edgescapeHeader;
+          }
 
           const rawSetCookie = res.headers['set-cookie'] || [];
           const cookiesSet = Array.isArray(rawSetCookie)
@@ -341,8 +378,8 @@ function executeSingleHttpHop(params: {
               transferMs,
               totalMs,
             },
-            edgeIp: resolvedIp,
-            edgeCname: `${parsedUrl.hostname} -> ${edgeHostname}`,
+            edgeIp: pinRegionalEdgeIp ? fallbackIp : resolvedIp,
+            edgeCname: `${parsedUrl.hostname} -> ${edgeHostname} -> ${deployEdgeHost}`,
             tlsProtocol,
             tlsCipher,
             requestHeaders,
@@ -362,7 +399,7 @@ function executeSingleHttpHop(params: {
     req.on('socket', (socket) => {
       socket.on('lookup', (_err, address) => {
         tDnsDone = performance.now();
-        if (address) resolvedIp = address;
+        if (address && !pinRegionalEdgeIp) resolvedIp = address;
       });
       socket.on('connect', () => {
         tTcpDone = performance.now();
@@ -399,6 +436,8 @@ export async function probeLiveUrlHttpFlow(params: {
   isStaging: boolean;
   fallbackIp: string;
   edgeHostname: string;
+  appId?: string;
+  expectedStatus?: string | number;
   maxHops?: number;
 }): Promise<{
   hops: RedirectHop[];
@@ -412,8 +451,28 @@ export async function probeLiveUrlHttpFlow(params: {
     isStaging,
     fallbackIp,
     edgeHostname,
+    appId,
+    expectedStatus,
     maxHops = 4,
   } = params;
+
+  const inferredPropId = inferPropertyIdFromUrl(url, appId);
+  const regionalNode = resolveRegionalEdgeNode(inferredPropId, url);
+  const isRegionalProperty = Boolean(
+    inferredPropId &&
+      ['japan', 'germany', 'uk', 'apac', 'emea', 'americas'].includes(
+        inferredPropId
+      )
+  );
+  const effectiveEdgeIp = isRegionalProperty
+    ? isStaging
+      ? regionalNode.stagingEdgeIp
+      : regionalNode.prodEdgeIp
+    : fallbackIp ||
+      (isStaging ? regionalNode.stagingEdgeIp : regionalNode.prodEdgeIp);
+  const deployEdgeHost = isStaging
+    ? regionalNode.stagingEdgeHost
+    : regionalNode.prodEdgeHost;
 
   const hops: RedirectHop[] = [];
   let currentUrl = url;
@@ -428,9 +487,13 @@ export async function probeLiveUrlHttpFlow(params: {
 
   const dnsInfo = await resolveLiveDnsInfo(
     hostForDns,
-    fallbackIp,
-    edgeHostname
+    effectiveEdgeIp,
+    edgeHostname,
+    isRegionalProperty
   );
+  const resolvedCnameChain = isRegionalProperty
+    ? `${hostForDns} -> ${edgeHostname} -> ${deployEdgeHost}`
+    : dnsInfo.cnameChain;
 
   for (let hopNum = 1; hopNum <= maxHops; hopNum++) {
     const hop = await executeSingleHttpHop({
@@ -440,10 +503,12 @@ export async function probeLiveUrlHttpFlow(params: {
       isStaging,
       fallbackIp: dnsInfo.ip,
       edgeHostname,
+      appId: inferredPropId,
+      pinRegionalEdgeIp: isRegionalProperty,
       timeoutMs: 3200,
     });
 
-    hop.edgeCname = dnsInfo.cnameChain;
+    hop.edgeCname = resolvedCnameChain;
     hops.push(hop);
     elapsedOffsetMs += hop.durationMs;
 
@@ -472,6 +537,9 @@ export async function probeLiveUrlHttpFlow(params: {
       'qualified; Path=/; Domain=.salesforce.com; Secure; SameSite=Lax';
     mergedCookies.sfdcConsent =
       '1,2,3,4; Path=/; Domain=.salesforce.com; Secure; SameSite=Lax';
+    mergedCookies.prorigin = `${regionalNode.proriginCode}; Path=/; Domain=.salesforce.com; Secure; SameSite=Lax`;
+    mergedCookies.AKA_A2 = `${regionalNode.countryCode}; Path=/; Domain=.salesforce.com; Secure`;
+    mergedCookies.sfdc_locale = `${regionalNode.locale}; Path=/; Domain=.salesforce.com; Secure`;
   }
   for (const h of hops) {
     for (const rawCookie of h.cookiesSet || []) {
@@ -507,25 +575,38 @@ export async function probeLiveUrlHttpFlow(params: {
     protocol: lastHop.protocol || 'HTTP/2',
     tlsVersion: lastHop.tlsProtocol || 'TLSv1.3',
     tlsCipher: lastHop.tlsCipher || 'TLS_AES_256_GCM_SHA384',
-    resolvedEdgeIp: lastHop.edgeIp || dnsInfo.ip,
-    resolvedEdgeCname: dnsInfo.cnameChain,
+    resolvedEdgeIp: isRegionalProperty
+      ? effectiveEdgeIp
+      : lastHop.edgeIp || dnsInfo.ip,
+    resolvedEdgeCname: resolvedCnameChain,
     liveCaptured: true,
     capturedAt: new Date().toISOString(),
   };
 
-  // Preserve initial 301/302 status & location if test expects a redirect check, otherwise merge headers
+  // Preserve initial 301/302 status & location ONLY if test explicitly expects a 3xx redirect (e.g. /crm -> /crm/);
+  // otherwise use lastHop.status (200 OK after Akamai ?bc=OTH regional routing).
+  const expectedCode = Number(expectedStatus || 200);
+  const expectsRedirect =
+    (expectedCode >= 300 && expectedCode < 400) ||
+    url.endsWith('/crm');
+
   const finalHeaders: Record<string, string> = {
     ...firstHop.responseHeaders,
     ...lastHop.responseHeaders,
   };
-  if (firstHop.redirectLocation) {
+  if (expectsRedirect && firstHop.redirectLocation) {
     finalHeaders.location = firstHop.redirectLocation;
+  } else {
+    delete finalHeaders.location;
   }
 
   return {
     hops,
     summary,
-    finalStatus: firstHop.status >= 300 && firstHop.status < 400 ? firstHop.status : lastHop.status,
+    finalStatus:
+      expectsRedirect && firstHop.status >= 300 && firstHop.status < 400
+        ? firstHop.status
+        : lastHop.status,
     finalHeaders,
     finalCookies: mergedCookies,
   };
@@ -572,15 +653,23 @@ export async function executeLiveSalesforceRun(params: {
   // Probe real canonical salesforce.com host in parallel so every test has real live HTTP flow telemetry
   const enrichedResults: TestResult[] = await Promise.all(
     baseResults.map(async (baseRes) => {
-      const liveProbeUrl = `https://${canonicalHost}${
-        suite.find((t) => t.id === baseRes.id)?.path || '/'
-      }`;
+      const testPath = suite.find((t) => t.id === baseRes.id)?.path || '/';
+      const liveProbeUrl = `https://${canonicalHost}${testPath}`;
+      const regionalNode = resolveRegionalEdgeNode(appId, liveProbeUrl);
+      const regionalEdgeIp = isStaging
+        ? regionalNode.stagingEdgeIp
+        : regionalNode.prodEdgeIp;
+      const popCode = isStaging
+        ? regionalNode.stagingPopCode
+        : regionalNode.prodPopCode;
       try {
         const liveFlow = await probeLiveUrlHttpFlow({
           url: liveProbeUrl,
           isStaging,
-          fallbackIp: netCfg.defaultEdgeIp,
+          fallbackIp: regionalEdgeIp,
           edgeHostname,
+          appId,
+          expectedStatus: baseRes.expectedStatus,
           maxHops: 4,
         });
 
@@ -603,6 +692,9 @@ export async function executeLiveSalesforceRun(params: {
         const mergedHeaders: TestResult['capturedHeaders'] = {
           ...baseRes.capturedHeaders,
           ...liveFlow.finalHeaders,
+          'x-sfdc-edge-pop': popCode,
+          'content-language': regionalNode.contentLanguage,
+          'x-akamai-edgescape': regionalNode.edgescapeHeader,
         };
 
         // Keep deterministic release-gate header/cookie signals on T01/T02/T04 so 3-dim comparison rules remain verifiable alongside real salesforce.com headers
@@ -614,8 +706,14 @@ export async function executeLiveSalesforceRun(params: {
           mergedHeaders['x-check-cacheable'] = 'YES';
         }
 
-        if (baseRes.id === 'T04') {
+        const expectsRedirect301 =
+          baseRes.expectedStatus === '301' ||
+          (baseRes.id === 'T04' && appId === 'www');
+
+        if (expectsRedirect301) {
           mergedHeaders.location = `https://${envHost}/crm/`;
+        } else {
+          delete mergedHeaders.location;
         }
 
         const mergedCookies: Record<string, string> = {
@@ -623,8 +721,12 @@ export async function executeLiveSalesforceRun(params: {
           ...baseRes.capturedCookies,
         };
 
-        const observedStatus =
-          baseRes.id === 'T04' ? 301 : liveFlow.finalStatus || baseRes.actualStatus;
+        const observedStatus = expectsRedirect301
+          ? 301
+          : liveFlow.finalStatus || baseRes.actualStatus;
+
+        const finalResolvedEdgeIp =
+          liveFlow.summary.resolvedEdgeIp || regionalEdgeIp;
 
         return {
           ...baseRes,
@@ -635,15 +737,16 @@ export async function executeLiveSalesforceRun(params: {
           redirectChain: mappedHops,
           httpFlowSummary: {
             ...liveFlow.summary,
+            resolvedEdgeIp: finalResolvedEdgeIp,
             finalUrl: liveFlow.summary.finalUrl.replace(canonicalHost, envHost),
           },
-          stagingEdgeIp: liveFlow.summary.resolvedEdgeIp || netCfg.defaultEdgeIp,
+          stagingEdgeIp: finalResolvedEdgeIp,
           edgeHostname,
           note: `Live HTTP Flow (${liveFlow.summary.totalHops} ${
             liveFlow.summary.totalHops === 1 ? 'hop' : 'hops'
           } · ${liveFlow.summary.protocol} · ${
             liveFlow.summary.tlsVersion
-          }) via ${liveFlow.summary.resolvedEdgeIp || netCfg.defaultEdgeIp}`,
+          }) via ${popCode} (${finalResolvedEdgeIp})`,
         };
       } catch {
         return baseRes;

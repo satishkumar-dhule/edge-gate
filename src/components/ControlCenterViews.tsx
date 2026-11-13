@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AcceptedRule, AppConfig, RunRecord } from '../engine/types';
-import { buildDomScreenshotDataUri, resolveLiveScreenshotUrl } from '../engine/domScreenshotRenderer';
+import { resolveLiveScreenshotUrl } from '../engine/domScreenshotRenderer';
 import {
   DEFAULT_TEMPLATE_CONFIG,
   TemplateConfig,
@@ -145,7 +145,7 @@ export const PropertyCommandSwitcher: React.FC<{
       >
         <Globe className="w-3.5 h-3.5 text-sky-400 shrink-0" />
         <span className="font-mono font-bold text-white">{currentApp.id}</span>
-        <span className="text-zinc-400 hidden sm:inline truncate max-w-[140px]">
+        <span className="text-zinc-400 hidden 2xl:inline truncate max-w-[140px]">
           {currentApp.name}
         </span>
         <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300 font-mono text-[10px] shrink-0 whitespace-nowrap">
@@ -289,7 +289,7 @@ export const PageMiniThumb: React.FC<{
   screenshotRevision,
   onClick,
 }) => {
-  const [fallback, setFallback] = useState(false);
+  const [thumbMissing, setThumbMissing] = useState(false);
   const liveThumbUrl = resolveLiveScreenshotUrl({
     testId,
     testName,
@@ -299,16 +299,8 @@ export const PageMiniThumb: React.FC<{
     revision: screenshotRevision,
   });
   React.useEffect(() => {
-    setFallback(false);
+    setThumbMissing(false);
   }, [liveThumbUrl]);
-  const svgFallback = buildDomScreenshotDataUri({
-    testId,
-    testName,
-    url,
-    side: 'A',
-    highlightDiff: hasVisualDiff,
-  });
-  const thumbUri = fallback ? svgFallback : liveThumbUrl;
 
   return (
     <button
@@ -318,7 +310,7 @@ export const PageMiniThumb: React.FC<{
         isRedirect
           ? '301 Edge Redirect Check'
           : hasVisualDiff
-          ? 'Visual AI Diff Detected (Click to inspect DOM snapshot)'
+          ? 'Visual Diff Detected (Click to inspect live snapshot)'
           : 'DOM Visual Snapshot Matched'
       }`}
       className={`group relative w-11 h-7 rounded border overflow-hidden shrink-0 transition-transform hover:scale-105 cursor-pointer ${
@@ -329,15 +321,22 @@ export const PageMiniThumb: React.FC<{
           : 'border-border'
       }`}
     >
-      <img
-        src={thumbUri}
-        onError={() => {
-          if (!fallback) setFallback(true);
-        }}
-        alt={`${testId} ${testName} thumbnail`}
-        data-testid={`page-mini-thumb-img-${testId}`}
-        className="w-full h-full object-cover object-top block"
-      />
+      {thumbMissing ? (
+        <div
+          data-testid={`page-mini-thumb-missing-${testId}`}
+          className="w-full h-full bg-muted flex items-center justify-center font-mono text-[8px] text-muted-foreground"
+        >
+          {testId}
+        </div>
+      ) : (
+        <img
+          src={liveThumbUrl}
+          onError={() => setThumbMissing(true)}
+          alt={`${testId} ${testName} thumbnail`}
+          data-testid={`page-mini-thumb-img-${testId}`}
+          className="w-full h-full object-cover object-top block"
+        />
+      )}
       <span
         className={`absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full ring-1 ring-background ${
           hasVisualDiff
@@ -1465,8 +1464,8 @@ export const McpAndAwsBackendView: React.FC<{
     {
       mcpServers: {
         'akamai-aws-synthetics': {
-          command: 'npx',
-          args: ['-y', effectiveConfig.infrastructure.mcpNpmPackage],
+          command: 'pnpm',
+          args: ['dlx', effectiveConfig.infrastructure.mcpNpmPackage],
           env: {
             AWS_REGION: effectiveConfig.infrastructure.awsRegion,
             SYNTHETICS_S3_BUCKET: effectiveConfig.infrastructure.s3Bucket,

@@ -43,6 +43,7 @@ export interface PersistedPortalState {
     | 'diff'
     | 'run'
     | 'mcp'
+    | 'terminal'
     | 'settings'
     | 'about';
   activeAppId: string;
@@ -56,8 +57,8 @@ export interface PersistedPortalState {
   inspectorTab: 'flow' | 'headers' | 'cookies' | 'image';
 }
 
-export const STORAGE_KEY = 'salesforce-gate-portal-state-v10-live';
-export const CURRENT_VERSION = 10;
+export const STORAGE_KEY = 'salesforce-gate-portal-state-v12-live';
+export const CURRENT_VERSION = 12;
 
 export function isDummySeededRun(r: Partial<RunRecord>): boolean {
   if (!r) return true;

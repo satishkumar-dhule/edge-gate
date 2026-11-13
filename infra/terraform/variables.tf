@@ -28,7 +28,7 @@ variable "project_name" {
 
 variable "operator_email" {
   type        = string
-  default     = "user-baluuezlosgz@salesforce.com"
+  default     = "user-tcchhlxprfng@salesforce.com"
   description = "Default Principal Edge SRE operator identity seeded into Control Plane config"
 }
 
@@ -40,7 +40,7 @@ variable "operator_role" {
 
 variable "akamai_account_context" {
   type        = string
-  default     = "SFDC-EDGE-373211957869 (AWS 373211957869 · Akamai Prod + Staging)"
+  default     = "SFDC-EDGE-735234585484 (AWS 735234585484 · Akamai Prod + Staging)"
   description = "Akamai Control Center account context identifier"
 }
 
@@ -405,8 +405,8 @@ variable "initial_operator_users" {
   }))
   default = [
     {
-      email        = "user-baluuezlosgz@salesforce.com"
-      display_name = "Lead Edge Release Engineer (AWS 373211957869)"
+      email        = "user-tcchhlxprfng@salesforce.com"
+      display_name = "Lead Edge Release Engineer (AWS 735234585484)"
       role         = "admin"
     },
     {

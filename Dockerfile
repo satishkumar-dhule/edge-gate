@@ -9,8 +9,8 @@
 FROM node:22-alpine AS base
 WORKDIR /app
 
-# Install pnpm and dependencies
-RUN npm install -g pnpm@12.18.0
+# Install pnpm via Corepack and install dependencies
+RUN corepack enable && corepack prepare pnpm@12.18.0 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 

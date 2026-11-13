@@ -67,6 +67,47 @@ function hashPassword(password, saltHex) {
   return { salt, hash };
 }
 
+function inferPropertyIdFromUrl(urlStr, explicitAppId) {
+  const cleanApp = String(explicitAppId || '').trim().toLowerCase();
+  if (
+    cleanApp &&
+    [
+      'www',
+      'login',
+      'developer',
+      'help',
+      'trailhead',
+      'status',
+      'appexchange',
+      'partners',
+      'apac',
+      'emea',
+      'americas',
+      'japan',
+      'uk',
+      'germany',
+    ].includes(cleanApp) &&
+    cleanApp !== 'www'
+  ) {
+    return cleanApp;
+  }
+  const lowerUrl = String(urlStr || '').toLowerCase();
+  if (lowerUrl.includes('login.salesforce.com')) return 'login';
+  if (lowerUrl.includes('developer.salesforce.com')) return 'developer';
+  if (lowerUrl.includes('help.salesforce.com')) return 'help';
+  if (lowerUrl.includes('trailhead.salesforce.com')) return 'trailhead';
+  if (lowerUrl.includes('status.salesforce.com')) return 'status';
+  if (lowerUrl.includes('appexchange.salesforce.com')) return 'appexchange';
+  if (lowerUrl.includes('partners.salesforce.com')) return 'partners';
+  if (/\/jp(\/|$|\?)/.test(lowerUrl)) return 'japan';
+  if (/\/de(\/|$|\?)/.test(lowerUrl)) return 'germany';
+  if (/\/uk(\/|$|\?)/.test(lowerUrl)) return 'uk';
+  if (/\/(ap|au|in)(\/|$|\?)/.test(lowerUrl)) return 'apac';
+  if (/\/(eu|fr|es|it|nl)(\/|$|\?)/.test(lowerUrl)) return 'emea';
+  if (/\/(mx|br|ca|fr-ca)(\/|$|\?)/.test(lowerUrl)) return 'americas';
+  return cleanApp || 'www';
+}
+
 async function recordDdbUserAudit(userEmail, action, target, status = 'SUCCESS') {
   try {
     const now = new Date().toISOString();
@@ -308,6 +349,18 @@ exports.handler = async (event) => {
             'appexchange.prod.prod',
             'partners.prod.staging',
             'partners.prod.prod',
+            'apac.prod.staging',
+            'apac.prod.prod',
+            'emea.prod.staging',
+            'emea.prod.prod',
+            'americas.prod.staging',
+            'americas.prod.prod',
+            'japan.prod.staging',
+            'japan.prod.prod',
+            'uk.prod.staging',
+            'uk.prod.prod',
+            'germany.prod.staging',
+            'germany.prod.prod',
           ];
 
       const liveRuns = (
@@ -413,6 +466,18 @@ exports.handler = async (event) => {
         'appexchange.prod.prod',
         'partners.prod.staging',
         'partners.prod.prod',
+        'apac.prod.staging',
+        'apac.prod.prod',
+        'emea.prod.staging',
+        'emea.prod.prod',
+        'americas.prod.staging',
+        'americas.prod.prod',
+        'japan.prod.staging',
+        'japan.prod.prod',
+        'uk.prod.staging',
+        'uk.prod.prod',
+        'germany.prod.staging',
+        'germany.prod.prod',
       ];
       const existingTargets = new Set(
         runs.map((r) => r.targetId || r.target)
@@ -516,12 +581,13 @@ exports.handler = async (event) => {
     const testId = String(body.testId || 'T01');
     const testName = String(body.testName || `Live Edge Probe ${testId}`);
     let parsedPath = '/';
-    let propId = 'www';
+    const explicitAppId =
+      body.appId ||
+      (typeof body.targetId === 'string' ? body.targetId.split('.')[0] : '');
+    let propId = inferPropertyIdFromUrl(rawUrl, explicitAppId);
     try {
       const u = new URL(rawUrl);
       parsedPath = `${u.pathname || '/'}${u.search || ''}`;
-      const hostPrefix = u.hostname.split('.')[0];
-      if (hostPrefix) propId = hostPrefix;
     } catch {
       // Fallback to root
     }
@@ -872,18 +938,15 @@ exports.handler = async (event) => {
   ) {
     const testId = String(body.testId || 'T03').toUpperCase();
     const rawUrl = String(body.url || 'https://www.salesforce.com/');
-    let propId = 'www';
-    const lowerUrl = rawUrl.toLowerCase();
-    if (lowerUrl.includes('login.salesforce.com')) propId = 'login';
-    else if (lowerUrl.includes('developer.salesforce.com')) propId = 'developer';
-    else if (lowerUrl.includes('help.salesforce.com')) propId = 'help';
-    else if (lowerUrl.includes('trailhead.salesforce.com')) propId = 'trailhead';
-    else if (lowerUrl.includes('status.salesforce.com')) propId = 'status';
-    else if (lowerUrl.includes('appexchange.salesforce.com')) propId = 'appexchange';
-    else if (lowerUrl.includes('partners.salesforce.com')) propId = 'partners';
+    const explicitApp =
+      body.appId ||
+      (typeof body.candidateTarget === 'string'
+        ? body.candidateTarget.split('.')[0]
+        : '');
+    const propId = inferPropertyIdFromUrl(rawUrl, explicitApp);
 
-    const validWwwTests = new Set(['T01', 'T02', 'T03', 'T04', 'T05', 'T06', 'T07', 'T08']);
-    const screenshotTestId = propId === 'www' && validWwwTests.has(testId) ? testId : 'T01';
+    const validTests = new Set(['T01', 'T02', 'T03', 'T04', 'T05', 'T06', 'T07', 'T08']);
+    const screenshotTestId = validTests.has(testId) ? testId : 'T01';
     const sideAKey = `portal-ui/screenshots/${propId}-${screenshotTestId}-sideA.jpg`;
     const sideBKey = `portal-ui/screenshots/${propId}-${screenshotTestId}-sideB.jpg`;
 

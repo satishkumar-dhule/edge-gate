@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ComparisonItem, RedirectHop, TestResult } from '../engine/types';
 import { generateReproduceCurl } from '../engine/rules';
-import { buildDomScreenshotDataUri, resolveLiveScreenshotUrl } from '../engine/domScreenshotRenderer';
+import { resolveLiveScreenshotUrl } from '../engine/domScreenshotRenderer';
 import {
   Card,
   CardHeader,
@@ -100,13 +100,17 @@ export const InspectorActionHeader: React.FC<{
           {lastProbedInfo && (
             <span
               data-testid="live-probe-badge"
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-emerald-700 dark:text-emerald-300 font-mono text-[10px] font-semibold"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/35 text-emerald-700 dark:text-emerald-300 font-mono text-[10px] font-semibold"
               title={`Live edge HTTP flow & 1280×760 DOM screenshot persisted at ${lastProbedInfo.at}${
                 lastProbedInfo.sha256 ? ` · SHA-256: ${lastProbedInfo.sha256}` : ''
               }${lastProbedInfo.s3Key ? ` · S3: ${lastProbedInfo.s3Key}` : ''}`}
             >
               <CheckCircle2 className="w-2.5 h-2.5 text-emerald-500 shrink-0" />
-              Probed #{lastProbedInfo.count} & Screenshot Saved · {lastProbedInfo.at} · HTTP {lastProbedInfo.status} ({lastProbedInfo.candMs}ms
+              Probed #{lastProbedInfo.count} & Screenshot Captured ·{' '}
+              {lastProbedInfo.at && lastProbedInfo.at !== 'Invalid Date'
+                ? lastProbedInfo.at
+                : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}{' '}
+              · HTTP {lastProbedInfo.status} ({lastProbedInfo.candMs}ms
               {typeof lastProbedInfo.baseMs === 'number' ? ` / ${lastProbedInfo.baseMs}ms` : ''})
               {lastProbedInfo.sha256 && (
                 <span className="text-[9px] opacity-85">
@@ -738,6 +742,239 @@ const HttpHopDetailCard: React.FC<{
   );
 };
 
+export function cleanHumanVisualSummary(summary?: string): string {
+  if (!summary) {
+    return 'Rendered DOM and screenshots match across staging and production.';
+  }
+  return summary
+    .replace(/^AWS Bedrock Nova Lite\s*\([^)]*\)\s*:\s*/i, '')
+    .replace(/^AWS Nova Lite\s*:\s*/i, '')
+    .replace(/\s*\(cost-gate skipped AI\)\.?/i, '.')
+    .trim();
+}
+
+// ============================================================================
+// INTERACTIVE MOVABLE-KNOB VISUAL OVERLAP & WIPE SLIDER COMPARATOR
+// ============================================================================
+export const InteractiveVisualDiffComparator: React.FC<{
+  testId: string;
+  testName: string;
+  url: string;
+  candidateLabel: string;
+  baselineLabel: string;
+  highlightDiff?: boolean;
+  overlayText?: string;
+  showDiffOverlay?: boolean;
+  screenshotRevision?: number | string;
+  initialMode?: 'wipe' | 'overlap';
+  isModal?: boolean;
+}> = ({
+  testId,
+  testName,
+  url,
+  candidateLabel,
+  baselineLabel,
+  highlightDiff,
+  overlayText,
+  showDiffOverlay = true,
+  screenshotRevision,
+  initialMode = 'wipe',
+  isModal = false,
+}) => {
+  const [compareMode, setCompareMode] = useState<'wipe' | 'overlap'>(initialMode);
+  const [sliderPos, setSliderPos] = useState<number>(50);
+  const [overlapOpacity, setOverlapOpacity] = useState<number>(55);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [imgErrorA, setImgErrorA] = useState(false);
+  const [imgErrorB, setImgErrorB] = useState(false);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+  const srcA = resolveLiveScreenshotUrl({
+    testId,
+    testName,
+    url,
+    side: 'A',
+    highlightDiff,
+    revision: screenshotRevision,
+  });
+  const srcB = resolveLiveScreenshotUrl({
+    testId,
+    testName,
+    url,
+    side: 'B',
+    highlightDiff: false,
+    revision: screenshotRevision,
+  });
+  React.useEffect(() => {
+    setImgErrorA(false);
+    setImgErrorB(false);
+  }, [srcA, srcB]);
+
+  const updateSliderFromClientX = (clientX: number) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const pct = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+    if (compareMode === 'wipe') {
+      setSliderPos(Math.round(pct));
+    } else {
+      setOverlapOpacity(Math.round(pct));
+    }
+  };
+
+  return (
+    <div
+      data-testid="interactive-visual-comparator"
+      className="rounded-lg border border-border bg-card overflow-hidden space-y-0"
+    >
+      {/* Streamlined Visual Diff Toolbar — Minimal, clean, human-friendly */}
+      <div className="px-3 py-1.5 border-b border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+        <div className="inline-flex items-center rounded-md border border-border bg-background p-0.5 text-[11px]">
+          <button
+            type="button"
+            data-testid="mode-wipe-knob-btn"
+            onClick={() => setCompareMode('wipe')}
+            className={`px-2.5 py-1 rounded-xs cursor-pointer transition-colors ${
+              compareMode === 'wipe'
+                ? 'bg-sky-500 text-zinc-950 font-semibold'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            ⟷ Wipe Slider
+          </button>
+          <button
+            type="button"
+            data-testid="mode-overlap-knob-btn"
+            onClick={() => setCompareMode('overlap')}
+            className={`px-2.5 py-1 rounded-xs cursor-pointer transition-colors ${
+              compareMode === 'overlap'
+                ? 'bg-sky-500 text-zinc-950 font-semibold'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            ◐ Overlap Blend
+          </button>
+        </div>
+
+        {/* Synchronized Range Knob Control */}
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[11px] text-sky-600 dark:text-sky-400 font-semibold">
+            Side A
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            aria-label={compareMode === 'wipe' ? 'Wipe Split Position' : 'Overlap Opacity'}
+            data-testid="visual-diff-knob-slider"
+            value={compareMode === 'wipe' ? sliderPos : overlapOpacity}
+            onChange={(e) => {
+              const val = Number(e.target.value);
+              if (compareMode === 'wipe') setSliderPos(val);
+              else setOverlapOpacity(val);
+            }}
+            className="w-24 sm:w-32 accent-sky-500 cursor-ew-resize"
+          />
+          <span className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+            Side B
+          </span>
+          <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-muted text-foreground min-w-9 text-center font-bold">
+            {compareMode === 'wipe' ? `${sliderPos}%` : `${overlapOpacity}%`}
+          </span>
+        </div>
+      </div>
+
+      {/* Interactive Superimposed Canvas */}
+      <div
+        ref={containerRef}
+        onPointerDown={(e) => {
+          setIsDragging(true);
+          updateSliderFromClientX(e.clientX);
+        }}
+        onPointerMove={(e) => {
+          if (!isDragging) return;
+          updateSliderFromClientX(e.clientX);
+        }}
+        onPointerUp={() => setIsDragging(false)}
+        onPointerLeave={() => setIsDragging(false)}
+        className={`relative w-full bg-slate-950 select-none overflow-hidden cursor-ew-resize ${
+          isModal ? 'max-h-[75vh] aspect-[16/10] mx-auto' : 'aspect-[16/10]'
+        }`}
+      >
+        {/* Base Layer: Side B (Production Baseline) */}
+        {imgErrorB ? (
+          <div className="w-full h-full flex flex-col items-center justify-center text-xs text-zinc-400 font-mono p-4 text-center">
+            <span>Side B screenshot not captured yet for {testId}</span>
+            <span className="text-[11px] text-zinc-500 mt-1">Click Retake to capture a live Chromium screenshot</span>
+          </div>
+        ) : (
+          <img
+            src={srcB}
+            data-testid="dom-snapshot-img-B"
+            onError={() => setImgErrorB(true)}
+            alt={`Side B (${baselineLabel}) baseline screenshot`}
+            className="w-full h-full block object-contain pointer-events-none"
+          />
+        )}
+
+        {/* Top Layer: Side A (Candidate Staging) — Clipped in Wipe Mode or Blended in Overlap Mode */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={
+            compareMode === 'wipe'
+              ? { clipPath: `inset(0 ${100 - sliderPos}% 0 0)` }
+              : { opacity: overlapOpacity / 100 }
+          }
+        >
+          {imgErrorA ? (
+            <div className="w-full h-full flex flex-col items-center justify-center bg-slate-950 text-xs text-zinc-400 font-mono p-4 text-center">
+              <span>Side A screenshot not captured yet for {testId}</span>
+            </div>
+          ) : (
+            <img
+              src={srcA}
+              data-testid="dom-snapshot-img-A"
+              onError={() => setImgErrorA(true)}
+              alt={`Side A (${candidateLabel}) candidate screenshot`}
+              className="w-full h-full block object-contain pointer-events-none"
+            />
+          )}
+        </div>
+
+        {/* Highlighted Real Diff Badge (only when actual measured overlayText exists) */}
+        {highlightDiff && showDiffOverlay && overlayText && (
+          <div className="pointer-events-none absolute bottom-2 left-2 right-2 flex items-center justify-center">
+            <span className="px-2 py-0.5 rounded bg-amber-500/95 text-zinc-950 font-mono text-[10px] font-bold shadow">
+              {overlayText}
+            </span>
+          </div>
+        )}
+
+        {/* Clean, Non-Obtrusive Corner Labels */}
+        <div className="pointer-events-none absolute top-2 left-2 px-2 py-0.5 rounded bg-zinc-950/85 border border-sky-500/40 text-sky-300 font-mono text-[10px] font-semibold shadow">
+          Side A
+        </div>
+        <div className="pointer-events-none absolute top-2 right-2 px-2 py-0.5 rounded bg-zinc-950/85 border border-emerald-500/40 text-emerald-300 font-mono text-[10px] font-semibold shadow">
+          Side B
+        </div>
+
+        {/* Movable Vertical Curtain Line + Tactile Circular Knob */}
+        {compareMode === 'wipe' && (
+          <div
+            data-testid="movable-wipe-knob"
+            className="pointer-events-none absolute inset-y-0 w-0.5 bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.9)]"
+            style={{ left: `${sliderPos}%` }}
+          >
+            <div className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-sky-500 text-zinc-950 border-2 border-white shadow-xl flex items-center justify-center font-mono text-xs font-bold">
+              ⟷
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ============================================================================
 // SHARED REUSABLE PRIMITIVE 4: DOM SNAPSHOT PREVIEW CARD (HIGH-RES IMAGE)
 // ============================================================================
@@ -763,6 +1000,8 @@ export const DomSnapshotCard: React.FC<{
   screenshotSha256?: string;
   screenshotBytes?: number;
   s3ScreenshotKey?: string;
+  candidateLabel?: string;
+  baselineLabel?: string;
 }> = ({
   title,
   metaRight,
@@ -777,17 +1016,14 @@ export const DomSnapshotCard: React.FC<{
   edgeHostname = 'www.salesforce.com.edgekey.net',
   edgeIp,
   cacheStatus = 'TCP_HIT',
-  footerLeft,
-  footerRight,
   isRerunning = false,
   screenshotRevision,
-  lastCapturedAt,
-  screenshotSha256,
-  screenshotBytes,
-  s3ScreenshotKey,
+  candidateLabel = 'Staging',
+  baselineLabel = 'Production',
 }) => {
   const [zoomOpen, setZoomOpen] = useState(false);
-  const [imgFallback, setImgFallback] = useState(false);
+  const [lightboxTab, setLightboxTab] = useState<'interactive' | 'single'>('interactive');
+  const [imgError, setImgError] = useState(false);
   const liveScreenshotUrl = resolveLiveScreenshotUrl({
     testId,
     testName,
@@ -797,53 +1033,32 @@ export const DomSnapshotCard: React.FC<{
     revision: screenshotRevision,
   });
   React.useEffect(() => {
-    setImgFallback(false);
+    setImgError(false);
   }, [liveScreenshotUrl]);
-  const fallbackSvgDataUri = buildDomScreenshotDataUri({
-    testId,
-    testName,
-    url,
-    side,
-    highlightDiff,
-    showOverlay: Boolean(overlayText),
-    overlayText,
-    httpStatus,
-    durationMs,
-    edgeHostname,
-    edgeIp,
-    cacheStatus,
-  });
-  const activeImgSrc = imgFallback ? fallbackSvgDataUri : liveScreenshotUrl;
+  const activeImgSrc = liveScreenshotUrl;
 
   return (
-    <div className="border border-border rounded-lg p-3 bg-card space-y-2">
-      <div className="flex items-center justify-between gap-2 text-[11px] font-mono text-muted-foreground">
-        <span className="font-semibold text-foreground truncate" title={title}>{title}</span>
-        <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-          {lastCapturedAt && (
-            <span
-              data-testid={`snapshot-saved-badge-${side}`}
-              className="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-[9px] font-mono font-semibold"
-              title={`Persisted 1280×760 screenshot captured at ${lastCapturedAt}${
-                screenshotSha256 ? ` · SHA-256: ${screenshotSha256}` : ''
-              }${s3ScreenshotKey ? ` · S3: ${s3ScreenshotKey}` : ''}`}
-            >
-              ● Saved {lastCapturedAt}
-              {screenshotSha256 ? ` · #${screenshotSha256.slice(0, 6)}` : ''}
-              {typeof screenshotBytes === 'number' && screenshotBytes > 0
-                ? ` (${(screenshotBytes / 1024).toFixed(1)}KB)`
-                : ''}
-            </span>
-          )}
-          <span className="text-[10px]">{metaRight}</span>
+    <div className="border border-border rounded-lg p-2.5 bg-card space-y-2">
+      {/* Clean, Non-Redundant Header (No repeated timestamps or duplicate hashes) */}
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="font-semibold text-foreground truncate" title={title}>
+          {title}
+        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="font-mono text-[11px] text-muted-foreground">
+            {metaRight}
+          </span>
           <button
             type="button"
             data-testid={`enlarge-snapshot-btn-${side}`}
-            onClick={() => setZoomOpen((prev) => !prev)}
-            className="px-2 py-0.5 rounded border border-border bg-background hover:bg-muted text-[10px] text-foreground cursor-pointer whitespace-nowrap shrink-0"
-            title="Open high-resolution 1280×760 DOM screenshot inspection modal"
+            onClick={() => {
+              setLightboxTab(side === 'single' ? 'single' : 'interactive');
+              setZoomOpen((prev) => !prev);
+            }}
+            className="px-2 py-0.5 rounded border border-border bg-background hover:bg-muted text-[11px] font-medium text-foreground cursor-pointer whitespace-nowrap shrink-0"
+            title="Open fullscreen interactive visual comparison with movable wipe/overlap knob"
           >
-            {zoomOpen ? 'Close' : 'Enlarge'}
+            {zoomOpen ? 'Close' : 'Enlarge & Compare'}
           </button>
         </div>
       </div>
@@ -855,56 +1070,42 @@ export const DomSnapshotCard: React.FC<{
             : 'border-border'
         }`}
       >
-        {/* Browser Chrome Header */}
-        <div className="flex items-center justify-between gap-3 border-b border-border px-2.5 py-1.5 bg-muted/25">
-          <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
-            <span className="w-2 h-2 rounded-full bg-rose-400/80 shrink-0" />
-            <span className="w-2 h-2 rounded-full bg-amber-400/80 shrink-0" />
-            <span className="w-2 h-2 rounded-full bg-emerald-400/80 shrink-0" />
-            <Lock className="w-2.5 h-2.5 text-emerald-500 ml-1 shrink-0" />
-            {url && (
-              <span
-                className="font-mono text-[10px] text-muted-foreground truncate"
-                title={url}
-              >
-                {url}
-              </span>
-            )}
-          </div>
-          <span className="font-mono text-[10px] text-muted-foreground shrink-0 pl-2 border-l border-border/60">
-            1280×760
-          </span>
-        </div>
-
-        {/* Dedicated Non-Overlapping AI Region Callout Strip */}
-        {overlayText && (
-          <div className="px-2.5 py-1 bg-amber-500/15 border-b border-amber-500/30 text-amber-800 dark:text-amber-300 text-[10px] font-mono font-semibold flex items-center justify-between gap-2">
-            <span>★ Bedrock Nova Lite Diff: {overlayText}</span>
-            <span className="text-[9px] opacity-80 shrink-0">Top Banner Region</span>
-          </div>
-        )}
-
-        {/* Rendered Real Webpage Screenshot Image (Full 16:10 Frame, No Cropping) */}
+        {/* Rendered Real Webpage Screenshot Image (Full 16:10 Frame, No Cluttered Chrome) */}
         <div
           className="relative w-full bg-slate-950 cursor-pointer group"
-          onClick={() => setZoomOpen(true)}
-          title="Click to inspect full 1280×760 high-resolution DOM screenshot"
+          onClick={() => {
+            setLightboxTab(side === 'single' ? 'single' : 'interactive');
+            setZoomOpen(true);
+          }}
+          title="Click to open interactive movable-knob overlap & wipe comparator"
         >
-          <img
-            src={activeImgSrc}
-            loading="eager"
-            decoding="async"
-            fetchPriority="high"
-            referrerPolicy="no-referrer"
-            onError={() => {
-              if (!imgFallback) setImgFallback(true);
-            }}
-            alt={`${title} Live Chromium Screenshot for ${testId} (${url})`}
-            data-testid={`dom-snapshot-img-${side}`}
-            className="w-full block aspect-[16/10] object-contain transition-opacity"
-          />
+          {imgError ? (
+            <div
+              data-testid={`dom-snapshot-missing-${side}`}
+              className="w-full aspect-[16/10] flex flex-col items-center justify-center text-xs text-zinc-400 font-mono p-4 text-center"
+            >
+              <span>Live screenshot not captured yet ({testId} Side {side})</span>
+              <span className="text-[11px] text-zinc-500 mt-1">Click Retake to capture unmodified Chromium screenshot</span>
+            </div>
+          ) : (
+            <img
+              src={activeImgSrc}
+              loading="eager"
+              decoding="async"
+              fetchPriority="high"
+              referrerPolicy="no-referrer"
+              onError={() => setImgError(true)}
+              alt={`${title} Live Chromium Screenshot for ${testId} (${url})`}
+              data-testid={`dom-snapshot-img-${side}`}
+              className="w-full block aspect-[16/10] object-contain transition-opacity"
+            />
+          )}
           {overlayText && (
-            <div className="pointer-events-none absolute inset-x-1.5 top-1 h-9 rounded border-2 border-dashed border-amber-400 bg-amber-500/10" />
+            <div className="pointer-events-none absolute bottom-1.5 inset-x-1.5 flex items-center justify-end px-1">
+              <span className="px-1.5 py-0.5 rounded bg-amber-500/95 text-zinc-950 font-mono text-[9px] font-bold shadow">
+                {overlayText}
+              </span>
+            </div>
           )}
           {isRerunning && (
             <div
@@ -913,54 +1114,60 @@ export const DomSnapshotCard: React.FC<{
             >
               <RotateCw className="w-5 h-5 text-sky-400 animate-spin" />
               <span className="font-semibold">
-                Capturing live 1280×760 Chromium screenshot…
-              </span>
-              <span className="text-[10px] text-slate-300 truncate max-w-full">
-                {url}
+                Capturing live 1280×760 screenshot…
               </span>
             </div>
           )}
         </div>
-
-        {(footerLeft || footerRight) && (
-          <div className="flex items-center justify-between gap-3 px-2.5 py-1.5 border-t border-border bg-muted/15 text-[10px] font-mono text-muted-foreground">
-            <span className="truncate min-w-0 flex-1" title={footerLeft}>
-              {footerLeft}
-            </span>
-            <span className="shrink-0 pl-2 border-l border-border/60" title={footerRight}>
-              {footerRight}
-            </span>
-          </div>
-        )}
       </div>
 
-      {/* Fullscreen High-Resolution 1280×760 Lightbox Modal */}
+      {/* Fullscreen Interactive Visual Diff Lightbox Modal (Movable Knob Wipe + Overlap Blend) */}
       {zoomOpen && (
         <div
           data-testid="dom-snapshot-lightbox"
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4"
           onClick={() => setZoomOpen(false)}
         >
           <div
             className="w-full max-w-6xl rounded-xl border border-zinc-700 bg-zinc-950 text-zinc-100 shadow-2xl overflow-hidden space-y-0"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-4 py-2.5 border-b border-zinc-800 flex items-center justify-between gap-4">
+            <div className="px-4 py-2.5 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2.5 min-w-0">
                 <Badge variant="outline" className="font-mono text-xs border-zinc-700 text-sky-400">
                   {testId}
                 </Badge>
                 <span className="font-semibold text-sm text-white truncate">
-                  {title} — {testName}
-                </span>
-                <span className="font-mono text-xs text-zinc-400 truncate hidden sm:inline">
-                  ({url})
+                  {testName}
                 </span>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <span className="font-mono text-xs text-zinc-400">
-                  1280×760 Native Viewport · {metaRight}
-                </span>
+                {side !== 'single' && (
+                  <div className="inline-flex items-center rounded-md border border-zinc-700 bg-zinc-900 p-0.5 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setLightboxTab('interactive')}
+                      className={`px-2.5 py-1 rounded-xs cursor-pointer ${
+                        lightboxTab === 'interactive'
+                          ? 'bg-sky-500 text-zinc-950 font-semibold'
+                          : 'text-zinc-300 hover:text-white'
+                      }`}
+                    >
+                      Interactive Overlap & Wipe Knob
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLightboxTab('single')}
+                      className={`px-2.5 py-1 rounded-xs cursor-pointer ${
+                        lightboxTab === 'single'
+                          ? 'bg-sky-500 text-zinc-950 font-semibold'
+                          : 'text-zinc-300 hover:text-white'
+                      }`}
+                    >
+                      {title} Only
+                    </button>
+                  </div>
+                )}
                 <Button
                   variant="outline"
                   size="xs"
@@ -972,19 +1179,30 @@ export const DomSnapshotCard: React.FC<{
                 </Button>
               </div>
             </div>
-            <div className="relative bg-slate-950 p-3 flex items-center justify-center">
-              <img
-                src={activeImgSrc}
-                alt={`${title} Fullscreen 1280×760 Screenshot`}
-                className="max-h-[80vh] w-auto max-w-full rounded border border-zinc-800 object-contain"
-              />
+
+            <div className="p-3 bg-slate-950">
+              {lightboxTab === 'interactive' && side !== 'single' ? (
+                <InteractiveVisualDiffComparator
+                  testId={testId}
+                  testName={testName}
+                  url={url}
+                  candidateLabel={candidateLabel}
+                  baselineLabel={baselineLabel}
+                  highlightDiff={highlightDiff}
+                  overlayText={overlayText}
+                  screenshotRevision={screenshotRevision}
+                  isModal={true}
+                />
+              ) : (
+                <div className="flex items-center justify-center">
+                  <img
+                    src={activeImgSrc}
+                    alt={`${title} Fullscreen 1280×760 Screenshot`}
+                    className="max-h-[78vh] w-auto max-w-full rounded border border-zinc-800 object-contain"
+                  />
+                </div>
+              )}
             </div>
-            {(footerLeft || footerRight) && (
-              <div className="px-4 py-2 border-t border-zinc-800 bg-zinc-900/60 flex items-center justify-between gap-4 font-mono text-xs text-zinc-300">
-                <span className="truncate">{footerLeft}</span>
-                <span className="shrink-0">{footerRight}</span>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -1037,12 +1255,14 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
   const [showDiffOverlay, setShowDiffOverlay] = useState(true);
   const [diffsOnly, setDiffsOnly] = useState(false);
   const [flowSideFilter, setFlowSideFilter] = useState<'both' | 'A' | 'B'>('both');
+  const [expandedCookies, setExpandedCookies] = useState<Record<string, boolean>>({});
   // Auto-collapse navigation state for HTTP Flow & Headers
   const [autoCollapse, setAutoCollapse] = useState(true);
   const [flowSummaryCollapsed, setFlowSummaryCollapsed] = useState(false);
   const [activeHopKey, setActiveHopKey] = useState<string>('cand-hop-0');
   const [expandAllHops, setExpandAllHops] = useState(false);
   const [showStandardHeaders, setShowStandardHeaders] = useState(true);
+  const [imageViewMode, setImageViewMode] = useState<'slider' | 'side-by-side'>('slider');
 
   const cand = item.candidateResult;
   const base = item.baselineResult;
@@ -1189,18 +1409,20 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
       />
 
       <CardContent className="p-3.5">
-        {/* Always-visible HTTP Flow & Timing Waterfall Banner */}
-        <HttpFlowHopChainBanner
-          result={cand}
-          activeTab={activeTab}
-          activeHopIndex={activeHopNumericIdx}
-          onInspectFlowTab={(hopIdx) => {
-            onTabChange('flow');
-            if (typeof hopIdx === 'number') {
-              handleFocusHop(`cand-hop-${hopIdx}`, hopIdx > 0);
-            }
-          }}
-        />
+        {/* Only render HTTP Flow & Timing Waterfall Banner inside the HTTP Flow tab */}
+        {activeTab === 'flow' && (
+          <HttpFlowHopChainBanner
+            result={cand}
+            activeTab={activeTab}
+            activeHopIndex={activeHopNumericIdx}
+            onInspectFlowTab={(hopIdx) => {
+              onTabChange('flow');
+              if (typeof hopIdx === 'number') {
+                handleFocusHop(`cand-hop-${hopIdx}`, hopIdx > 0);
+              }
+            }}
+          />
+        )}
 
         <Tabs
           value={activeTab}
@@ -1646,12 +1868,38 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
           </TabsContent>
 
           {/* TAB 2: COOKIES */}
-          <TabsContent value="cookies" className="mt-0">
+          <TabsContent value="cookies" className="mt-0 space-y-2">
+            <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border bg-muted/20 text-xs">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <span className="font-semibold text-foreground">
+                  Session & Edge Cookie Parity
+                </span>
+                <span>·</span>
+                <span>
+                  Dynamic Bot Manager tokens (<code className="font-mono text-[11px]">_abck</code>, <code className="font-mono text-[11px]">bm_sz</code>, <code className="font-mono text-[11px]">ak_bmsc</code>) rotate per edge request and are non-blocking.
+                </span>
+              </div>
+              {cookieDiffCount > 0 && (
+                <Button
+                  variant="outline"
+                  size="xs"
+                  onClick={() => {
+                    diffCookieKeys.forEach((k) => {
+                      if (!normalizedAcceptedCookies.includes(normalizeCookieKey(k))) {
+                        onToggleAcceptCookie(k);
+                      }
+                    });
+                  }}
+                >
+                  Accept All Cookie Diffs ({cookieDiffCount})
+                </Button>
+              )}
+            </div>
             <div className="rounded-md border border-border overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-40 py-2">Cookie</TableHead>
+                    <TableHead className="w-48 py-2">Cookie</TableHead>
                     <TableHead className="py-2">Side A ({candidateLabel})</TableHead>
                     <TableHead className="py-2">Side B ({baselineLabel})</TableHead>
                     <TableHead className="text-right w-28 py-2">Action</TableHead>
@@ -1665,6 +1913,24 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                     const isAccepted = normalizedAcceptedCookies.includes(
                       normalizeCookieKey(cookieName)
                     );
+                    const isExpanded = Boolean(expandedCookies[cookieName]);
+                    const isLongValue = cVal.length > 95 || bVal.length > 95;
+                    const lowerName = cookieName.toLowerCase();
+                    const roleTag =
+                      lowerName === '_abck' || lowerName === 'bm_sz' || lowerName === 'ak_bmsc'
+                        ? 'Bot Manager'
+                        : lowerName === 'prorigin' || lowerName === 'aka_a2' || lowerName === 'edge_region'
+                        ? 'Geo / Edge PoP'
+                        : lowerName.includes('locale')
+                        ? 'Locale'
+                        : lowerName.includes('consent')
+                        ? 'Consent'
+                        : 'Session';
+
+                    const formatCookieText = (val: string) => {
+                      if (isExpanded || val.length <= 95) return val;
+                      return `${val.slice(0, 68)}…${val.slice(-22)}`;
+                    };
 
                     return (
                       <TableRow
@@ -1677,22 +1943,41 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                             : ''
                         }
                       >
-                        <TableCell className="py-2 font-medium text-foreground">
-                          {cookieName}
+                        <TableCell className="py-2 font-medium text-foreground align-top">
+                          <div className="flex flex-col gap-0.5">
+                            <span>{cookieName}</span>
+                            <span className="font-sans text-[10px] text-muted-foreground font-normal">
+                              {roleTag}
+                            </span>
+                          </div>
                         </TableCell>
                         <TableCell
-                          className={`py-2 break-all ${
+                          className={`py-2 break-all align-top ${
                             isDiff && !isAccepted
                               ? 'text-amber-800 dark:text-amber-300 font-semibold'
                               : ''
                           }`}
                         >
-                          {cVal}
+                          <div>{formatCookieText(cVal)}</div>
+                          {isLongValue && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedCookies((prev) => ({
+                                  ...prev,
+                                  [cookieName]: !prev[cookieName],
+                                }))
+                              }
+                              className="mt-1 font-sans text-[10px] text-sky-600 dark:text-sky-400 hover:underline cursor-pointer"
+                            >
+                              {isExpanded ? 'Collapse token ↑' : `Show full ${cVal.length}-char value ↓`}
+                            </button>
+                          )}
                         </TableCell>
-                        <TableCell className="py-2 break-all text-muted-foreground">
-                          {bVal}
+                        <TableCell className="py-2 break-all text-muted-foreground align-top">
+                          <div>{formatCookieText(bVal)}</div>
                         </TableCell>
-                        <TableCell className="py-2 text-right font-sans">
+                        <TableCell className="py-2 text-right font-sans align-top">
                           {isDiff ? (
                             <Button
                               variant={isAccepted ? 'secondary' : 'outline'}
@@ -1713,10 +1998,11 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
             </div>
           </TabsContent>
 
-          {/* TAB 3: VISUAL IMAGE (AI JUDGE) WITH ACCEPT VISUAL DIFF */}
-          <TabsContent value="image" className="mt-0 space-y-2.5">
+          {/* TAB 3: VISUAL IMAGE (AI JUDGE) WITH INTERACTIVE MOVABLE KNOB & ZERO REDUNDANCY */}
+          <TabsContent value="image" className="mt-0 space-y-3">
+            {/* Clean, Full-Width Verdict & Action Bar (No squished columns or model IDs) */}
             <div
-              className={`p-3 rounded-lg border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+              className={`p-3 rounded-lg border text-xs space-y-2.5 ${
                 rawVisualDiff && !isVisualAccepted
                   ? 'bg-amber-500/10 border-amber-500/30'
                   : rawVisualDiff && isVisualAccepted
@@ -1724,146 +2010,172 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                   : 'bg-muted/30 border-border'
               }`}
             >
-              <div className="flex items-start gap-2">
-                {rawVisualDiff && !isVisualAccepted ? (
-                  <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                ) : (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                )}
-                <div className="space-y-0.5">
-                  <div className="font-semibold text-foreground flex items-center gap-2 flex-wrap">
-                    <span>
-                      AI Verdict: {item.visualResult?.verdict.toUpperCase() || 'SAME'}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {rawVisualDiff && !isVisualAccepted ? (
+                    <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  )}
+                  <span className="font-semibold text-foreground">
+                    AI Verdict: {item.visualResult?.verdict.toUpperCase() || 'SAME'}
+                  </span>
+                  <span className="font-mono text-[11px] font-bold px-1.5 py-0.5 rounded bg-background/80 border border-border text-amber-700 dark:text-amber-400">
+                    Δ {item.visualResult?.pixelDiffPercent?.toFixed(1) ?? '0.0'}%
+                  </span>
+                  {isVisualAccepted && (
+                    <span className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                      · Accepted
                     </span>
-                    <span aria-hidden="true" className="text-muted-foreground">·</span>
-                    <span className="font-mono text-[11px] font-bold text-amber-700 dark:text-amber-400">
-                      Δ {item.visualResult?.pixelDiffPercent?.toFixed(1) ?? '0.0'}%
-                    </span>
-                    <span aria-hidden="true" className="text-muted-foreground">·</span>
-                    <span
-                      className="font-mono text-[11px] font-normal text-muted-foreground"
-                      title="Evaluated by Amazon Bedrock Nova Lite multimodal judge (arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0)"
-                    >
-                      AWS Nova Lite · amazon.nova-lite-v1:0
-                    </span>
-                    {isVisualAccepted && (
-                      <>
-                        <span aria-hidden="true" className="text-muted-foreground">·</span>
-                        <span className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
-                          Accepted Visual Diff
-                        </span>
-                      </>
-                    )}
-                  </div>
-                  <p className="text-muted-foreground leading-relaxed">
-                    {item.visualResult?.summary ||
-                      'Rendered DOM and screenshots match across both environments.'}
-                  </p>
+                  )}
+                  <span className="text-muted-foreground">
+                    — {cleanHumanVisualSummary(item.visualResult?.summary)}
+                  </span>
                 </div>
-              </div>
 
-              <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                {rawVisualDiff && (
-                  <>
-                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer mr-1">
-                      <Switch
-                        checked={showDiffOverlay}
-                        onCheckedChange={setShowDiffOverlay}
-                      />
-                      <span>Overlay</span>
-                    </label>
+                <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                  {rawVisualDiff && (
+                    <>
+                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer mr-1">
+                        <Switch
+                          checked={showDiffOverlay}
+                          onCheckedChange={setShowDiffOverlay}
+                        />
+                        <span>Highlight</span>
+                      </label>
 
-                    <Button
-                      variant={isVisualAccepted ? 'secondary' : 'outline'}
-                      size="xs"
-                      onClick={() => onToggleAcceptVisual(item.testId)}
-                    >
-                      <Check className="!size-3" />
-                      {isVisualAccepted
-                        ? 'Visual Diff Accepted (Undo)'
-                        : 'Accept Visual Diff'}
-                    </Button>
-                  </>
-                )}
+                      <Button
+                        variant={isVisualAccepted ? 'secondary' : 'outline'}
+                        size="xs"
+                        onClick={() => onToggleAcceptVisual(item.testId)}
+                      >
+                        <Check className="!size-3" />
+                        {isVisualAccepted ? 'Accepted (Undo)' : 'Accept Diff'}
+                      </Button>
+                    </>
+                  )}
 
-                <Button
-                  variant="outline"
-                  size="xs"
-                  data-testid="retake-screenshot-btn"
-                  onClick={() => onRerunSingleTest(item.testId)}
-                  disabled={isRerunningTest}
-                  title="Re-probe live salesforce.com URL and capture fresh 1280×760 headless Chromium DOM screenshots"
-                >
-                  <RotateCw
-                    className={`!size-3 ${
-                      isRerunningTest ? 'animate-spin text-sky-500' : ''
-                    }`}
-                  />
-                  {isRerunningTest ? 'Capturing…' : 'Retake Screenshot'}
-                </Button>
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    data-testid="retake-screenshot-btn"
+                    onClick={() => onRerunSingleTest(item.testId)}
+                    disabled={isRerunningTest}
+                  >
+                    <RotateCw
+                      className={`!size-3 ${
+                        isRerunningTest ? 'animate-spin text-sky-500' : ''
+                      }`}
+                    />
+                    {isRerunningTest ? 'Capturing…' : 'Retake'}
+                  </Button>
 
-                <Button
-                  size="xs"
-                  onClick={() => onRunAiVisualJudge(item.testId)}
-                  disabled={isRunningAi}
-                  title="Invoke Amazon Bedrock Nova Lite (amazon.nova-lite-v1:0) visual diff judge via POST /api/v1/judge/nova-lite"
-                >
-                  <Sparkles className="!size-3" />
-                  {isRunningAi ? 'Analyzing…' : 'Run Nova Lite Judge'}
-                </Button>
+                  <Button
+                    size="xs"
+                    onClick={() => onRunAiVisualJudge(item.testId)}
+                    disabled={isRunningAi}
+                  >
+                    <Sparkles className="!size-3" />
+                    {isRunningAi ? 'Analyzing…' : 'Run Visual Judge'}
+                  </Button>
+                </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <DomSnapshotCard
-                title={`Side A (${candidateLabel})`}
-                metaRight={`${cand?.durationMs ?? 78}ms`}
+            {/* View Mode Toggle: Interactive Slider vs Side-by-Side (Zero redundancy) */}
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-xs font-semibold text-foreground">
+                Visual Comparison Mode
+              </span>
+              <div className="inline-flex items-center rounded-md border border-border bg-muted/30 p-0.5 text-xs font-mono">
+                <button
+                  type="button"
+                  data-testid="view-interactive-slider-btn"
+                  onClick={() => setImageViewMode('slider')}
+                  className={`px-2.5 py-1 rounded-xs cursor-pointer transition-colors ${
+                    imageViewMode === 'slider'
+                      ? 'bg-foreground text-background font-semibold'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Interactive Slider
+                </button>
+                <button
+                  type="button"
+                  data-testid="view-side-by-side-btn"
+                  onClick={() => setImageViewMode('side-by-side')}
+                  className={`px-2.5 py-1 rounded-xs cursor-pointer transition-colors ${
+                    imageViewMode === 'side-by-side'
+                      ? 'bg-foreground text-background font-semibold'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Side-by-Side
+                </button>
+              </div>
+            </div>
+
+            {/* Render ONLY the selected view mode to eliminate redundant duplicate images */}
+            {imageViewMode === 'slider' ? (
+              <InteractiveVisualDiffComparator
                 testId={item.testId}
                 testName={item.testName}
                 url={cand?.url || item.url}
-                side="A"
-                httpStatus={cand?.actualStatus ?? 200}
-                durationMs={cand?.durationMs ?? 78}
-                edgeHostname={cand?.edgeHostname}
-                edgeIp={cand?.httpFlowSummary?.resolvedEdgeIp || cand?.stagingEdgeIp}
-                cacheStatus={cand?.capturedHeaders?.['x-cache']?.split(' ')[0] || 'TCP_HIT'}
+                candidateLabel={candidateLabel}
+                baselineLabel={baselineLabel}
                 highlightDiff={rawVisualDiff}
                 overlayText={
                   rawVisualDiff && showDiffOverlay
-                    ? 'AI Region: +14px vertical offset'
+                    ? item.visualResult?.differences?.[0]?.description
                     : undefined
                 }
-                footerLeft={`HTTP ${cand?.actualStatus ?? 200} · ${cand?.edgeHostname || 'staging'}`}
-                footerRight={`Edge IP: ${cand?.httpFlowSummary?.resolvedEdgeIp || cand?.stagingEdgeIp || '23.48.201.18'}`}
-                isRerunning={isRerunningTest}
+                showDiffOverlay={showDiffOverlay}
                 screenshotRevision={lastProbedInfo?.screenshotRevision ?? cand?.screenshotRevision}
-                lastCapturedAt={lastProbedInfo?.at ?? cand?.screenshotCapturedAt}
-                screenshotSha256={lastProbedInfo?.sha256 ?? cand?.screenshotSha256}
-                screenshotBytes={lastProbedInfo?.bytes ?? cand?.screenshotBytes}
-                s3ScreenshotKey={lastProbedInfo?.s3Key ?? cand?.s3ScreenshotKey}
               />
-              <DomSnapshotCard
-                title={`Side B (${baselineLabel})`}
-                metaRight={`${base?.durationMs ?? 72}ms`}
-                testId={item.testId}
-                testName={item.testName}
-                url={base?.url || item.url}
-                side="B"
-                httpStatus={base?.actualStatus ?? 200}
-                durationMs={base?.durationMs ?? 72}
-                edgeHostname={base?.edgeHostname}
-                edgeIp={base?.httpFlowSummary?.resolvedEdgeIp || base?.stagingEdgeIp}
-                cacheStatus={base?.capturedHeaders?.['x-cache']?.split(' ')[0] || 'TCP_HIT'}
-                footerLeft={`HTTP ${base?.actualStatus ?? 200} · ${base?.edgeHostname || 'prod'}`}
-                footerRight={`Edge IP: ${base?.httpFlowSummary?.resolvedEdgeIp || base?.stagingEdgeIp || '23.212.251.15'}`}
-                isRerunning={isRerunningTest}
-                screenshotRevision={lastProbedInfo?.screenshotRevision ?? base?.screenshotRevision}
-                lastCapturedAt={lastProbedInfo?.at ?? base?.screenshotCapturedAt}
-                screenshotSha256={lastProbedInfo?.sha256 ?? base?.screenshotSha256}
-                screenshotBytes={lastProbedInfo?.bytes ?? base?.screenshotBytes}
-                s3ScreenshotKey={lastProbedInfo?.s3Key ?? base?.s3ScreenshotKey}
-              />
-            </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <DomSnapshotCard
+                  title={`Side A (${candidateLabel})`}
+                  metaRight={`${cand?.durationMs ?? 78}ms`}
+                  testId={item.testId}
+                  testName={item.testName}
+                  url={cand?.url || item.url}
+                  side="A"
+                  httpStatus={cand?.actualStatus ?? 200}
+                  durationMs={cand?.durationMs ?? 78}
+                  edgeHostname={cand?.edgeHostname}
+                  edgeIp={cand?.httpFlowSummary?.resolvedEdgeIp || cand?.stagingEdgeIp}
+                  cacheStatus={cand?.capturedHeaders?.['x-cache']?.split(' ')[0] || 'TCP_HIT'}
+                  highlightDiff={rawVisualDiff}
+                  overlayText={
+                    rawVisualDiff && showDiffOverlay
+                      ? item.visualResult?.differences?.[0]?.description
+                      : undefined
+                  }
+                  isRerunning={isRerunningTest}
+                  screenshotRevision={lastProbedInfo?.screenshotRevision ?? cand?.screenshotRevision}
+                  candidateLabel={candidateLabel}
+                  baselineLabel={baselineLabel}
+                />
+                <DomSnapshotCard
+                  title={`Side B (${baselineLabel})`}
+                  metaRight={`${base?.durationMs ?? 72}ms`}
+                  testId={item.testId}
+                  testName={item.testName}
+                  url={base?.url || item.url}
+                  side="B"
+                  httpStatus={base?.actualStatus ?? 200}
+                  durationMs={base?.durationMs ?? 72}
+                  edgeHostname={base?.edgeHostname}
+                  edgeIp={base?.httpFlowSummary?.resolvedEdgeIp || base?.stagingEdgeIp}
+                  cacheStatus={base?.capturedHeaders?.['x-cache']?.split(' ')[0] || 'TCP_HIT'}
+                  isRerunning={isRerunningTest}
+                  screenshotRevision={lastProbedInfo?.screenshotRevision ?? base?.screenshotRevision}
+                  candidateLabel={candidateLabel}
+                  baselineLabel={baselineLabel}
+                />
+              </div>
+            )}
           </TabsContent>
         </Tabs>
       </CardContent>

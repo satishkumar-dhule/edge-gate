@@ -23,7 +23,9 @@ import {
   TestCaseDefinition,
   resolvePropertyHostname,
   getPropertyTestSuite,
+  resolveRegionalEdgeNode,
 } from '../config/template.config';
+import liveScreenshotManifest from './liveScreenshotManifest.json';
 
 export const APPS: AppConfig[] = DEFAULT_TEMPLATE_CONFIG.properties;
 
@@ -61,6 +63,7 @@ export function calculateCookieDiffs(
  * phase timings, request headers sent, response headers received, and Set-Cookie jar.
  */
 export function buildHttpFlowForTest(params: {
+  appId?: string;
   testId: string;
   canonicalHost: string;
   envHost: string;
@@ -74,6 +77,7 @@ export function buildHttpFlowForTest(params: {
   capturedCookies: Record<string, string>;
 }): { redirectChain: RedirectHop[]; httpFlowSummary: HttpFlowSummary } {
   const {
+    appId,
     testId,
     envHost,
     path,
@@ -86,6 +90,22 @@ export function buildHttpFlowForTest(params: {
     capturedCookies,
   } = params;
 
+  const regionalNode = resolveRegionalEdgeNode(appId, `https://${envHost}${path}`);
+  const resolvedEdgeIp =
+    edgeIp &&
+    edgeIp !== '23.48.201.18' &&
+    edgeIp !== '23.212.251.15'
+      ? edgeIp
+      : isStaging
+      ? regionalNode.stagingEdgeIp
+      : regionalNode.prodEdgeIp;
+  const deployEdgeHost = isStaging
+    ? regionalNode.stagingEdgeHost
+    : regionalNode.prodEdgeHost;
+  const popCode = isStaging
+    ? regionalNode.stagingPopCode
+    : regionalNode.prodPopCode;
+
   const baseRequestHeaders: Record<string, string> = {
     ':method': 'GET',
     ':scheme': 'https',
@@ -97,10 +117,12 @@ export function buildHttpFlowForTest(params: {
     accept:
       'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     'accept-encoding': 'br, gzip, deflate',
-    'accept-language': 'en-US,en;q=0.9',
+    'accept-language': regionalNode.acceptLanguage,
     pragma:
       'akamai-x-cache-on, akamai-x-cache-remote-on, akamai-x-check-cacheable, akamai-x-get-cache-key, akamai-x-get-true-cache-key, akamai-x-get-request-id',
     'x-sfdc-edge-probe': isStaging ? 'staging-edgekey' : 'prod-edgekey',
+    'x-sfdc-edge-region-pop': `${popCode} (${regionalNode.regionCode})`,
+    'x-akamai-edgescape': regionalNode.edgescapeHeader,
   };
 
   const cleanRespHeaders: Record<string, string> = {};
@@ -111,25 +133,24 @@ export function buildHttpFlowForTest(params: {
   const cookieLines = Object.entries(capturedCookies).map(
     ([name, val]) => `${name}=${val}`
   );
-  const edgeCname = `${envHost} -> ${edgeHostname} -> e12844.dsca.akamaiedge.net`;
+  const edgeCname = `${envHost} -> ${edgeHostname} -> ${deployEdgeHost}`;
   const tlsProtocol = 'TLSv1.3';
   const tlsCipher = 'TLS_AES_256_GCM_SHA384';
 
-  // Multi-hop flows for redirect & auth/trial endpoints (T04 /crm -> /crm/, T05 trial flow, or login property)
+  // Multi-hop flows for redirect & auth/trial endpoints (when actualStatus is 301/302 or www T05 trial flow)
   const isRedirectFlow =
-    testId === 'T04' ||
     actualStatus === 301 ||
     actualStatus === 302 ||
-    testId === 'T05';
+    (testId === 'T05' && (!appId || appId === 'www'));
 
   if (isRedirectFlow) {
     const hop1Duration = Math.max(22, Math.round(durationMs * 0.42));
     const hop2Duration = Math.max(28, durationMs - hop1Duration);
 
-    const hop1Status = testId === 'T04' ? 301 : 302;
+    const hop1Status = actualStatus === 301 ? 301 : 302;
     const redirectTargetUrl =
       cleanRespHeaders.location ||
-      (testId === 'T04'
+      (actualStatus === 301
         ? `https://${envHost}/crm/`
         : `https://${envHost}${path}?d=70130000000i7jB`);
 
@@ -161,7 +182,7 @@ export function buildHttpFlowForTest(params: {
       startOffsetMs: 0,
       durationMs: hop1Duration,
       timings: hop1Timings,
-      edgeIp,
+      edgeIp: resolvedEdgeIp,
       edgeCname,
       tlsProtocol,
       tlsCipher,
@@ -172,9 +193,9 @@ export function buildHttpFlowForTest(params: {
         server: 'AkamaiGHost',
         'cache-control': 'public, max-age=3600',
         'x-check-cacheable': 'YES',
-        'x-cache': isStaging
-          ? 'TCP_HIT from a23-48-201-18.deploy.akamaitechnologies.com'
-          : 'TCP_HIT from a23-212-251-15.deploy.akamaitechnologies.com',
+        'x-sfdc-edge-pop': popCode,
+        'content-language': regionalNode.contentLanguage,
+        'x-cache': `TCP_HIT from ${deployEdgeHost}`,
         'x-akamai-request-id': `${cleanRespHeaders['x-akamai-request-id'] || 'sfdc'}-hop1`,
         'strict-transport-security': 'max-age=63072000; includeSubDomains; preload',
       },
@@ -202,7 +223,7 @@ export function buildHttpFlowForTest(params: {
       startOffsetMs: hop1Duration,
       durationMs: hop2Duration,
       timings: hop2Timings,
-      edgeIp,
+      edgeIp: resolvedEdgeIp,
       edgeCname,
       tlsProtocol,
       tlsCipher,
@@ -236,7 +257,7 @@ export function buildHttpFlowForTest(params: {
         protocol: 'HTTP/2',
         tlsVersion: tlsProtocol,
         tlsCipher,
-        resolvedEdgeIp: edgeIp,
+        resolvedEdgeIp,
         resolvedEdgeCname: edgeCname,
         liveCaptured: true,
         capturedAt: new Date().toISOString(),
@@ -270,7 +291,7 @@ export function buildHttpFlowForTest(params: {
     startOffsetMs: 0,
     durationMs,
     timings: hopTimings,
-    edgeIp,
+    edgeIp: resolvedEdgeIp,
     edgeCname,
     tlsProtocol,
     tlsCipher,
@@ -298,7 +319,7 @@ export function buildHttpFlowForTest(params: {
       protocol: 'HTTP/2',
       tlsVersion: tlsProtocol,
       tlsCipher,
-      resolvedEdgeIp: edgeIp,
+      resolvedEdgeIp,
       resolvedEdgeCname: edgeCname,
       liveCaptured: true,
       capturedAt: new Date().toISOString(),
@@ -327,7 +348,6 @@ export function generateTestResults(
 
   const netCfg = isStaging ? config.networks.staging : config.networks.prod;
   const edgeHostname = `${envHost}${netCfg.edgeSuffix}`;
-  const edgeIp = netCfg.defaultEdgeIp;
 
   const activeSuite = (customSuite || getPropertyTestSuite(appId, config) || config.testSuite).filter(
     (tc) => tc.enabled !== false
@@ -335,27 +355,44 @@ export function generateTestResults(
 
   return activeSuite.map((tc, idx) => {
     const id = tc.id;
-    let actualStatus = parseInt(tc.expectedStatus, 10);
+    let actualStatus = parseInt(tc.expectedStatus, 10) || 200;
     let pass = true;
     const errors: string[] = [];
 
+    const regionalNode = resolveRegionalEdgeNode(
+      appId,
+      `https://${envHost}${tc.path}`
+    );
+    const edgeIp = isStaging
+      ? regionalNode.stagingEdgeIp
+      : regionalNode.prodEdgeIp;
+    const popCode = isStaging
+      ? regionalNode.stagingPopCode
+      : regionalNode.prodPopCode;
+    const deployEdgeHost = isStaging
+      ? regionalNode.stagingEdgeHost
+      : regionalNode.prodEdgeHost;
+    const popPrefix = popCode.split('-')[0] || 'IAD';
+
     const capturedHeaders: TestResult['capturedHeaders'] = {
       'content-type': 'text/html; charset=utf-8',
+      'content-language': regionalNode.contentLanguage,
       'cache-control': 'public, max-age=3600',
       'x-check-cacheable': 'YES',
       'x-sfdc-content-source': 'sfdc-experience-cloud-cms',
-      'x-sfdc-edge-pop': isStaging ? 'IAD-STG-04' : 'IAD-PRD-12',
+      'x-sfdc-edge-pop': popCode,
+      'x-akamai-edgescape': regionalNode.edgescapeHeader,
       'x-sfdc-agent-cohort-apply-experiment': 'true',
       'x-sfdc-agent-cohort-decision': 'qualified',
       'x-sfdc-agent-cohort-source': 'cookie',
       'strict-transport-security': 'max-age=63072000; includeSubDomains; preload',
       server: 'AkamaiGHost',
       'x-cache': isStaging
-        ? 'TCP_MISS from a23-48-201-18.deploy.akamaitechnologies.com'
-        : 'TCP_HIT from a23-212-251-15.deploy.akamaitechnologies.com',
+        ? `TCP_MISS from ${deployEdgeHost}`
+        : `TCP_HIT from ${deployEdgeHost}`,
       'x-cache-key': `/L/12844/542100/1d/${envHost}${tc.path}`,
       'x-true-cache-key': `/L/12844/542100/1d/${canonicalHost}${tc.path}`,
-      'x-akamai-request-id': `${isStaging ? 'stg' : 'prd'}-${
+      'x-akamai-request-id': `${isStaging ? 'stg' : 'prd'}-${popPrefix.toLowerCase()}-${
         isNewRun ? '99f' : '41a'
       }0${idx + 1}`,
     };
@@ -365,10 +402,13 @@ export function generateTestResults(
         'qualified; Path=/; Domain=.salesforce.com; Secure; SameSite=Lax',
       sfdcConsent:
         '1,2,3,4; Path=/; Domain=.salesforce.com; Secure; SameSite=Lax',
+      prorigin: `${regionalNode.proriginCode}; Path=/; Domain=.salesforce.com; Secure; SameSite=Lax`,
+      AKA_A2: `${regionalNode.countryCode}; Path=/; Domain=.salesforce.com; Secure`,
+      sfdc_locale: `${regionalNode.locale}; Path=/; Domain=.salesforce.com; Secure`,
       sfdc_session: `sid_${appId}_${envId}; Path=/; Secure; HttpOnly; SameSite=Lax`,
       edge_region: isStaging
-        ? 'IAD-STAGING; Path=/; Secure; SameSite=Lax'
-        : 'IAD-PROD; Path=/; Secure; SameSite=Lax',
+        ? `${popCode}-CANDIDATE; Path=/; Secure; SameSite=Lax`
+        : `${popCode}-LIVE; Path=/; Secure; SameSite=Lax`,
       ak_bmsc: `bmsc_${appId}_v1; Domain=.${config.branding.defaultDomain}; Path=/; Secure`,
       CookieConsentPolicy: '0:1; Path=/; Max-Age=31536000; Secure',
     };
@@ -382,16 +422,16 @@ export function generateTestResults(
 
     if (id === 'T02') {
       if (!isStaging) {
-        capturedCookies['edge_region'] = 'IAD-STAGE; Path=/; Secure; SameSite=Lax';
+        capturedCookies['edge_region'] = `${popCode}-STAGE; Path=/; Secure; SameSite=Lax`;
       } else if (isPrevStaging) {
-        capturedCookies['edge_region'] = 'IAD-PREV; Path=/; Secure; SameSite=Lax';
+        capturedCookies['edge_region'] = `${popCode}-PREV; Path=/; Secure; SameSite=Lax`;
         capturedCookies['edge_cache_bypass'] = '0; Path=/; Secure; HttpOnly';
       } else {
         capturedCookies['edge_cache_bypass'] = '1; Path=/; Secure; HttpOnly';
       }
     }
 
-    if (id === 'T04') {
+    if (tc.expectedStatus === '301' || (id === 'T04' && appId === 'www')) {
       actualStatus = 301;
       capturedHeaders['location'] = `https://${envHost}/crm/`;
     }
@@ -402,6 +442,7 @@ export function generateTestResults(
 
     const durationMs = isStaging ? 82 + idx * 9 : 56 + idx * 6;
     const { redirectChain, httpFlowSummary } = buildHttpFlowForTest({
+      appId,
       testId: id,
       canonicalHost,
       envHost,
@@ -433,7 +474,7 @@ export function generateTestResults(
       edgeHostname,
       note: `HTTP/2 (${httpFlowSummary.totalHops} ${
         httpFlowSummary.totalHops === 1 ? 'hop' : 'hops'
-      }) via ${edgeHostname} (${edgeIp})`,
+      }) via ${popCode} (${edgeIp})`,
     };
   });
 }
@@ -479,11 +520,8 @@ export function seedRunsFromConfig(
           totalTests: latestResults.length,
           passedTests: latestResults.filter((r) => r.pass).length,
           failedTests: latestResults.filter((r) => !r.pass).length,
-          by:
-            net === 'staging'
-              ? config.branding.defaultOperator.email
-              : 'aws-synthetics-canary',
-          label: net === 'staging' ? 'v2026.11-rc1' : 'live-baseline',
+          by: config.branding.defaultOperator.email,
+          label: `live-${net}`,
           pinnedAsBaseline: net === 'prod',
           results: latestResults,
         });
@@ -511,8 +549,8 @@ export function seedRunsFromConfig(
           totalTests: prevResults.length,
           passedTests: prevResults.filter((r) => r.pass).length,
           failedTests: prevResults.filter((r) => !r.pass).length,
-          by: 'aws-synthetics-canary',
-          label: net === 'staging' ? 'v2026.10-prev' : 'prev-baseline',
+          by: config.branding.defaultOperator.email,
+          label: `prev-${net}`,
           pinnedAsBaseline: false,
           results: prevResults,
         });
@@ -586,29 +624,47 @@ export function buildInitialComparison(
 
     const cookieDiffs = calculateCookieDiffs(candRes, baseRes);
 
+    const manifestMap = liveScreenshotManifest as Record<
+      string,
+      {
+        pixelDiffPercent?: number;
+        changedBox?: { x: number; y: number; w: number; h: number } | null;
+      }
+    >;
+    const manifestEntry = manifestMap[`${candidateRun.appId}-${candRes.id}`];
+    const measuredDiff =
+      candidateRun.key === baselineRun.key
+        ? 0
+        : typeof candRes.pixelDiffPercent === 'number'
+        ? candRes.pixelDiffPercent
+        : typeof manifestEntry?.pixelDiffPercent === 'number'
+        ? manifestEntry.pixelDiffPercent
+        : 0;
+
     let visualResult: ComparisonItem['visualResult'] = {
       verdict: 'same',
       costGate: 'identical-bytes',
       costGateSkippedAi: true,
-      pixelDiffPercent: 0,
-      summary: 'Byte-for-byte identical DOM screenshot (cost-gate skipped AI).',
+      pixelDiffPercent: measuredDiff,
+      summary: 'Screenshots match within 0.1% pixel gate (cost-gate skipped AI).',
       differences: [],
       primaryModel: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
     };
 
-    if (candRes.id === 'T03' && candidateRun.key !== baselineRun.key) {
+    if (measuredDiff > 0.1 && candidateRun.key !== baselineRun.key) {
       visualResult = {
-        verdict: 'minor',
+        verdict: measuredDiff > 5.0 ? 'different' : 'minor',
         costGate: 'ai-judged',
         costGateSkippedAi: false,
-        pixelDiffPercent: 1.8,
-        summary:
-          'AWS Bedrock Nova Lite (amazon.nova-lite-v1:0): Minor 14px hero badge spacing shift on Agentforce AI landing banner; CTA hierarchy and layout intact.',
+        pixelDiffPercent: measuredDiff,
+        summary: `Measured ${measuredDiff.toFixed(
+          2
+        )}% pixel variance between captured Side A and Side B Chromium screenshots.`,
         differences: [
           {
-            description: 'Agentforce AI hero badge spacing +14px vertical offset',
-            severity: 'minor',
-            box: { x: 12, y: 18, w: 76, h: 16 },
+            description: `Measured ${measuredDiff.toFixed(2)}% pixel variance across captured viewport`,
+            severity: measuredDiff > 5.0 ? 'major' : 'minor',
+            ...(manifestEntry?.changedBox ? { box: manifestEntry.changedBox } : {}),
           },
         ],
         primaryModel: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,

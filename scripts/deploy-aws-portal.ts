@@ -1,10 +1,10 @@
 #!/usr/bin/env -S pnpm exec tsx
 /**
  * ============================================================================
- * SALESFORCE EDGE RELEASE GATE — UNIFIED NPM + TERRAFORM + S3 SPA DEPLOYER
+ * SALESFORCE EDGE RELEASE GATE — UNIFIED PNPM + TERRAFORM + S3 SPA DEPLOYER
  * ============================================================================
- * Invoked by `make`, `make deploy`, `make deploy-all`, `make tf-apply`,
- * `make sync-ui`, `make invalidate-cloudfront`, and `make test-e2e`.
+ * Invoked by `make`, `make deploy`, `make deply`, `make deploy-all`,
+ * `make tf-apply`, `make sync-ui`, `make invalidate-cloudfront`, `make test-e2e`.
  *
  * Responsibilities:
  *   1. Loads AWS credentials from `.env` (supporting both `KEY=VALUE` and
@@ -17,8 +17,9 @@
  *      `terraform apply -auto-approve` in `infra/terraform`.
  *   5. Uploads all compiled `dist/` SPA assets (`index.html`, `.js`, `.css`,
  *      `.svg`, `.json`) to `s3://<bucket>/portal-ui/` with strict MIME types,
- *      invalidates the CloudFront distribution cache (`/*`) via AWS SigV4, and
- *      executes the live CloudFront UI + API + Gate E2E test suite.
+ *      invalidates the CloudFront distribution cache (`/*`) via AWS SigV4,
+ *      prints the live CloudFront Distribution URL summary banner, and runs
+ *      the live Portal UI + API + Gate E2E test suite.
  * ============================================================================
  */
 
@@ -60,6 +61,77 @@ export interface SpaBundleVerification {
     sha256: string;
   }>;
   errors: string[];
+}
+
+export interface CloudFrontDeploymentInfo {
+  cloudfrontUrl: string | null;
+  distributionId: string | null;
+  apiEndpoint: string | null;
+  s3Bucket: string;
+}
+
+export interface DeploymentSummaryInput {
+  accountId: string;
+  region: string;
+  stsValid: boolean;
+  stsError?: string;
+  cloudfrontUrl: string | null;
+  distributionId: string | null;
+  apiEndpoint: string | null;
+  s3Bucket: string;
+  totalFiles?: number;
+  uploadedFiles?: number;
+  invalidationOk?: boolean;
+  invalidationStatus?: number;
+  e2eTargetUrl?: string;
+}
+
+/**
+ * Pure formatter for the CloudFront URL & S3 sync summary printed at the end
+ * of `make deploy` / `make deply` / `make sync-ui` / `make tf-apply`.
+ */
+export function formatDeploymentSummaryBanner(input: DeploymentSummaryInput): string {
+  const cfUrlDisplay = input.cloudfrontUrl
+    ? input.cloudfrontUrl
+    : input.stsValid
+      ? 'NOT PROVISIONED (check terraform apply output above)'
+      : 'NOT PROVISIONED (AWS STS rejected .env credentials — update .env and re-run `make deploy`)';
+  const distIdDisplay = input.distributionId || 'none';
+  const apiDisplay = input.apiEndpoint || 'none';
+  const syncDisplay =
+    typeof input.totalFiles === 'number'
+      ? input.stsValid
+        ? `${input.uploadedFiles ?? 0}/${input.totalFiles} direct S3 puts + Terraform bundle synced`
+        : `${input.totalFiles} compiled SPA files ready in dist/ (S3 sync skipped: invalid STS token)`
+      : input.stsValid
+        ? 'verified'
+        : 'skipped (invalid STS token)';
+  const invDisplay = input.distributionId
+    ? input.invalidationOk
+      ? `OK (HTTP ${input.invalidationStatus ?? 201})`
+      : input.stsValid
+        ? `HTTP ${input.invalidationStatus ?? 0}`
+        : 'skipped (invalid STS token)'
+    : 'none';
+
+  const lines = [
+    '',
+    '================================================================================',
+    ' DEPLOYMENT & CLOUDFRONT DISTRIBUTION SUMMARY',
+    '================================================================================',
+    ` CloudFront URL          : ${cfUrlDisplay}`,
+    ` CloudFront Dist ID      : ${distIdDisplay}`,
+    ` API Gateway Endpoint    : ${apiDisplay}`,
+    ` S3 Origin Bucket        : s3://${input.s3Bucket}/portal-ui/`,
+    ` SPA Bundle Sync         : ${syncDisplay}`,
+    ` CloudFront Invalidation : ${invDisplay}`,
+    ` AWS Account / Region    : ${input.accountId} (${input.region})`,
+    ...(input.stsError ? [` AWS STS Status          : ${input.stsError}`] : []),
+    ...(input.e2eTargetUrl ? [` Verified Live E2E Target: ${input.e2eTargetUrl}`] : []),
+    '================================================================================',
+    '',
+  ];
+  return lines.join('\n');
 }
 
 /**
@@ -366,29 +438,121 @@ export async function invalidateCloudFrontSigV4(params: {
   });
 }
 
-function resolveCloudFrontDistributionId(): string {
-  const tf = resolveTerraformBin();
-  const out = spawnSync(tf, [`-chdir=${TF_DIR}`, 'output', '-raw', 'cloudfront_distribution_id'], {
+function readTerraformRawOutput(tf: string, outputName: string): string | null {
+  const res = spawnSync(tf, [`-chdir=${TF_DIR}`, 'output', '-raw', outputName], {
     encoding: 'utf8',
   });
-  const candidate = (out.stdout || '').trim();
-  if (out.status === 0 && /^E[A-Z0-9]{10,20}$/.test(candidate)) {
-    process.env.CLOUDFRONT_DISTRIBUTION_ID = candidate;
-    return candidate;
-  }
+  if (res.status !== 0) return null;
+  const val = (res.stdout || '').trim();
+  if (!val || val === 'disabled' || val.includes('No outputs found')) return null;
+  return val;
+}
+
+function readDotEnvTerraformMap(): Record<string, string> {
+  const out: Record<string, string> = {};
   const envTfPath = path.resolve(ROOT_DIR, '.env.terraform');
-  if (fs.existsSync(envTfPath)) {
-    const raw = fs.readFileSync(envTfPath, 'utf8');
-    const match = raw.match(/^CLOUDFRONT_DISTRIBUTION_ID=(.+)$/m);
-    if (match && match[1].trim()) {
-      process.env.CLOUDFRONT_DISTRIBUTION_ID = match[1].trim();
-      return match[1].trim();
+  if (!fs.existsSync(envTfPath)) return out;
+  const raw = fs.readFileSync(envTfPath, 'utf8');
+  for (const line of raw.split(/\r?\n/)) {
+    const eq = line.indexOf('=');
+    if (eq > 0) {
+      const k = line.slice(0, eq).trim();
+      const v = line.slice(eq + 1).trim();
+      if (k && v && v !== 'disabled') out[k] = v;
     }
   }
-  if (process.env.CLOUDFRONT_DISTRIBUTION_ID) {
-    return process.env.CLOUDFRONT_DISTRIBUTION_ID.trim();
+  return out;
+}
+
+export function resolveCloudFrontDeploymentInfo(
+  defaultAccountId: string,
+  defaultRegion: string
+): CloudFrontDeploymentInfo {
+  const tf = resolveTerraformBin();
+  const envTf = readDotEnvTerraformMap();
+
+  const distIdCandidate =
+    readTerraformRawOutput(tf, 'cloudfront_distribution_id') ||
+    envTf.CLOUDFRONT_DISTRIBUTION_ID ||
+    (process.env.CLOUDFRONT_DISTRIBUTION_ID || '').trim();
+  const distributionId = /^E[A-Z0-9]{10,20}$/.test(distIdCandidate)
+    ? distIdCandidate
+    : null;
+  if (distributionId) process.env.CLOUDFRONT_DISTRIBUTION_ID = distributionId;
+
+  const urlCandidate =
+    readTerraformRawOutput(tf, 'cloudfront_portal_url') ||
+    envTf.CLOUDFRONT_PORTAL_URL ||
+    (process.env.CLOUDFRONT_PORTAL_URL || '').trim();
+  const cloudfrontUrl =
+    urlCandidate.startsWith('https://') && urlCandidate.includes('cloudfront.net')
+      ? urlCandidate.replace(/\/+$/, '')
+      : null;
+  if (cloudfrontUrl) process.env.CLOUDFRONT_PORTAL_URL = cloudfrontUrl;
+
+  const apiCandidate =
+    readTerraformRawOutput(tf, 'apigateway_http_api_endpoint') ||
+    envTf.APIGATEWAY_HTTP_API_ENDPOINT ||
+    (process.env.APIGATEWAY_HTTP_API_ENDPOINT || '').trim();
+  const apiEndpoint = apiCandidate.startsWith('https://')
+    ? apiCandidate.replace(/\/+$/, '')
+    : null;
+
+  const bucketCandidate =
+    readTerraformRawOutput(tf, 's3_artifact_bucket_name') ||
+    envTf.SYNTHETICS_S3_BUCKET ||
+    process.env.SYNTHETICS_S3_BUCKET ||
+    `salesforce-akamai-synthetics-${defaultAccountId}-${defaultRegion}`;
+  const s3Bucket = bucketCandidate.replace(/^s3:\/\//, '');
+
+  return {
+    cloudfrontUrl,
+    distributionId,
+    apiEndpoint,
+    s3Bucket,
+  };
+}
+
+async function syncUiBundleToS3(params: {
+  bucket: string;
+  region: string;
+  check: SpaBundleVerification;
+  accessKeyId: string;
+  secretAccessKey: string;
+}): Promise<{ uploadedCount: number; failedCount: number }> {
+  const { bucket, region, check, accessKeyId, secretAccessKey } = params;
+  console.log(
+    `Uploading ${check.files.length} compiled SPA files from dist/ to s3://${bucket}/portal-ui/ ...`
+  );
+  let uploadedCount = 0;
+  let failedCount = 0;
+  for (const f of check.files) {
+    const body = fs.readFileSync(path.join(DIST_DIR, f.relativePath));
+    if (accessKeyId && secretAccessKey) {
+      const res = await putS3ObjectSigV4({
+        bucket,
+        region,
+        key: f.s3Key,
+        body,
+        contentType: f.contentType,
+        accessKeyId,
+        secretAccessKey,
+      });
+      if (res.ok) {
+        uploadedCount++;
+        console.log(`  [UPLOADED] s3://${bucket}/${f.s3Key} (${f.contentType})`);
+      } else {
+        failedCount++;
+        console.warn(
+          `  [S3 PUT STATUS ${res.status}] s3://${bucket}/${f.s3Key}: ${res.message || 'failed'}`
+        );
+      }
+    }
   }
-  return '';
+  console.log(
+    `[SYNC-UI COMPLETE] ${uploadedCount}/${check.files.length} SPA files uploaded to s3://${bucket}/portal-ui/`
+  );
+  return { uploadedCount, failedCount };
 }
 
 /**
@@ -566,14 +730,16 @@ export async function verifyAwsStsSession(params: {
 }
 
 async function main() {
-  const action = process.argv[2] || 'deploy-all';
+  const rawAction = process.argv[2] || 'deploy-all';
+  const action = rawAction === 'deply' || rawAction === 'deploy' ? 'deploy-all' : rawAction;
   const awsEnv = loadDotEnvCredentials();
-  process.env.AWS_REGION = awsEnv.region || 'us-east-1';
-  process.env.AWS_DEFAULT_REGION = awsEnv.region || 'us-east-1';
+  const region = awsEnv.region || 'us-east-1';
+  process.env.AWS_REGION = region;
+  process.env.AWS_DEFAULT_REGION = region;
   syncAccountConfigWithDotEnv(awsEnv.accountId, awsEnv.operatorUsername);
 
   console.log(
-    `[Salesforce Edge Release Gate] Action="${action}" | AWS Account=${awsEnv.accountId} | User=${awsEnv.operatorUsername} | Region=${awsEnv.region} | Key=${awsEnv.maskedAccessKey}`
+    `[Salesforce Edge Release Gate] Action="${rawAction}" | AWS Account=${awsEnv.accountId} | User=${awsEnv.operatorUsername} | Region=${region} | Key=${awsEnv.maskedAccessKey}`
   );
 
   if (action === 'verify-bundle') {
@@ -615,23 +781,25 @@ async function main() {
   if (action === 'tf-plan') {
     archiveMismatchedTerraformState(awsEnv.accountId);
     if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
-      runCmd('pnpm', ['run', 'build']);
+      if (runCmd('pnpm', ['run', 'build']) !== 0) process.exit(1);
     }
     const tf = resolveTerraformBin();
     process.exit(runCmd(tf, [`-chdir=${TF_DIR}`, 'plan', '-input=false']));
   }
 
   if (action === 'invalidate-cloudfront') {
-    const distId = resolveCloudFrontDistributionId();
-    if (distId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+    const cfInfo = resolveCloudFrontDeploymentInfo(awsEnv.accountId, region);
+    if (cfInfo.distributionId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
       const inv = await invalidateCloudFrontSigV4({
-        distributionId: distId,
+        distributionId: cfInfo.distributionId,
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
       });
       console.log(
-        `[CLOUDFRONT INVALIDATION] Distribution=${distId} | Status=${inv.status} | OK=${inv.ok}`
+        `[CLOUDFRONT INVALIDATION] Distribution=${cfInfo.distributionId} | URL=${cfInfo.cloudfrontUrl || 'unknown'} | Status=${inv.status} | OK=${inv.ok}`
       );
+    } else {
+      console.warn('[CLOUDFRONT INVALIDATION] No active CloudFront distribution ID found in Terraform outputs or .env.terraform.');
     }
     return;
   }
@@ -658,22 +826,34 @@ async function main() {
       '-input=false',
     ]);
     if (applyCode !== 0) {
-      console.warn(
-        '[WARN] terraform apply returned non-zero status; verifying existing Terraform state outputs...'
-      );
+      console.error('[TERRAFORM APPLY FAILED] Terraform exited with non-zero status:', applyCode);
+      process.exit(applyCode);
     }
     runCmd(tf, [`-chdir=${TF_DIR}`, 'output']);
-    const distId = resolveCloudFrontDistributionId();
-    if (distId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
-      const inv = await invalidateCloudFrontSigV4({
-        distributionId: distId,
+    const cfInfo = resolveCloudFrontDeploymentInfo(awsEnv.accountId, region);
+    let invRes: { ok: boolean; status: number } = { ok: false, status: 0 };
+    if (cfInfo.distributionId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+      invRes = await invalidateCloudFrontSigV4({
+        distributionId: cfInfo.distributionId,
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
       });
-      console.log(
-        `[CLOUDFRONT INVALIDATION] Distribution=${distId} | Status=${inv.status} | OK=${inv.ok}`
-      );
     }
+    console.log(
+      formatDeploymentSummaryBanner({
+        accountId: awsEnv.accountId,
+        region,
+        stsValid: true,
+        cloudfrontUrl: cfInfo.cloudfrontUrl,
+        distributionId: cfInfo.distributionId,
+        apiEndpoint: cfInfo.apiEndpoint,
+        s3Bucket: cfInfo.s3Bucket,
+        totalFiles: check.files.length,
+        uploadedFiles: check.files.length,
+        invalidationOk: invRes.ok,
+        invalidationStatus: invRes.status,
+      })
+    );
     return;
   }
 
@@ -686,50 +866,53 @@ async function main() {
       console.error('[SPA BUNDLE INVALID]:', check.errors.join('; '));
       process.exit(1);
     }
-    const bucket = (
-      process.env.SYNTHETICS_S3_BUCKET ||
-      `salesforce-akamai-synthetics-${awsEnv.accountId}-${awsEnv.region}`
-    ).replace(/^s3:\/\//, '');
-
-    console.log(`Uploading ${check.files.length} compiled SPA files from dist/ to s3://${bucket}/portal-ui/ ...`);
+    const sts = await verifyAwsStsSession({
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+    });
+    const cfInfo = resolveCloudFrontDeploymentInfo(awsEnv.accountId, region);
     let uploadedCount = 0;
-    for (const f of check.files) {
-      const body = fs.readFileSync(path.join(DIST_DIR, f.relativePath));
-      if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
-        const res = await putS3ObjectSigV4({
-          bucket,
-          region: awsEnv.region,
-          key: f.s3Key,
-          body,
-          contentType: f.contentType,
+    let invRes: { ok: boolean; status: number } = { ok: false, status: 0 };
+
+    if (sts.valid) {
+      const syncStats = await syncUiBundleToS3({
+        bucket: cfInfo.s3Bucket,
+        region,
+        check,
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+      });
+      uploadedCount = syncStats.uploadedCount;
+
+      if (cfInfo.distributionId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+        invRes = await invalidateCloudFrontSigV4({
+          distributionId: cfInfo.distributionId,
           accessKeyId: process.env.AWS_ACCESS_KEY_ID,
           secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
         });
-        if (res.ok) {
-          uploadedCount++;
-          console.log(`  [UPLOADED] s3://${bucket}/${f.s3Key} (${f.contentType})`);
-        } else {
-          console.warn(
-            `  [S3 DIRECT PUT STATUS ${res.status}] s3://${bucket}/${f.s3Key} — staged in Terraform aws_s3_object.portal_spa_bundle["${f.relativePath}"]`
-          );
-        }
       }
     }
-    const distId = resolveCloudFrontDistributionId();
-    if (distId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
-      await invalidateCloudFrontSigV4({
-        distributionId: distId,
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      });
-    }
+
     console.log(
-      `[SYNC-UI COMPLETE] ${check.files.length} SPA files verified (${uploadedCount} direct S3 puts, all ${check.files.length} tracked in Terraform aws_s3_object.portal_spa_bundle).`
+      formatDeploymentSummaryBanner({
+        accountId: awsEnv.accountId,
+        region,
+        stsValid: sts.valid,
+        stsError: sts.valid ? undefined : sts.error,
+        cloudfrontUrl: cfInfo.cloudfrontUrl,
+        distributionId: cfInfo.distributionId,
+        apiEndpoint: cfInfo.apiEndpoint,
+        s3Bucket: cfInfo.s3Bucket,
+        totalFiles: check.files.length,
+        uploadedFiles: uploadedCount,
+        invalidationOk: invRes.ok,
+        invalidationStatus: invRes.status,
+      })
     );
     return;
   }
 
-  if (action === 'deploy-all' || action === 'deploy') {
+  if (action === 'deploy-all') {
     archiveMismatchedTerraformState(awsEnv.accountId);
     if (!fs.existsSync(path.join(ROOT_DIR, 'node_modules'))) {
       if (runCmd('pnpm', ['install']) !== 0) process.exit(1);
@@ -757,30 +940,93 @@ async function main() {
 
     if (sts.valid) {
       console.log(`[AWS STS ACTIVE] Verified caller ${sts.arn} (Account ${sts.accountId})`);
-      runCmd(tf, [`-chdir=${TF_DIR}`, 'apply', '-auto-approve', '-input=false']);
+      const applyCode = runCmd(tf, [`-chdir=${TF_DIR}`, 'apply', '-auto-approve', '-input=false']);
+      if (applyCode !== 0) {
+        console.error('[TERRAFORM APPLY FAILED] Aborting CloudFront sync.');
+        process.exit(applyCode);
+      }
       runCmd(tf, [`-chdir=${TF_DIR}`, 'output']);
 
-      const distId = resolveCloudFrontDistributionId();
-      if (distId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
-        const inv = await invalidateCloudFrontSigV4({
-          distributionId: distId,
+      const cfInfo = resolveCloudFrontDeploymentInfo(awsEnv.accountId, region);
+      const syncStats = await syncUiBundleToS3({
+        bucket: cfInfo.s3Bucket,
+        region,
+        check,
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+      });
+
+      let invRes: { ok: boolean; status: number } = { ok: false, status: 0 };
+      if (cfInfo.distributionId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+        invRes = await invalidateCloudFrontSigV4({
+          distributionId: cfInfo.distributionId,
           accessKeyId: process.env.AWS_ACCESS_KEY_ID,
           secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
         });
         console.log(
-          `[CLOUDFRONT INVALIDATION] Distribution=${distId} | Status=${inv.status} | OK=${inv.ok}`
+          `[CLOUDFRONT INVALIDATION] Distribution=${cfInfo.distributionId} | Status=${invRes.status} | OK=${invRes.ok}`
         );
         // Wait briefly for CloudFront edge invalidation propagation
         await new Promise((r) => setTimeout(r, 4000));
       }
 
-      // Run full CloudFront live UI + API + 3-Dim Release Gate E2E verification
-      await runCloudFrontE2ETests();
-    } else {
-      console.warn(
-        `[AWS STS NOTICE] ${sts.error} — skipping remote terraform apply until fresh sandbox credentials are placed in .env. Running full 6-step Live E2E UI + API + Gate verification against http://localhost:3000 ...`
+      if (cfInfo.cloudfrontUrl) {
+        await runCloudFrontE2ETests(cfInfo.cloudfrontUrl);
+      }
+
+      console.log(
+        formatDeploymentSummaryBanner({
+          accountId: awsEnv.accountId,
+          region,
+          stsValid: true,
+          cloudfrontUrl: cfInfo.cloudfrontUrl,
+          distributionId: cfInfo.distributionId,
+          apiEndpoint: cfInfo.apiEndpoint,
+          s3Bucket: cfInfo.s3Bucket,
+          totalFiles: check.files.length,
+          uploadedFiles: syncStats.uploadedCount,
+          invalidationOk: invRes.ok,
+          invalidationStatus: invRes.status,
+          e2eTargetUrl: cfInfo.cloudfrontUrl || undefined,
+        })
       );
-      await runCloudFrontE2ETests('http://localhost:3000');
+      if (cfInfo.cloudfrontUrl) {
+        console.log(`CLOUDFRONT_PORTAL_URL=${cfInfo.cloudfrontUrl}`);
+      }
+    } else {
+      const cfInfo = resolveCloudFrontDeploymentInfo(awsEnv.accountId, region);
+      console.warn(
+        `[AWS STS NOTICE] ${sts.error} — cannot execute remote terraform apply / S3 sync / CloudFront creation until active AWS credentials are set in .env.`
+      );
+      let localHealthy = false;
+      try {
+        const healthProbe = await fetch('http://localhost:3000/api/v1/health');
+        localHealthy = healthProbe.ok;
+      } catch {
+        console.warn('[LOCAL E2E SKIPPED] http://localhost:3000 is not responding.');
+      }
+      let localE2eTarget: string | undefined;
+      if (localHealthy && process.env.SKIP_LOCAL_E2E !== '1') {
+        await runCloudFrontE2ETests('http://localhost:3000');
+        localE2eTarget = 'http://localhost:3000';
+      }
+
+      console.log(
+        formatDeploymentSummaryBanner({
+          accountId: awsEnv.accountId,
+          region,
+          stsValid: false,
+          stsError: sts.error,
+          cloudfrontUrl: cfInfo.cloudfrontUrl,
+          distributionId: cfInfo.distributionId,
+          apiEndpoint: cfInfo.apiEndpoint,
+          s3Bucket: cfInfo.s3Bucket,
+          totalFiles: check.files.length,
+          uploadedFiles: 0,
+          invalidationOk: false,
+          e2eTargetUrl: localE2eTarget,
+        })
+      );
     }
     return;
   }

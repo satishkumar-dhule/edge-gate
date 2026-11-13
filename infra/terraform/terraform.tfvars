@@ -7,9 +7,9 @@
 aws_region             = "us-east-1"
 environment            = "prod"
 project_name           = "salesforce-edge-release-gate"
-operator_email         = "user-baluuezlosgz@salesforce.com"
+operator_email         = "user-tcchhlxprfng@salesforce.com"
 operator_role          = "Lead Edge Release Engineer"
-akamai_account_context = "SFDC-EDGE-373211957869 (AWS 373211957869 · Akamai Prod + Staging)"
+akamai_account_context = "SFDC-EDGE-735234585484 (AWS 735234585484 · Akamai Prod + Staging)"
 
 s3_artifact_bucket                = "salesforce-akamai-synthetics"
 s3_force_destroy                  = true

@@ -407,7 +407,11 @@ test('Cookie diffs use clean unprefixed cookie names and preserve itemVerdict un
     ['edge_cache_bypass', 'edge_region']
   );
 
-  // Initial comparison: T01 (2 header diffs -> different), T02 (2 cookie diffs -> different), T03 (1 visual minor diff -> minor)
+  // Assign measured pixelDiffPercent = 1.8% on T03 fixture to test visual minor -> acceptedVisualTests -> GO flow
+  const t03Stg = stgRun.results.find((r) => r.id === 'T03')!;
+  t03Stg.pixelDiffPercent = 1.8;
+
+  // Initial comparison: T01 (2 header diffs -> different), T02 (2 cookie diffs -> different), T03 (1.8% pixel diff -> minor)
   const initialComp = buildInitialComparison(stgRun, prdRun, 'network', []);
   assert.equal(initialComp.headlineVerdict, 'NO-GO');
   const t02Item = initialComp.items.find((i) => i.testId === 'T02')!;
@@ -470,8 +474,8 @@ test('Each target seeds both Latest Run and Previous Run for default Run-over-Ru
   const runs = seedRunsFromConfig();
   const stgTargetRuns = runs.filter((r) => r.target === 'www.prod.staging');
   assert.equal(stgTargetRuns.length, 2);
-  assert.equal(stgTargetRuns[0].label, 'v2026.11-rc1');
-  assert.equal(stgTargetRuns[1].label, 'v2026.10-prev');
+  assert.equal(stgTargetRuns[0].label, 'live-staging');
+  assert.equal(stgTargetRuns[1].label, 'prev-staging');
 
   const runOverRunComp = buildInitialComparison(
     stgTargetRuns[0],
@@ -953,15 +957,14 @@ test('CloudFront SPA Portal Bundle, Terraform portal_spa_bundle & Makefile pipel
   assert.ok(makefile.includes('scripts/verify-cloudfront-e2e.ts'));
 });
 
-test('DOM Screenshot Renderer generates high-resolution webpage snapshots, live screenshot URLs with revision cache-busting, and T03 visual diff overlays for Side A vs Side B', async () => {
-  const {
-    buildDomScreenshotDataUri,
-    resolvePageVisualTheme,
-    resolveLiveScreenshotUrl,
-  } = await import('./domScreenshotRenderer');
+test('Screenshot URL resolver maps Side A and Side B honestly without T03 spoofing and pure RGBA pixelDiff measures real pixel deltas', async () => {
+  const { resolvePageVisualTheme, resolveLiveScreenshotUrl } = await import(
+    './domScreenshotRenderer'
+  );
+  const { compareRgbaFrames } = await import('./pixelDiff');
 
-  // 0. Verify resolveLiveScreenshotUrl produces distinct paths per property & test and appends revision cache-buster on rerun
-  const urlWwwT01 = resolveLiveScreenshotUrl({
+  // 0. Verify resolveLiveScreenshotUrl produces distinct paths per property & side without special-case T03 fabrication
+  const urlWwwT01A = resolveLiveScreenshotUrl({
     testId: 'T01',
     url: 'https://www.salesforce.com/',
     side: 'A',
@@ -972,62 +975,58 @@ test('DOM Screenshot Renderer generates high-resolution webpage snapshots, live 
     side: 'A',
     revision: 1731300000123,
   });
+  const urlWwwT03A = resolveLiveScreenshotUrl({
+    testId: 'T03',
+    url: 'https://www.salesforce.com/artificial-intelligence/',
+    side: 'A',
+    highlightDiff: false,
+  });
+  const urlWwwT03B = resolveLiveScreenshotUrl({
+    testId: 'T03',
+    url: 'https://www.salesforce.com/artificial-intelligence/',
+    side: 'B',
+  });
   const urlLoginT01 = resolveLiveScreenshotUrl({
     testId: 'T01',
     url: 'https://login.salesforce.com/',
     side: 'A',
   });
-  assert.equal(urlWwwT01, '/screenshots/www-T01-sideA.jpg?v=live3');
-  assert.equal(
-    urlWwwT01Rev,
-    '/screenshots/www-T01-sideA.jpg?v=live3&r=1731300000123'
-  );
-  assert.equal(urlLoginT01, '/screenshots/login-T01-sideA.jpg?v=live3');
-  assert.notEqual(urlWwwT01, urlWwwT01Rev);
-  assert.notEqual(urlWwwT01, urlLoginT01);
 
-  // 1. Verify T01 Side A and Side B match when highlightDiff is false
-  const t01SideA = buildDomScreenshotDataUri({
-    testId: 'T01',
-    testName: 'Salesforce Global Home & Hero Experience',
-    url: 'https://www.salesforce.com/',
-    side: 'A',
-    highlightDiff: false,
-  });
-  const t01SideB = buildDomScreenshotDataUri({
-    testId: 'T01',
-    testName: 'Salesforce Global Home & Hero Experience',
-    url: 'https://www.salesforce.com/',
-    side: 'B',
-    highlightDiff: false,
-  });
-  assert.ok(t01SideA.startsWith('data:image/svg+xml;utf8,'));
-  assert.ok(t01SideB.startsWith('data:image/svg+xml;utf8,'));
-  assert.ok(decodeURIComponent(t01SideA).includes('viewBox="0 0 1280 760"'));
+  assert.equal(urlWwwT01A, '/screenshots/www-T01-sideA.jpg?v=live5');
+  assert.equal(urlWwwT01Rev, '/screenshots/www-T01-sideA.jpg?v=live5&r=1731300000123');
+  assert.equal(urlWwwT03A, '/screenshots/www-T03-sideA.jpg?v=live5');
+  assert.equal(urlWwwT03B, '/screenshots/www-T03-sideB.jpg?v=live5');
+  assert.equal(urlLoginT01, '/screenshots/login-T01-sideA.jpg?v=live5');
 
-  // 2. Verify T03 Side A with highlightDiff=true renders the +14px staging promo shift & Bedrock Nova Lite diff overlay
-  const t03SideA = buildDomScreenshotDataUri({
-    testId: 'T03',
-    testName: 'Agentforce AI & Einstein Copilot Overview',
-    url: 'https://www.salesforce.com/ai/',
-    side: 'A',
-    highlightDiff: true,
-    showOverlay: true,
-    overlayText: 'AI Region: +14px vertical offset',
-  });
-  const t03SideB = buildDomScreenshotDataUri({
-    testId: 'T03',
-    testName: 'Agentforce AI & Einstein Copilot Overview',
-    url: 'https://www.salesforce.com/ai/',
-    side: 'B',
-    highlightDiff: false,
-  });
-  assert.notEqual(t03SideA, t03SideB);
-  const decodedT03A = decodeURIComponent(t03SideA);
-  assert.ok(decodedT03A.includes('STAGING CANDIDATE BANNER'));
-  assert.ok(decodedT03A.includes('Bedrock Nova Lite Diff: AI Region: +14px vertical offset'));
+  // 1. Verify compareRgbaFrames returns 0% for identical buffers and exact % + bounding box for genuine changes
+  const width = 10;
+  const height = 10;
+  const frameA = new Uint8Array(width * height * 4).fill(200);
+  const frameB = new Uint8Array(width * height * 4).fill(200);
 
-  // 3. Verify property-specific themes across all 8 Salesforce subdomains
+  const identical = compareRgbaFrames(frameA, frameB, width, height);
+  assert.equal(identical.pixelDiffPercent, 0);
+  assert.equal(identical.changedPixels, 0);
+  assert.equal(identical.changedBox, null);
+
+  // Modify 4 pixels in rows 2..3, cols 4..5
+  for (const [x, y] of [
+    [4, 2],
+    [5, 2],
+    [4, 3],
+    [5, 3],
+  ]) {
+    const idx = (y * width + x) * 4;
+    frameA[idx] = 20;
+    frameA[idx + 1] = 20;
+    frameA[idx + 2] = 20;
+  }
+  const diffed = compareRgbaFrames(frameA, frameB, width, height);
+  assert.equal(diffed.changedPixels, 4);
+  assert.equal(diffed.pixelDiffPercent, 4.0);
+  assert.deepEqual(diffed.changedBox, { x: 40, y: 20, w: 20, h: 20 });
+
+  // 2. Verify property-specific themes across Salesforce subdomains
   assert.ok(
     resolvePageVisualTheme('https://login.salesforce.com/').propertyBadge.includes(
       'Identity'
@@ -1136,10 +1135,188 @@ test('3-Tier Zero-Token AI Architecture invokes AI only on novel unseen diff sig
   assert.notEqual(fp1, fp2);
 });
 
+// ---------------------------------------------------------------------------
+// 14. Regional Akamai Edge PoP Node Routing & Localized Screenshot Resolution
+// ---------------------------------------------------------------------------
+import {
+  inferPropertyIdFromUrl,
+  resolveRegionalEdgeNode,
+  getPropertyTestSuite,
+} from '../config/template.config';
+import { generateTestResults } from '../data/mockStore';
+import { resolveLiveScreenshotUrl } from './domScreenshotRenderer';
 
+test('Regional Salesforce properties resolve dedicated Akamai Edge PoP IPs, Accept-Language, regional cookies, HTTP 200 status, and localized screenshot paths', () => {
+  // 1. Verify inferPropertyIdFromUrl maps regional URL paths accurately
+  assert.equal(
+    inferPropertyIdFromUrl('https://www.salesforce.com/jp/customer-success-stories/'),
+    'japan'
+  );
+  assert.equal(
+    inferPropertyIdFromUrl('https://www.salesforce.com/de/artificial-intelligence/'),
+    'germany'
+  );
+  assert.equal(
+    inferPropertyIdFromUrl('https://www.salesforce.com/uk/editions-pricing/sales-cloud/'),
+    'uk'
+  );
+  assert.equal(
+    inferPropertyIdFromUrl('https://www.salesforce.com/ap/sales/'),
+    'apac'
+  );
+  assert.equal(
+    inferPropertyIdFromUrl('https://www.salesforce.com/fr/'),
+    'emea'
+  );
+  assert.equal(
+    inferPropertyIdFromUrl('https://www.salesforce.com/br/customer-success-stories/'),
+    'americas'
+  );
 
+  // 2. Verify Japan regional edge node config uses Tokyo NRT PoP and ja-JP headers/cookies
+  const jpNode = resolveRegionalEdgeNode(
+    'japan',
+    'https://www.salesforce.com/jp/customer-success-stories/'
+  );
+  assert.equal(jpNode.stagingPopCode, 'NRT-STG-01');
+  assert.equal(jpNode.prodPopCode, 'NRT-PRD-08');
+  assert.equal(jpNode.stagingEdgeIp, '23.54.18.92');
+  assert.equal(jpNode.prodEdgeIp, '104.97.84.21');
+  assert.equal(jpNode.contentLanguage, 'ja-JP');
+  assert.ok(jpNode.regionalCookieHeader.includes('prorigin=JP1'));
+  assert.ok(jpNode.regionalCookieHeader.includes('AKA_A2=JP'));
 
+  // 3. Verify generateTestResults for japan.prod.staging and japan.prod.prod uses Tokyo NRT Edge IPs and HTTP 200 on T04
+  const jpStgResults = generateTestResults(
+    'japan.prod.staging',
+    'normal_staging',
+    getPropertyTestSuite('japan')
+  );
+  const jpPrdResults = generateTestResults(
+    'japan.prod.prod',
+    'normal_prod',
+    getPropertyTestSuite('japan')
+  );
+  const jpT04Stg = jpStgResults.find((r) => r.id === 'T04')!;
+  const jpT04Prd = jpPrdResults.find((r) => r.id === 'T04')!;
+  assert.equal(jpT04Stg.actualStatus, 200);
+  assert.equal(jpT04Prd.actualStatus, 200);
+  assert.equal(jpT04Stg.stagingEdgeIp, '23.54.18.92');
+  assert.equal(jpT04Prd.stagingEdgeIp, '104.97.84.21');
+  assert.equal(jpT04Stg.capturedHeaders['x-sfdc-edge-pop'], 'NRT-STG-01');
+  assert.equal(jpT04Prd.capturedHeaders['x-sfdc-edge-pop'], 'NRT-PRD-08');
+  assert.equal(jpT04Stg.capturedHeaders['content-language'], 'ja-JP');
+  assert.ok(jpT04Stg.capturedCookies?.prorigin?.startsWith('JP1'));
 
+  // 4. Verify resolveLiveScreenshotUrl maps /jp/ URLs to japan-T04-sideA/B.jpg (never www-T04!)
+  const jpShotA = resolveLiveScreenshotUrl({
+    testId: 'T04',
+    url: 'https://www.salesforce.com/jp/customer-success-stories/',
+    side: 'A',
+  });
+  const deShotB = resolveLiveScreenshotUrl({
+    testId: 'T01',
+    url: 'https://www.salesforce.com/de/',
+    side: 'B',
+  });
+  assert.ok(jpShotA.startsWith('/screenshots/japan-T04-sideA.jpg'));
+  assert.ok(deShotB.startsWith('/screenshots/germany-T01-sideB.jpg'));
+});
 
+// ---------------------------------------------------------------------------
+// 15. Compute Shell Engine & CloudFront Deployment Summary (pnpm + deply)
+// ---------------------------------------------------------------------------
+import {
+  extractCloudFrontUrlFromOutput,
+  parseMakefileTargets,
+  resolveComputeCommand,
+} from './computeShell';
+import { formatDeploymentSummaryBanner } from '../../scripts/deploy-aws-portal';
 
+test('computeShell parses Makefile targets, resolves make deploy/deply to pnpm, and formats CloudFront summary banner', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const makefileRaw = fs.readFileSync(path.resolve(process.cwd(), 'Makefile'), 'utf8');
+
+  const targets = parseMakefileTargets(makefileRaw);
+  assert.ok(targets.some((t) => t.name === 'deploy'));
+  assert.ok(targets.some((t) => t.name === 'deply'));
+  assert.ok(targets.some((t) => t.name === 'verify'));
+  assert.ok(targets.some((t) => t.name === 'sync-ui'));
+
+  // Empty command returns empty: true
+  assert.deepEqual(resolveComputeCommand('   '), {
+    resolvedCommand: '',
+    wasTranslated: false,
+    empty: true,
+  });
+
+  // make deploy & make deply resolve to pnpm exec tsx deploy-aws-portal.ts deploy-all when hasMake is false and hasPnpm is true
+  const deployRes = resolveComputeCommand('make deploy', { hasMake: false, hasPnpm: true });
+  assert.equal(deployRes.wasTranslated, true);
+  assert.equal(deployRes.resolvedCommand, 'pnpm exec tsx scripts/deploy-aws-portal.ts deploy-all');
+
+  const deplyRes = resolveComputeCommand('make deply', { hasMake: false, hasPnpm: true });
+  assert.equal(deplyRes.wasTranslated, true);
+  assert.equal(deplyRes.resolvedCommand, 'pnpm exec tsx scripts/deploy-aws-portal.ts deploy-all');
+
+  // make install & make lint use pnpm natively
+  assert.equal(
+    resolveComputeCommand('make install', { hasMake: false, hasPnpm: true }).resolvedCommand,
+    'pnpm install'
+  );
+  assert.equal(
+    resolveComputeCommand('make lint', { hasMake: false, hasPnpm: true }).resolvedCommand,
+    'pnpm run lint'
+  );
+
+  // make run-adhoc preserves variable assignments
+  const adhocRes = resolveComputeCommand(
+    'make run-adhoc TARGET=japan.prod.staging BY=ops@salesforce.com',
+    { hasMake: false, hasPnpm: true }
+  );
+  assert.equal(adhocRes.wasTranslated, true);
+  assert.ok(adhocRes.resolvedCommand.startsWith('TARGET=japan.prod.staging BY=ops@salesforce.com '));
+  assert.ok(adhocRes.resolvedCommand.includes('pnpm exec tsx scripts/user-admin-cli.ts run-adhoc'));
+
+  // pnpm exec passes through untouched when hasPnpm is true, and falls back to ./node_modules/.bin only when false
+  const pnpmPass = resolveComputeCommand('pnpm exec tsx --test src/engine/rules.test.ts', {
+    hasPnpm: true,
+  });
+  assert.equal(pnpmPass.wasTranslated, false);
+  assert.equal(pnpmPass.resolvedCommand, 'pnpm exec tsx --test src/engine/rules.test.ts');
+
+  const pnpmFallback = resolveComputeCommand('pnpm exec tsx --test src/engine/rules.test.ts', {
+    hasPnpm: false,
+  });
+  assert.equal(pnpmFallback.wasTranslated, true);
+  assert.equal(pnpmFallback.resolvedCommand, './node_modules/.bin/tsx --test src/engine/rules.test.ts');
+
+  // Arbitrary shell commands pass through untouched
+  const rawShell = resolveComputeCommand('node -v && pwd', { hasMake: false, hasPnpm: true });
+  assert.equal(rawShell.wasTranslated, false);
+  assert.equal(rawShell.resolvedCommand, 'node -v && pwd');
+
+  // CloudFront URL summary banner & stdout extractor
+  const activeBanner = formatDeploymentSummaryBanner({
+    accountId: '735234585484',
+    region: 'us-east-1',
+    stsValid: true,
+    cloudfrontUrl: 'https://d2example123.cloudfront.net',
+    distributionId: 'E2EXAMPLE123',
+    apiEndpoint: 'https://abc123.execute-api.us-east-1.amazonaws.com',
+    s3Bucket: 'salesforce-akamai-synthetics-735234585484-us-east-1',
+    totalFiles: 12,
+    uploadedFiles: 12,
+    invalidationOk: true,
+    invalidationStatus: 201,
+    e2eTargetUrl: 'https://d2example123.cloudfront.net',
+  });
+  assert.match(activeBanner, /CloudFront URL\s+: https:\/\/d2example123\.cloudfront\.net/);
+  assert.match(activeBanner, /12\/12 direct S3 puts \+ Terraform bundle synced/);
+  assert.equal(
+    extractCloudFrontUrlFromOutput(activeBanner),
+    'https://d2example123.cloudfront.net'
+  );
+});
 

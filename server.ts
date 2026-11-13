@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import {
   DEFAULT_TEMPLATE_CONFIG,
   getPropertyTestSuite,
+  inferPropertyIdFromUrl,
+  resolveRegionalEdgeNode,
 } from './src/config/template.config';
 import {
   INITIAL_RUNS,
@@ -36,9 +38,16 @@ import {
 import {
   QUALIFIED_COHORT_COOKIE_HEADER,
   QUALIFIED_PLAYWRIGHT_COOKIES,
-  ensureQualifiedPiperWidgetOnPage,
 } from './src/engine/qualifiedCohort';
+import { measurePlaywrightJpegDiffPercent } from './src/engine/pixelDiff';
 import { defaultZeroTokenEngine } from './src/engine/zeroTokenArchitecture';
+import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import crypto from 'node:crypto';
+import {
+  parseMakefileTargets,
+  resolveComputeCommand,
+} from './src/engine/computeShell';
+import { ensureComputeBinShims } from './src/engine/computeShims';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -56,7 +65,7 @@ async function startServer() {
   });
 
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = 3000;
 
   app.use(express.json({ limit: '5mb' }));
 
@@ -83,33 +92,48 @@ async function startServer() {
       'appexchange.prod.prod',
       'partners.prod.staging',
       'partners.prod.prod',
+      'apac.prod.staging',
       'apac.prod.prod',
+      'emea.prod.staging',
       'emea.prod.prod',
+      'americas.prod.staging',
       'americas.prod.prod',
+      'japan.prod.staging',
       'japan.prod.prod',
+      'uk.prod.staging',
       'uk.prod.prod',
+      'germany.prod.staging',
       'germany.prod.prod',
     ];
     const opEmail = `${awsEnv.operatorUsername || 'user-pqtpsgwbthke'}@salesforce.com`;
-    const liveRuns = await Promise.all(
-      fleetTargets.map(async (targetId) => {
-        const net = targetId.endsWith('.staging') ? 'staging' : 'prod';
-        const run = await executeLiveSalesforceRun({
-          targetId,
-          runNumber: 1,
-          label: `live-${net}`,
-          operatorEmail: opEmail,
-        });
-        run.key = `run-${targetId.replace(/\./g, '-')}-live-1`;
-        return run;
-      })
-    );
+    const liveRuns: typeof INITIAL_RUNS = [];
+    // Execute in batches of 4 targets so startup does not saturate sockets
+    for (let i = 0; i < fleetTargets.length; i += 4) {
+      const batch = fleetTargets.slice(i, i + 4);
+      const batchRuns = await Promise.all(
+        batch.map(async (targetId) => {
+          const net = targetId.endsWith('.staging') ? 'staging' : 'prod';
+          const run = await executeLiveSalesforceRun({
+            targetId,
+            runNumber: 1,
+            label: `live-${net}`,
+            operatorEmail: opEmail,
+          });
+          run.key = `run-${targetId.replace(/\./g, '-')}-live-1`;
+          return run;
+        })
+      );
+      liveRuns.push(...batchRuns);
+      // Merge incrementally into serverRuns as each batch completes
+      const batchTargetSet = new Set(batch);
+      serverRuns = [
+        ...batchRuns,
+        ...serverRuns.filter((r) => !batchTargetSet.has(r.target)),
+      ];
+    }
     serverRuns = liveRuns;
     return liveRuns;
   };
-
-  // Trigger initial background live HTTP flow capture against salesforce.com on startup
-  seedLiveFleetOnServer().catch(() => undefined);
 
   // Zero-Token .env Watcher: Automatically detect rotated AWS credentials in /.env and re-seed fleet
   const dotEnvPath = path.resolve(__dirname, '.env');
@@ -315,6 +339,7 @@ async function startServer() {
       sha256: string;
       bytes: number;
       s3Key: string;
+      pixelDiffPercent: number;
     }>
   >();
 
@@ -337,7 +362,7 @@ async function startServer() {
     return { sha256: '', bytes: 0, s3Key };
   };
 
-  // Helper to capture fresh 1280x760 headless Chromium screenshot on Rerun / Probe
+  // Helper to capture fresh, 100% unmodified 1280x760 headless Chromium screenshots on Rerun / Probe
   const captureLiveScreenshotOnDemand = async (
     rawUrl: string,
     propId: string,
@@ -349,9 +374,11 @@ async function startServer() {
     sha256: string;
     bytes: number;
     s3Key: string;
+    pixelDiffPercent: number;
   }> => {
     const idUpper = (testId || 'T01').toUpperCase();
-    const cleanProp = (propId || 'www').toLowerCase();
+    const cleanProp = inferPropertyIdFromUrl(rawUrl, propId);
+    const regionalNode = resolveRegionalEdgeNode(cleanProp, rawUrl);
     const lockKey = `${cleanProp}-${idUpper}`;
     const existingLock = inFlightScreenshotCaptures.get(lockKey);
     if (existingLock) {
@@ -363,6 +390,7 @@ async function startServer() {
       const capturedAt = new Date(revision).toISOString();
       const publicDir = path.resolve(__dirname, 'public', 'screenshots');
       const distDir = path.resolve(__dirname, 'dist', 'screenshots');
+      let measuredDiffPercent = 0;
 
       try {
         const { createRequire } = await import('node:module');
@@ -372,99 +400,116 @@ async function startServer() {
         const { chromium } = requireGlobal('playwright-core');
         const browser = await chromium.launch({
           headless: true,
-          args: ['--disable-http2', '--disable-blink-features=AutomationControlled'],
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
         });
         try {
-          const context = await browser.newContext({
-            viewport: { width: 1280, height: 760 },
-            deviceScaleFactor: 1,
-            userAgent:
-              'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          });
-          await context.addCookies(QUALIFIED_PLAYWRIGHT_COOKIES);
-          await context.route('https://*.salesforce.com/**', async (route: any) => {
-            const reqUrl = route.request().url();
-            try {
-              const resp = await fetch(reqUrl, {
-                headers: {
-                  'user-agent':
-                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-                  accept:
-                    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                  'accept-language': 'en-US,en;q=0.9',
-                  cookie: QUALIFIED_COHORT_COOKIE_HEADER,
-                },
-                redirect: 'follow',
-              });
-              const bodyBuf = Buffer.from(await resp.arrayBuffer());
-              const headersObj: Record<string, string> = {};
-              resp.headers.forEach((v, k) => {
-                const lower = k.toLowerCase();
-                if (
-                  lower !== 'content-encoding' &&
-                  lower !== 'content-length' &&
-                  lower !== 'transfer-encoding' &&
-                  lower !== 'content-security-policy'
-                ) {
-                  headersObj[k] = v;
-                }
-              });
-              await route.fulfill({
-                status: resp.status,
-                headers: headersObj,
-                body: bodyBuf,
-              });
-            } catch {
-              await route.continue();
-            }
-          });
+          const setupSideContext = async (mode: 'staging' | 'prod') => {
+            const ctx = await browser.newContext({
+              viewport: { width: 1280, height: 760 },
+              deviceScaleFactor: 1,
+              locale: regionalNode.locale.replace('_', '-'),
+              userAgent:
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+              extraHTTPHeaders: {
+                'Accept-Language': regionalNode.acceptLanguage,
+                ...(mode === 'staging'
+                  ? {
+                      Pragma: DEFAULT_TEMPLATE_CONFIG.infrastructure.pragmaHeaders.join(', '),
+                    }
+                  : {}),
+              },
+            });
+            await ctx.addCookies(QUALIFIED_PLAYWRIGHT_COOKIES);
+            const regionalCookieHeader = [
+              QUALIFIED_COHORT_COOKIE_HEADER,
+              regionalNode.regionalCookieHeader,
+            ]
+              .filter(Boolean)
+              .join('; ');
+            await ctx.route('https://www.salesforce.com/**', async (route: any) => {
+              const req = route.request();
+              if (req.resourceType() !== 'document') {
+                await route.continue();
+                return;
+              }
+              try {
+                const resp = await fetch(req.url(), {
+                  headers: {
+                    'user-agent':
+                      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    accept:
+                      'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'accept-language': regionalNode.acceptLanguage,
+                    'x-akamai-edgescape': regionalNode.edgescapeHeader,
+                    cookie: regionalCookieHeader,
+                  },
+                  redirect: 'follow',
+                });
+                const bodyBuf = Buffer.from(await resp.arrayBuffer());
+                const headersObj: Record<string, string> = {};
+                resp.headers.forEach((v, k) => {
+                  const lower = k.toLowerCase();
+                  if (
+                    lower !== 'content-encoding' &&
+                    lower !== 'content-length' &&
+                    lower !== 'transfer-encoding' &&
+                    lower !== 'content-security-policy'
+                  ) {
+                    headersObj[k] = v;
+                  }
+                });
+                await route.fulfill({
+                  status: resp.status,
+                  headers: headersObj,
+                  body: bodyBuf,
+                });
+              } catch {
+                await route.continue();
+              }
+            });
+            return ctx;
+          };
 
-          const page = await context.newPage();
-          const safeUrl =
-            rawUrl.includes('form/signup/freetrial-sales')
-              ? 'https://www.salesforce.com/'
-              : rawUrl;
-          await page.goto(safeUrl, { waitUntil: 'domcontentloaded', timeout: 5500 });
-          await page.waitForTimeout(800);
-          await page.evaluate(() => {
-            const selectors = [
-              '#onetrust-consent-sdk',
-              '.onetrust-pc-dark-filter',
-              '[id*="cookie"]',
-              '[class*="cookie-banner"]',
-            ];
-            for (const sel of selectors) {
-              document.querySelectorAll(sel).forEach((el) => {
-                (el as HTMLElement).style.display = 'none';
-              });
-            }
-          });
-          await ensureQualifiedPiperWidgetOnPage(page, safeUrl);
-          const bufB = await page.screenshot({
-            type: 'jpeg',
-            quality: 82,
-            clip: { x: 0, y: 0, width: 1280, height: 760 },
-          });
-          let bufA = bufB;
-          if (idUpper === 'T03') {
-            await page.evaluate(() => {
-              const banner = document.createElement('div');
-              banner.id = '__sfdc_staging_diff_banner';
-              banner.style.cssText =
-                'width:100%;background:linear-gradient(90deg,#032d60 0%,#0176d3 100%);color:#ffffff;font-family:system-ui,sans-serif;font-size:12px;font-weight:700;padding:8px 24px;display:flex;align-items:center;justify-content:center;letter-spacing:0.03em;box-shadow:0 2px 6px rgba(0,0,0,0.18);z-index:999999;position:relative;';
-              banner.textContent =
-                'AKAMAI STAGING EDGE (23.48.201.18) · Agentforce 2.0 Autonomous AI Release Candidate Banner (+14px vertical hero offset)';
-              document.body.prepend(banner);
-            });
-            await page.waitForTimeout(120);
-            bufA = await page.screenshot({
-              type: 'jpeg',
-              quality: 82,
-              clip: { x: 0, y: 0, width: 1280, height: 760 },
-            });
+          const [ctxA, ctxB] = await Promise.all([
+            setupSideContext('staging'),
+            setupSideContext('prod'),
+          ]);
+          const [pageA, pageB] = await Promise.all([ctxA.newPage(), ctxB.newPage()]);
+
+          let safeUrl = rawUrl;
+          if (
+            ['japan', 'germany', 'uk', 'apac', 'emea', 'americas'].includes(cleanProp) &&
+            !safeUrl.includes('bc=')
+          ) {
+            safeUrl += safeUrl.includes('?') ? '&bc=OTH' : '?bc=OTH';
           }
 
-          if (bufB && bufB.length > 8000) {
+          await Promise.all([
+            pageA.goto(safeUrl, { waitUntil: 'domcontentloaded', timeout: 9000 }).catch(() => null),
+            pageB.goto(safeUrl, { waitUntil: 'domcontentloaded', timeout: 9000 }).catch(() => null),
+          ]);
+          await Promise.all([pageA.waitForTimeout(900), pageB.waitForTimeout(900)]);
+
+          const [bufA, bufB] = await Promise.all([
+            pageA.screenshot({
+              type: 'jpeg',
+              quality: 84,
+              clip: { x: 0, y: 0, width: 1280, height: 760 },
+            }),
+            pageB.screenshot({
+              type: 'jpeg',
+              quality: 84,
+              clip: { x: 0, y: 0, width: 1280, height: 760 },
+            }),
+          ]);
+
+          if (bufA && bufB && bufA.length > 5000 && bufB.length > 5000) {
+            const diffPage = await ctxB.newPage();
+            await diffPage.setContent('<html><body></body></html>');
+            const measured = await measurePlaywrightJpegDiffPercent(diffPage, bufA, bufB);
+            measuredDiffPercent = measured.pixelDiffPercent;
+            await diffPage.close();
+
             for (const dir of [publicDir, distDir]) {
               if (fs.existsSync(dir)) {
                 fs.writeFileSync(
@@ -478,6 +523,9 @@ async function startServer() {
               }
             }
           }
+
+          await Promise.all([pageA.close(), pageB.close()]);
+          await Promise.all([ctxA.close(), ctxB.close()]);
         } finally {
           await browser.close();
         }
@@ -493,6 +541,7 @@ async function startServer() {
         sha256: meta.sha256,
         bytes: meta.bytes,
         s3Key: meta.s3Key,
+        pixelDiffPercent: measuredDiffPercent,
       };
     })();
 
@@ -603,19 +652,21 @@ async function startServer() {
       : DEFAULT_TEMPLATE_CONFIG.networks.prod;
 
     let hostname = 'www.salesforce.com';
-    let propId = 'www';
     try {
       hostname = new URL(rawUrl).hostname;
-      if (hostname.includes('login.')) propId = 'login';
-      else if (hostname.includes('developer.')) propId = 'developer';
-      else if (hostname.includes('help.')) propId = 'help';
-      else if (hostname.includes('trailhead.')) propId = 'trailhead';
-      else if (hostname.includes('status.')) propId = 'status';
-      else if (hostname.includes('appexchange.')) propId = 'appexchange';
-      else if (hostname.includes('partners.')) propId = 'partners';
     } catch {
       // ignore
     }
+    const explicitAppId =
+      (req.body?.appId as string) ||
+      (typeof req.body?.targetId === 'string'
+        ? req.body.targetId.split('.')[0]
+        : undefined);
+    const propId = inferPropertyIdFromUrl(rawUrl, explicitAppId);
+    const regionalNode = resolveRegionalEdgeNode(propId, rawUrl);
+    const regionalEdgeIp = isStaging
+      ? regionalNode.stagingEdgeIp
+      : regionalNode.prodEdgeIp;
 
     const targetId =
       (req.body?.targetId as string) ||
@@ -626,8 +677,10 @@ async function startServer() {
         probeLiveUrlHttpFlow({
           url: rawUrl,
           isStaging,
-          fallbackIp: netCfg.defaultEdgeIp,
+          fallbackIp: regionalEdgeIp,
           edgeHostname: `${hostname}${netCfg.edgeSuffix}`,
+          appId: propId,
+          expectedStatus: req.body?.expectedStatus,
           maxHops: 5,
         }),
         shouldCaptureScreenshot
@@ -646,6 +699,7 @@ async function startServer() {
                 sha256: meta.sha256,
                 bytes: meta.bytes,
                 s3Key: meta.s3Key,
+                pixelDiffPercent: 0,
               };
             })(),
       ]);
@@ -696,6 +750,7 @@ async function startServer() {
               screenshotSha256: screenshotMeta.sha256,
               screenshotBytes: screenshotMeta.bytes,
               s3ScreenshotKey: screenshotMeta.s3Key,
+              pixelDiffPercent: screenshotMeta.pixelDiffPercent,
             };
           }),
         };
@@ -715,6 +770,7 @@ async function startServer() {
         screenshotSha256: screenshotMeta.sha256,
         screenshotBytes: screenshotMeta.bytes,
         s3ScreenshotKey: screenshotMeta.s3Key,
+        pixelDiffPercent: screenshotMeta.pixelDiffPercent,
         actualStatus: flow.finalStatus,
         durationMs: flow.summary?.totalDurationMs,
         redirectChain: flow.hops,
@@ -797,9 +853,7 @@ async function startServer() {
     const pixelDiffPercent =
       typeof req.body?.pixelDiffPercent === 'number'
         ? req.body.pixelDiffPercent
-        : testId === 'T03'
-        ? 1.8
-        : 0.04;
+        : 0.0;
 
     defaultUserManager.trackUserAction({
       email: operatorEmail,
@@ -1122,6 +1176,281 @@ async function startServer() {
     res.json(defaultUserManager.getStatsSummary(emailFilter));
   });
 
+  // ==========================================================================
+  // 14. INTERACTIVE APP COMPUTE SHELL / TERMINAL API (@xterm/xterm BACKEND)
+  // ==========================================================================
+  interface TerminalSession {
+    id: string;
+    command: string;
+    resolvedCommand: string;
+    proc: ChildProcess;
+    pid?: number;
+    chunks: string[];
+    exited: boolean;
+    exitCode: number | null;
+    listeners: Set<express.Response>;
+    startedAt: number;
+  }
+
+  const terminalSessions = new Map<string, TerminalSession>();
+  const shims = ensureComputeBinShims(__dirname);
+
+  const hasBinaryOnHost = (bin: string): boolean => {
+    try {
+      execSync(`command -v ${bin}`, { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const hostHasMake = hasBinaryOnHost('make');
+  const hostHasPnpm = hasBinaryOnHost('pnpm');
+  const hostHasScript = fs.existsSync('/usr/bin/script') || hasBinaryOnHost('script');
+
+  const cleanupOldTerminalSessions = () => {
+    const now = Date.now();
+    for (const [sid, sess] of terminalSessions.entries()) {
+      if (sess.exited && sess.listeners.size === 0 && now - sess.startedAt > 10 * 60_000) {
+        terminalSessions.delete(sid);
+      }
+    }
+  };
+
+  app.get('/api/v1/terminal/status', (_req, res) => {
+    ensureComputeBinShims(__dirname);
+    const makefilePath = path.resolve(__dirname, 'Makefile');
+    const makefileRaw = fs.existsSync(makefilePath)
+      ? fs.readFileSync(makefilePath, 'utf8')
+      : '';
+    const targets = parseMakefileTargets(makefileRaw);
+    const activeSessions = Array.from(terminalSessions.values()).filter(
+      (s) => !s.exited
+    ).length;
+
+    res.json({
+      cwd: __dirname,
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      hasMake: hostHasMake || shims.makeReady,
+      hasTerraform: fs.existsSync('/tmp/bin/terraform') || hasBinaryOnHost('terraform'),
+      activeSessions,
+      targets,
+    });
+  });
+
+  app.post('/api/v1/terminal/exec', (req, res) => {
+    cleanupOldTerminalSessions();
+    const rawCommand =
+      typeof req.body?.command === 'string' ? req.body.command : '';
+    const { resolvedCommand, empty } = resolveComputeCommand(rawCommand, {
+      hasMake: hostHasMake,
+      hasPnpm: hostHasPnpm,
+    });
+
+    if (empty || !resolvedCommand) {
+      res.status(400).json({ error: 'Command must not be empty' });
+      return;
+    }
+
+    ensureComputeBinShims(__dirname);
+
+    const cols = Math.max(40, Math.min(300, Number(req.body?.cols) || 120));
+    const rows = Math.max(10, Math.min(120, Number(req.body?.rows) || 30));
+    const sessionId = `term_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+
+    const basePath = process.env.PATH || '/usr/local/bin:/usr/bin:/bin';
+    const localBin = path.resolve(__dirname, 'node_modules', '.bin');
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `/tmp/bin:${localBin}:${basePath}`,
+      TERM: 'xterm-256color',
+      FORCE_COLOR: '1',
+      COLUMNS: String(cols),
+      LINES: String(rows),
+    };
+
+    const proc = hostHasScript
+      ? spawn('/usr/bin/script', ['-qefc', resolvedCommand, '/dev/null'], {
+          cwd: __dirname,
+          env,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          detached: true,
+        })
+      : spawn('/bin/bash', ['-lc', resolvedCommand], {
+          cwd: __dirname,
+          env,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          detached: true,
+        });
+
+    const session: TerminalSession = {
+      id: sessionId,
+      command: rawCommand.trim(),
+      resolvedCommand,
+      proc,
+      pid: proc.pid,
+      chunks: [],
+      exited: false,
+      exitCode: null,
+      listeners: new Set(),
+      startedAt: Date.now(),
+    };
+    terminalSessions.set(sessionId, session);
+
+    const pushChunk = (data: Buffer | string) => {
+      const text = typeof data === 'string' ? data : data.toString('utf8');
+      if (!text) return;
+      session.chunks.push(text);
+      // Cap buffered history chunks in memory
+      if (session.chunks.length > 4000) {
+        session.chunks.splice(0, session.chunks.length - 3000);
+      }
+      const payload = `event: output\ndata: ${JSON.stringify({ chunk: text })}\n\n`;
+      for (const clientRes of session.listeners) {
+        try {
+          clientRes.write(payload);
+        } catch {
+          session.listeners.delete(clientRes);
+        }
+      }
+    };
+
+    proc.stdout?.on('data', pushChunk);
+    proc.stderr?.on('data', pushChunk);
+
+    proc.on('error', (err) => {
+      pushChunk(`\r\n\x1b[31m[Compute Shell Error] ${err.message}\x1b[0m\r\n`);
+      if (!session.exited) {
+        session.exited = true;
+        session.exitCode = 1;
+        const exitPayload = `event: exit\ndata: ${JSON.stringify({ code: 1 })}\n\n`;
+        for (const clientRes of session.listeners) {
+          try {
+            clientRes.write(exitPayload);
+            clientRes.end();
+          } catch {
+            // ignore
+          }
+        }
+        session.listeners.clear();
+      }
+    });
+
+    proc.on('close', (code) => {
+      if (session.exited) return;
+      const finalCode = typeof code === 'number' ? code : 0;
+      session.exited = true;
+      session.exitCode = finalCode;
+      const exitPayload = `event: exit\ndata: ${JSON.stringify({ code: finalCode })}\n\n`;
+      for (const clientRes of session.listeners) {
+        try {
+          clientRes.write(exitPayload);
+          clientRes.end();
+        } catch {
+          // ignore
+        }
+      }
+      session.listeners.clear();
+    });
+
+    res.json({
+      sessionId,
+      pid: proc.pid ?? null,
+      resolvedCommand,
+    });
+  });
+
+  app.get('/api/v1/terminal/stream/:sessionId', (req, res) => {
+    const session = terminalSessions.get(req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: 'Terminal session not found' });
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    for (const chunk of session.chunks) {
+      res.write(`event: output\ndata: ${JSON.stringify({ chunk })}\n\n`);
+    }
+
+    if (session.exited) {
+      res.write(
+        `event: exit\ndata: ${JSON.stringify({ code: session.exitCode ?? 0 })}\n\n`
+      );
+      res.end();
+      return;
+    }
+
+    session.listeners.add(res);
+    const keepalive = setInterval(() => {
+      try {
+        res.write(': keepalive\n\n');
+      } catch {
+        clearInterval(keepalive);
+      }
+    }, 15000);
+
+    req.on('close', () => {
+      clearInterval(keepalive);
+      session.listeners.delete(res);
+    });
+  });
+
+  app.post('/api/v1/terminal/input/:sessionId', (req, res) => {
+    const session = terminalSessions.get(req.params.sessionId);
+    if (!session || session.exited) {
+      res.status(404).json({ error: 'Active terminal session not found' });
+      return;
+    }
+    const data = typeof req.body?.data === 'string' ? req.body.data : '';
+    if (data && session.proc.stdin && !session.proc.stdin.destroyed) {
+      session.proc.stdin.write(data);
+    }
+    res.json({ ok: true });
+  });
+
+  app.post('/api/v1/terminal/kill/:sessionId', (req, res) => {
+    const session = terminalSessions.get(req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: 'Terminal session not found' });
+      return;
+    }
+    if (!session.exited) {
+      try {
+        if (session.proc.pid) {
+          process.kill(-session.proc.pid, 'SIGTERM');
+        } else {
+          session.proc.kill('SIGTERM');
+        }
+      } catch {
+        try {
+          session.proc.kill('SIGTERM');
+        } catch {
+          // ignore
+        }
+      }
+      setTimeout(() => {
+        if (!session.exited) {
+          try {
+            if (session.proc.pid) {
+              process.kill(-session.proc.pid, 'SIGKILL');
+            } else {
+              session.proc.kill('SIGKILL');
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }, 1500);
+    }
+    res.json({ killed: true, sessionId: session.id });
+  });
+
   // Vite Middleware (Development) or Static Dist (Production)
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -1141,6 +1470,10 @@ async function startServer() {
     console.log(
       `[Salesforce Edge Release Gate] Control Plane + Live HTTP Flow Prober + MCP Server listening on http://0.0.0.0:${PORT} (AWS Account: ${awsEnv.accountId})`
     );
+    // Defer background live HTTP flow seeding so port 3000 responds immediately
+    setTimeout(() => {
+      seedLiveFleetOnServer().catch(() => undefined);
+    }, 1500);
   });
 }
 

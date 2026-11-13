@@ -1,11 +1,12 @@
 # ============================================================================
 # MAKEFILE — SALESFORCE EDGE & AWS SYNTHETICS 3-DIMENSIONAL RELEASE GATE
 # ============================================================================
-# Single-Command Full Pipeline (`make` or `make all` or `make deploy`):
+# Single-Command Full Pipeline (`make`, `make all`, `make deploy`, `make deply`):
 #   1. pnpm install + unit tests (node:test) + TypeScript lint + Vite SPA build (dist/)
 #   2. 100% Scale-to-Zero Terraform IaC (`terraform init`, `validate`, `apply -auto-approve`)
 #      automatically loading `.env` AWS credentials and uploading `dist/` SPA bundle
 #      into `s3://salesforce-akamai-synthetics-<account>-us-east-1/portal-ui/`
+#   3. Invalidate CloudFront (`/*`), verify live Portal + API, and print CloudFront URL
 #   3. Ad-Hoc Synthetic Edge Execution & 3-Dim Release Gate Comparison via CLI
 #   4. Headless User Administration, Password Reset & Activity Tracking (CLI + API)
 # ============================================================================
@@ -23,16 +24,18 @@ BY ?= user-wbbmbfobdqdu@salesforce.com
 
 .DEFAULT_GOAL := all
 
-.PHONY: all deploy deploy-all zero-token-cycle zero-token-watch help install dev build test lint verify verify-bundle \
+.PHONY: all deploy deply deploy-all zero-token-cycle zero-token-watch help install dev build test lint verify verify-bundle \
         tf-init tf-validate tf-plan tf-apply tf-destroy \
         sync-ui invalidate-cloudfront deploy-cloudfront \
         run-adhoc compare api-health \
         user-list user-add user-reset-password user-disable user-enable user-delete user-auth user-stats user-audit
 
-# Default `make` target: runs full pnpm install + test + lint + build + terraform apply + S3 SPA sync
+# Default `make` target: runs full pnpm install + test + lint + build + terraform apply + S3 SPA sync + CloudFront URL summary
 all: deploy-all
 
 deploy: deploy-all
+
+deply: deploy-all
 
 deploy-all:
 	pnpm exec tsx scripts/deploy-aws-portal.ts deploy-all
@@ -48,10 +51,11 @@ help:
 	@echo " Salesforce Edge & AWS Synthetics Release Gate — Make CLI Targets"
 	@echo "=========================================================================================="
 	@echo ""
-	@echo " [0] ONE-COMMAND FULL PIPELINE (PNPM + BUILD + TERRAFORM APPLY + S3/CLOUDFRONT PORTAL)"
-	@echo "   make                         Run full pipeline: install + test + lint + build + tf-apply + sync-ui"
-	@echo "   make all                     Alias for full end-to-end pnpm + terraform apply deployment"
-	@echo "   make deploy                  Alias for full end-to-end pnpm + terraform apply deployment"
+	@echo " [0] ONE-COMMAND FULL PIPELINE (PNPM + BUILD + TERRAFORM APPLY + S3 SYNC + CLOUDFRONT URL)"
+	@echo "   make                         Run full pipeline: pnpm test + lint + build + tf-apply + sync-ui + print URL"
+	@echo "   make all                     Alias for full end-to-end pnpm + terraform apply + S3 sync deployment"
+	@echo "   make deploy                  Alias for full end-to-end pnpm + terraform apply + S3 sync deployment"
+	@echo "   make deply                   Alias for make deploy (syncs SPA to S3 & prints CloudFront URL)"
 	@echo ""
 	@echo " [1] BUILD, TDD & VERIFICATION"
 	@echo "   make install                 Install pnpm dependencies"

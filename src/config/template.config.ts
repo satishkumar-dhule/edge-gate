@@ -92,12 +92,12 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
       'Live HTTP Flow, Header, Set-Cookie & AWS Bedrock Nova Lite Visual Verification for salesforce.com',
     defaultDomain: 'salesforce.com',
     defaultOperator: {
-      email: 'user-baluuezlosgz@salesforce.com',
+      email: 'user-tcchhlxprfng@salesforce.com',
       role: 'Lead Edge Release Engineer',
-      account: 'SFDC-EDGE-373211957869 (AWS 373211957869 · Akamai Prod + Staging)',
+      account: 'SFDC-EDGE-735234585484 (AWS 735234585484 · Akamai Prod + Staging)',
     },
     accountOptions: [
-      'SFDC-EDGE-373211957869 (AWS 373211957869 · Akamai Prod + Staging)',
+      'SFDC-EDGE-735234585484 (AWS 735234585484 · Akamai Prod + Staging)',
       'SFDC-TRAILHEAD-030771555103 (Trailhead & Developer Edge)',
       'SFDC-TRUST-GOV (Salesforce Trust & GovCloud Edge)',
     ],
@@ -130,7 +130,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
       { id: 'eu-west-1', label: 'eu-west-1 (Ireland)' },
       { id: 'ap-northeast-1', label: 'ap-northeast-1 (Tokyo)' },
     ],
-    s3Bucket: 's3://salesforce-akamai-synthetics-373211957869-us-east-1',
+    s3Bucket: 's3://salesforce-akamai-synthetics-735234585484-us-east-1',
     dynamodbTable: 'salesforce-synthetics-gate-state',
     mcpServerEndpoint: '/api/v1/mcp/rpc',
     mcpEndpoint: '/api/v1/mcp/rpc',
@@ -318,7 +318,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
     },
     {
       id: 'apac',
-      name: 'Salesforce Asia-Pacific Regional Hub (www.salesforce.com/apac/)',
+      name: 'Salesforce Asia-Pacific Regional Hub (www.salesforce.com/ap/ · SIN Edge PoP)',
       suitePath: 'config/suites/apac.csv',
       defaultNetworks: ['prod', 'staging'],
       envs: [
@@ -332,7 +332,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
     },
     {
       id: 'emea',
-      name: 'Salesforce EMEA Regional Hub (www.salesforce.com/emea/)',
+      name: 'Salesforce EMEA Regional Hub (www.salesforce.com/eu/ · AMS Edge PoP)',
       suitePath: 'config/suites/emea.csv',
       defaultNetworks: ['prod', 'staging'],
       envs: [
@@ -346,7 +346,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
     },
     {
       id: 'americas',
-      name: 'Salesforce Americas Regional Hub (www.salesforce.com/americas/)',
+      name: 'Salesforce Americas Regional Hub (www.salesforce.com/mx/ · /br/ · /ca/ · GRU Edge PoP)',
       suitePath: 'config/suites/americas.csv',
       defaultNetworks: ['prod', 'staging'],
       envs: [
@@ -360,7 +360,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
     },
     {
       id: 'japan',
-      name: 'Salesforce Japan Regional Hub (www.salesforce.com/jp/)',
+      name: 'Salesforce Japan Regional Hub (www.salesforce.com/jp/ · Tokyo NRT Edge PoP)',
       suitePath: 'config/suites/japan.csv',
       defaultNetworks: ['prod', 'staging'],
       envs: [
@@ -374,7 +374,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
     },
     {
       id: 'uk',
-      name: 'Salesforce United Kingdom Regional Hub (www.salesforce.com/uk/)',
+      name: 'Salesforce United Kingdom Regional Hub (www.salesforce.com/uk/ · London LHR Edge PoP)',
       suitePath: 'config/suites/uk.csv',
       defaultNetworks: ['prod', 'staging'],
       envs: [
@@ -388,7 +388,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
     },
     {
       id: 'germany',
-      name: 'Salesforce Deutschland DACH Regional Hub (www.salesforce.com/de/)',
+      name: 'Salesforce Deutschland DACH Regional Hub (www.salesforce.com/de/ · Frankfurt FRA Edge PoP)',
       suitePath: 'config/suites/germany.csv',
       defaultNetworks: ['prod', 'staging'],
       envs: [
@@ -463,48 +463,48 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
 
   readyReports: [
     {
-      id: 'RPT-101',
+      id: 'LIVE-WWW-PROD',
       title: 'PROD Edge Release Gate: www.salesforce.com (Staging vs Prod)',
       appId: 'www',
       candidateTarget: 'www.prod.staging',
       baselineTarget: 'www.prod.prod',
-      createdAt: '09:14 AM',
+      createdAt: '09:14 UTC',
       by: 'aws-synthetics-canary',
     },
     {
-      id: 'RPT-102',
-      title: 'UAT vs PROD Environment Parity: www-uat1.salesforce.com',
-      appId: 'www',
-      candidateTarget: 'www.uat.staging',
-      baselineTarget: 'www.prod.prod',
-      createdAt: '08:50 AM',
-      by: 'user-baluuezlosgz@salesforce.com',
+      id: 'LIVE-JAPAN-PROD',
+      title: 'Japan Regional PoP Gate: www.salesforce.com/jp (Tokyo NRT Edge)',
+      appId: 'japan',
+      candidateTarget: 'japan.prod.staging',
+      baselineTarget: 'japan.prod.prod',
+      createdAt: '09:10 UTC',
+      by: 'aws-lambda-adhoc',
     },
     {
-      id: 'RPT-103',
+      id: 'LIVE-GERMANY-PROD',
+      title: 'Germany Regional PoP Gate: www.salesforce.com/de (Frankfurt FRA Edge)',
+      appId: 'germany',
+      candidateTarget: 'germany.prod.staging',
+      baselineTarget: 'germany.prod.prod',
+      createdAt: '09:05 UTC',
+      by: 'aws-lambda-adhoc',
+    },
+    {
+      id: 'LIVE-LOGIN-PROD',
       title: 'Identity Gateway Gate: login.salesforce.com (Staging vs Prod)',
       appId: 'login',
       candidateTarget: 'login.prod.staging',
       baselineTarget: 'login.prod.prod',
-      createdAt: '08:30 AM',
+      createdAt: '08:45 UTC',
       by: 'aws-synthetics-canary',
     },
     {
-      id: 'RPT-104',
+      id: 'LIVE-DEV-PROD',
       title: 'Developer Portal Gate: developer.salesforce.com (Staging vs Prod)',
       appId: 'developer',
       candidateTarget: 'developer.prod.staging',
       baselineTarget: 'developer.prod.prod',
-      createdAt: '08:12 AM',
-      by: 'user-baluuezlosgz@salesforce.com',
-    },
-    {
-      id: 'RPT-105',
-      title: 'Help & Trailhead Edge Gate: help.salesforce.com (Staging vs Prod)',
-      appId: 'help',
-      candidateTarget: 'help.prod.staging',
-      baselineTarget: 'help.prod.prod',
-      createdAt: '07:55 AM',
+      createdAt: '08:12 UTC',
       by: 'aws-synthetics-canary',
     },
   ],
@@ -710,7 +710,7 @@ export const PROPERTY_TEST_SUITES: Record<string, TestCaseDefinition[]> = {
     {
       id: 'T01',
       name: 'Salesforce Help & Agentforce Concierge',
-      path: '/',
+      path: '/s/',
       expectedStatus: '200',
       category: 'Support Hub',
     },
@@ -939,66 +939,280 @@ export const PROPERTY_TEST_SUITES: Record<string, TestCaseDefinition[]> = {
     },
   ],
   apac: [
-    { id: 'T01', name: 'APAC Regional Hub Home', path: '/apac/', expectedStatus: '200', category: 'APAC Home' },
-    { id: 'T02', name: 'APAC Sales Solutions', path: '/apac/sales/', expectedStatus: '200', category: 'APAC Sales' },
-    { id: 'T03', name: 'APAC Customer Success Stories', path: '/apac/customers/', expectedStatus: '200', category: 'APAC Success' },
-    { id: 'T04', name: 'APAC Events & Tour', path: '/apac/events/', expectedStatus: '200', category: 'APAC Events' },
-    { id: 'T05', name: 'APAC Partner Ecosystem', path: '/apac/partners/', expectedStatus: '200', category: 'APAC Partners' },
-    { id: 'T06', name: 'APAC Pricing & Editions', path: '/apac/pricing/', expectedStatus: '200', category: 'APAC Pricing' },
-    { id: 'T07', name: 'APAC Contact Sales', path: '/apac/contact/', expectedStatus: '200', category: 'APAC Contact' },
-    { id: 'T08', name: 'APAC Trust Center', path: '/apac/trust/', expectedStatus: '200', category: 'APAC Trust' },
+    { id: 'T01', name: 'Salesforce APAC Regional Home (Singapore / ASEAN)', path: '/ap/', expectedStatus: '200', category: 'APAC Home' },
+    { id: 'T02', name: 'APAC Sales Cloud & Agentforce Overview', path: '/ap/sales/', expectedStatus: '200', category: 'APAC Sales' },
+    { id: 'T03', name: 'APAC Agentforce AI & Autonomous Agents', path: '/ap/artificial-intelligence/', expectedStatus: '200', category: 'APAC AI' },
+    { id: 'T04', name: 'APAC Customer Success Stories & Trailblazers', path: '/ap/customer-stories/', expectedStatus: '200', category: 'APAC Success' },
+    { id: 'T05', name: 'Salesforce Australia & New Zealand (ANZ) Hub', path: '/au/', expectedStatus: '200', category: 'ANZ Hub' },
+    { id: 'T06', name: 'Salesforce India Regional Experience (/in/)', path: '/in/', expectedStatus: '200', category: 'India Hub' },
+    { id: 'T07', name: 'APAC CRM Platform & Customer 360 Guide', path: '/ap/crm/', expectedStatus: '200', category: 'APAC CRM' },
+    { id: 'T08', name: 'APAC Corporate Overview & Our Story', path: '/ap/company/our-story/', expectedStatus: '200', category: 'APAC Trust' },
   ],
   emea: [
-    { id: 'T01', name: 'EMEA Regional Hub Home', path: '/emea/', expectedStatus: '200', category: 'EMEA Home' },
-    { id: 'T02', name: 'EMEA Sales Solutions', path: '/emea/sales/', expectedStatus: '200', category: 'EMEA Sales' },
-    { id: 'T03', name: 'EMEA Customer Success Stories', path: '/emea/customers/', expectedStatus: '200', category: 'EMEA Success' },
-    { id: 'T04', name: 'EMEA GDPR & Compliance Center', path: '/emea/compliance/', expectedStatus: '200', category: 'EMEA Compliance' },
-    { id: 'T05', name: 'EMEA Events & World Tour', path: '/emea/events/', expectedStatus: '200', category: 'EMEA Events' },
-    { id: 'T06', name: 'EMEA Partner Network', path: '/emea/partners/', expectedStatus: '200', category: 'EMEA Partners' },
-    { id: 'T07', name: 'EMEA Pricing Matrix', path: '/emea/pricing/', expectedStatus: '200', category: 'EMEA Pricing' },
-    { id: 'T08', name: 'EMEA Contact & Support', path: '/emea/contact/', expectedStatus: '200', category: 'EMEA Support' },
+    { id: 'T01', name: 'Salesforce EMEA Pan-European Home (/eu/)', path: '/eu/', expectedStatus: '200', category: 'EMEA Home' },
+    { id: 'T02', name: 'EMEA Sales Cloud & Revenue Intelligence', path: '/eu/sales/', expectedStatus: '200', category: 'EMEA Sales' },
+    { id: 'T03', name: 'EMEA Agentforce AI & GDPR-Compliant Copilot', path: '/eu/artificial-intelligence/', expectedStatus: '200', category: 'EMEA AI' },
+    { id: 'T04', name: 'Salesforce France (Français) Regional Hub (/fr/)', path: '/fr/', expectedStatus: '200', category: 'France Hub' },
+    { id: 'T05', name: 'Salesforce España (Español) Regional Hub (/es/)', path: '/es/', expectedStatus: '200', category: 'Spain Hub' },
+    { id: 'T06', name: 'Salesforce Italia (Italiano) Regional Hub (/it/)', path: '/it/', expectedStatus: '200', category: 'Italy Hub' },
+    { id: 'T07', name: 'Salesforce Nederland (Benelux) Regional Hub (/nl/)', path: '/nl/', expectedStatus: '200', category: 'Benelux Hub' },
+    { id: 'T08', name: 'EMEA Corporate Overview & Trust Story', path: '/eu/company/our-story/', expectedStatus: '200', category: 'EMEA Trust' },
   ],
   americas: [
-    { id: 'T01', name: 'Americas Regional Hub Home', path: '/americas/', expectedStatus: '200', category: 'Americas Home' },
-    { id: 'T02', name: 'North America Sales & Agentforce', path: '/en-us/sales/', expectedStatus: '200', category: 'NA Sales' },
-    { id: 'T03', name: 'Latin America (Espanol) Hub', path: '/mx/', expectedStatus: '200', category: 'LATAM Home' },
-    { id: 'T04', name: 'Brazil (Português) Hub', path: '/br/', expectedStatus: '200', category: 'Brazil Home' },
-    { id: 'T05', name: 'Canada (English/French) Hub', path: '/en-ca/', expectedStatus: '200', category: 'Canada Home' },
-    { id: 'T06', name: 'Americas Customer Stories', path: '/en-us/customers/', expectedStatus: '200', category: 'NA Success' },
-    { id: 'T07', name: 'Americas Pricing & Editions', path: '/en-us/editions-pricing/', expectedStatus: '200', category: 'NA Pricing' },
-    { id: 'T08', name: 'Americas Contact & Support', path: '/en-us/contact/', expectedStatus: '200', category: 'NA Support' },
+    { id: 'T01', name: 'Salesforce Latin America (México · Español) Home', path: '/mx/', expectedStatus: '200', category: 'LATAM Home' },
+    { id: 'T02', name: 'LATAM Sales Cloud & Agentforce (Español)', path: '/mx/sales/', expectedStatus: '200', category: 'LATAM Sales' },
+    { id: 'T03', name: 'Salesforce Brasil (Português) Regional Home', path: '/br/', expectedStatus: '200', category: 'Brazil Home' },
+    { id: 'T04', name: 'Brasil Sales Cloud & CRM (Português)', path: '/br/sales/', expectedStatus: '200', category: 'Brazil Sales' },
+    { id: 'T05', name: 'Salesforce Canada (English) Regional Home', path: '/ca/', expectedStatus: '200', category: 'Canada EN' },
+    { id: 'T06', name: 'Salesforce Canada (Français) Regional Home', path: '/fr-ca/', expectedStatus: '200', category: 'Canada FR' },
+    { id: 'T07', name: 'LATAM ¿Qué es CRM? Customer 360 (Español)', path: '/mx/crm/', expectedStatus: '200', category: 'LATAM CRM' },
+    { id: 'T08', name: 'Brasil O que é CRM? Customer 360 (Português)', path: '/br/crm/', expectedStatus: '200', category: 'Brazil CRM' },
   ],
   japan: [
     { id: 'T01', name: 'Salesforce Japan Home (株式会社セールスフォース・ジャパン)', path: '/jp/', expectedStatus: '200', category: 'Japan Home' },
-    { id: 'T02', name: 'Salesforce Japan Sales Cloud', path: '/jp/sales/', expectedStatus: '200', category: 'Japan Sales' },
-    { id: 'T03', name: 'Agentforce Japan AI Solutions', path: '/jp/ai/', expectedStatus: '200', category: 'Japan AI' },
-    { id: 'T04', name: 'Japan Customer Success & Case Studies', path: '/jp/customer-stories/', expectedStatus: '200', category: 'Japan Success' },
-    { id: 'T05', name: 'Japan Events & World Tour Tokyo', path: '/jp/events/', expectedStatus: '200', category: 'Japan Events' },
-    { id: 'T06', name: 'Japan Pricing & Product Editions', path: '/jp/editions-pricing/', expectedStatus: '200', category: 'Japan Pricing' },
-    { id: 'T07', name: 'Japan Developer & Trailhead Community', path: '/jp/developer/', expectedStatus: '200', category: 'Japan Dev' },
-    { id: 'T08', name: 'Japan Contact & Support Desk', path: '/jp/contact/', expectedStatus: '200', category: 'Japan Support' },
+    { id: 'T02', name: 'Sales Cloud 営業支援・SFA/CRM (セールスフォース・ジャパン)', path: '/jp/sales/', expectedStatus: '200', category: 'Japan Sales' },
+    { id: 'T03', name: 'Agentforce AI & 自律型AIエージェント (/jp/artificial-intelligence/)', path: '/jp/artificial-intelligence/', expectedStatus: '200', category: 'Japan AI' },
+    { id: 'T04', name: '日本のお客様導入事例190選 (Japan Customer Stories)', path: '/jp/customer-stories/', expectedStatus: '200', category: 'Japan Success' },
+    { id: 'T05', name: 'CRMとは？ 顧客管理システム (What is CRM Japan)', path: '/jp/crm/', expectedStatus: '200', category: 'Japan CRM' },
+    { id: 'T06', name: 'Sales Cloud 価格・エディション比較 (Japan Pricing)', path: '/jp/sales/pricing/', expectedStatus: '200', category: 'Japan Pricing' },
+    { id: 'T07', name: 'Service Cloud カスタマーサービス支援 (/jp/service/)', path: '/jp/service/', expectedStatus: '200', category: 'Japan Service' },
+    { id: 'T08', name: 'セールスフォース・ジャパン 企業情報 (Japan Our Story)', path: '/jp/company/our-story/', expectedStatus: '200', category: 'Japan Corporate' },
   ],
   uk: [
-    { id: 'T01', name: 'Salesforce UK & Ireland Home', path: '/uk/', expectedStatus: '200', category: 'UK Home' },
-    { id: 'T02', name: 'UK Sales Cloud & Agentforce', path: '/uk/sales/', expectedStatus: '200', category: 'UK Sales' },
-    { id: 'T03', name: 'UK Customer Success Stories', path: '/uk/customers/', expectedStatus: '200', category: 'UK Success' },
-    { id: 'T04', name: 'UK Public Sector & Compliance', path: '/uk/public-sector/', expectedStatus: '200', category: 'UK Sector' },
-    { id: 'T05', name: 'UK Events & Trailblazer Community', path: '/uk/events/', expectedStatus: '200', category: 'UK Events' },
-    { id: 'T06', name: 'UK Pricing & GBP Rate Cards', path: '/uk/editions-pricing/', expectedStatus: '200', category: 'UK Pricing' },
-    { id: 'T07', name: 'UK Partner Ecosystem & SI Directory', path: '/uk/partners/', expectedStatus: '200', category: 'UK Partners' },
-    { id: 'T08', name: 'UK Contact & Customer Support', path: '/uk/contact/', expectedStatus: '200', category: 'UK Support' },
+    { id: 'T01', name: 'Salesforce United Kingdom & Ireland Home (/uk/)', path: '/uk/', expectedStatus: '200', category: 'UK Home' },
+    { id: 'T02', name: 'UK Sales Cloud & Agentforce Revenue Platform', path: '/uk/sales/', expectedStatus: '200', category: 'UK Sales' },
+    { id: 'T03', name: 'UK Agentforce AI & Autonomous Enterprise Agents', path: '/uk/artificial-intelligence/', expectedStatus: '200', category: 'UK AI' },
+    { id: 'T04', name: 'UK Customer Success Stories & Case Studies', path: '/uk/customer-stories/', expectedStatus: '200', category: 'UK Success' },
+    { id: 'T05', name: 'UK What is CRM? Customer 360 Architecture', path: '/uk/crm/', expectedStatus: '200', category: 'UK CRM' },
+    { id: 'T06', name: 'UK Sales Cloud Pricing & GBP Editions', path: '/uk/sales/pricing/', expectedStatus: '200', category: 'UK Pricing' },
+    { id: 'T07', name: 'UK Service Cloud & Contact Centre AI', path: '/uk/service/', expectedStatus: '200', category: 'UK Service' },
+    { id: 'T08', name: 'Salesforce UK Corporate Overview & Our Story', path: '/uk/company/our-story/', expectedStatus: '200', category: 'UK Corporate' },
   ],
   germany: [
-    { id: 'T01', name: 'Salesforce Deutschland (DACH) Home', path: '/de/', expectedStatus: '200', category: 'DACH Home' },
-    { id: 'T02', name: 'Deutschland Sales Cloud & Agentforce', path: '/de/sales/', expectedStatus: '200', category: 'DACH Sales' },
-    { id: 'T03', name: 'Deutschland Customer Success', path: '/de/kunden-erfolge/', expectedStatus: '200', category: 'DACH Success' },
-    { id: 'T04', name: 'Deutschland Datenschutz & DSVGO Compliance', path: '/de/datenschutz/', expectedStatus: '200', category: 'DACH Privacy' },
-    { id: 'T05', name: 'Deutschland Events & Tour Berlin', path: '/de/events/', expectedStatus: '200', category: 'DACH Events' },
-    { id: 'T06', name: 'Deutschland Pricing & Editionen', path: '/de/editions-pricing/', expectedStatus: '200', category: 'DACH Pricing' },
-    { id: 'T07', name: 'Deutschland Partnernetzwerk', path: '/de/partner/', expectedStatus: '200', category: 'DACH Partner' },
-    { id: 'T08', name: 'Deutschland Kontakt & Support', path: '/de/kontakt/', expectedStatus: '200', category: 'DACH Support' },
+    { id: 'T01', name: 'Salesforce Deutschland (DACH) Startseite (/de/)', path: '/de/', expectedStatus: '200', category: 'DACH Home' },
+    { id: 'T02', name: 'Deutschland Sales Cloud & Vertriebssoftware (/de/sales/)', path: '/de/sales/', expectedStatus: '200', category: 'DACH Sales' },
+    { id: 'T03', name: 'Agentforce KI & Autonome KI-Agenten (/de/artificial-intelligence/)', path: '/de/artificial-intelligence/', expectedStatus: '200', category: 'DACH AI' },
+    { id: 'T04', name: 'Deutschland Kundenreferenzen & Erfolgsgeschichten', path: '/de/customer-stories/', expectedStatus: '200', category: 'DACH Success' },
+    { id: 'T05', name: 'Was ist CRM? Kundenbeziehungsmanagement (/de/crm/)', path: '/de/crm/', expectedStatus: '200', category: 'DACH CRM' },
+    { id: 'T06', name: 'Deutschland Sales Cloud Preise & Editionen (EUR)', path: '/de/sales/pricing/', expectedStatus: '200', category: 'DACH Pricing' },
+    { id: 'T07', name: 'Deutschland Service Cloud & Kundenservice (/de/service/)', path: '/de/service/', expectedStatus: '200', category: 'DACH Service' },
+    { id: 'T08', name: 'Über Salesforce Deutschland & Unsere Geschichte', path: '/de/company/our-story/', expectedStatus: '200', category: 'DACH Corporate' },
   ],
 };
+
+export interface RegionalEdgeNodeConfig {
+  appId: string;
+  regionCode: string;
+  regionLabel: string;
+  stagingPopCode: string;
+  prodPopCode: string;
+  stagingEdgeIp: string;
+  prodEdgeIp: string;
+  stagingEdgeHost: string;
+  prodEdgeHost: string;
+  acceptLanguage: string;
+  contentLanguage: string;
+  locale: string;
+  countryCode: string;
+  city: string;
+  edgescapeHeader: string;
+  regionalCookieHeader: string;
+  proriginCode: string;
+}
+
+export const REGIONAL_EDGE_NODES: Record<string, RegionalEdgeNodeConfig> = {
+  www: {
+    appId: 'www',
+    regionCode: 'NA-ASHBURN',
+    regionLabel: 'Ashburn, Virginia (Akamai IAD Global Edge PoP)',
+    stagingPopCode: 'IAD-STG-04',
+    prodPopCode: 'IAD-PRD-12',
+    stagingEdgeIp: '23.48.201.18',
+    prodEdgeIp: '23.212.251.15',
+    stagingEdgeHost: 'a23-48-201-18.deploy.akamaitechnologies.com',
+    prodEdgeHost: 'a23-212-251-15.deploy.akamaitechnologies.com',
+    acceptLanguage: 'en-US,en;q=0.9',
+    contentLanguage: 'en-US',
+    locale: 'en-US',
+    countryCode: 'US',
+    city: 'ASHBURN',
+    edgescapeHeader:
+      'georegion=263,country_code=US,region_code=VA,city=ASHBURN,lat=39.04,long=-77.49,timezone=EST,continent=NA',
+    regionalCookieHeader:
+      'prorigin=US1; AKA_A2=US; ak_loc=cc:US,ct:ASHBURN,st:VA; sfdc_locale=en_US',
+    proriginCode: 'US1',
+  },
+  japan: {
+    appId: 'japan',
+    regionCode: 'JP-TOKYO',
+    regionLabel: 'Tokyo, Japan (Akamai NRT Edge PoP · ap-northeast-1)',
+    stagingPopCode: 'NRT-STG-01',
+    prodPopCode: 'NRT-PRD-08',
+    stagingEdgeIp: '23.54.18.92',
+    prodEdgeIp: '104.97.84.21',
+    stagingEdgeHost: 'a23-54-18-92.deploy.akamaitechnologies.com',
+    prodEdgeHost: 'a104-97-84-21.deploy.akamaitechnologies.com',
+    acceptLanguage: 'ja-JP,ja;q=0.9,en;q=0.4',
+    contentLanguage: 'ja-JP',
+    locale: 'ja-JP',
+    countryCode: 'JP',
+    city: 'TOKYO',
+    edgescapeHeader:
+      'georegion=119,country_code=JP,city=TOKYO,lat=35.69,long=139.69,timezone=GMT+9,continent=AS',
+    regionalCookieHeader:
+      'prorigin=JP1; AKA_A2=JP; ak_loc=cc:JP,ct:TOKYO; sfdc_locale=ja_JP',
+    proriginCode: 'JP1',
+  },
+  germany: {
+    appId: 'germany',
+    regionCode: 'DE-FRANKFURT',
+    regionLabel: 'Frankfurt, Germany (Akamai FRA Edge PoP · eu-central-1)',
+    stagingPopCode: 'FRA-STG-01',
+    prodPopCode: 'FRA-PRD-06',
+    stagingEdgeIp: '2.16.106.34',
+    prodEdgeIp: '2.17.196.18',
+    stagingEdgeHost: 'a2-16-106-34.deploy.akamaitechnologies.com',
+    prodEdgeHost: 'a2-17-196-18.deploy.akamaitechnologies.com',
+    acceptLanguage: 'de-DE,de;q=0.9,en;q=0.4',
+    contentLanguage: 'de-DE',
+    locale: 'de-DE',
+    countryCode: 'DE',
+    city: 'FRANKFURT',
+    edgescapeHeader:
+      'georegion=61,country_code=DE,city=FRANKFURT,lat=50.11,long=8.68,timezone=GMT+1,continent=EU',
+    regionalCookieHeader:
+      'prorigin=DE1; AKA_A2=DE; ak_loc=cc:DE,ct:FRANKFURT; sfdc_locale=de_DE',
+    proriginCode: 'DE1',
+  },
+  uk: {
+    appId: 'uk',
+    regionCode: 'UK-LONDON',
+    regionLabel: 'London, United Kingdom (Akamai LHR Edge PoP · eu-west-2)',
+    stagingPopCode: 'LHR-STG-02',
+    prodPopCode: 'LHR-PRD-07',
+    stagingEdgeIp: '2.21.34.72',
+    prodEdgeIp: '23.50.11.40',
+    stagingEdgeHost: 'a2-21-34-72.deploy.akamaitechnologies.com',
+    prodEdgeHost: 'a23-50-11-40.deploy.akamaitechnologies.com',
+    acceptLanguage: 'en-GB,en;q=0.9',
+    contentLanguage: 'en-GB',
+    locale: 'en-GB',
+    countryCode: 'GB',
+    city: 'LONDON',
+    edgescapeHeader:
+      'georegion=242,country_code=GB,city=LONDON,lat=51.51,long=-0.13,timezone=GMT,continent=EU',
+    regionalCookieHeader:
+      'prorigin=UK1; AKA_A2=GB; ak_loc=cc:GB,ct:LONDON; sfdc_locale=en_GB',
+    proriginCode: 'UK1',
+  },
+  apac: {
+    appId: 'apac',
+    regionCode: 'APAC-SINGAPORE',
+    regionLabel: 'Singapore / Sydney (Akamai SIN-SYD Edge PoP · ap-southeast-1)',
+    stagingPopCode: 'SIN-STG-02',
+    prodPopCode: 'SIN-PRD-09',
+    stagingEdgeIp: '23.216.148.44',
+    prodEdgeIp: '23.62.14.88',
+    stagingEdgeHost: 'a23-216-148-44.deploy.akamaitechnologies.com',
+    prodEdgeHost: 'a23-62-14-88.deploy.akamaitechnologies.com',
+    acceptLanguage: 'en-SG,en-AU,en-IN,en;q=0.9',
+    contentLanguage: 'en-SG',
+    locale: 'en-SG',
+    countryCode: 'SG',
+    city: 'SINGAPORE',
+    edgescapeHeader:
+      'georegion=214,country_code=SG,city=SINGAPORE,lat=1.29,long=103.85,timezone=GMT+8,continent=AS',
+    regionalCookieHeader:
+      'prorigin=AP1; AKA_A2=SG; ak_loc=cc:SG,ct:SINGAPORE; sfdc_locale=en_AP',
+    proriginCode: 'AP1',
+  },
+  emea: {
+    appId: 'emea',
+    regionCode: 'EMEA-AMSTERDAM',
+    regionLabel: 'Amsterdam / Paris / Madrid (Akamai AMS-PAR Edge PoP · eu-west-1)',
+    stagingPopCode: 'AMS-STG-03',
+    prodPopCode: 'AMS-PRD-11',
+    stagingEdgeIp: '2.18.64.112',
+    prodEdgeIp: '2.19.120.55',
+    stagingEdgeHost: 'a2-18-64-112.deploy.akamaitechnologies.com',
+    prodEdgeHost: 'a2-19-120-55.deploy.akamaitechnologies.com',
+    acceptLanguage: 'en-GB,fr-FR,es-ES,it-IT,nl-NL;q=0.9',
+    contentLanguage: 'fr-FR',
+    locale: 'fr-FR',
+    countryCode: 'NL',
+    city: 'AMSTERDAM',
+    edgescapeHeader:
+      'georegion=166,country_code=NL,city=AMSTERDAM,lat=52.37,long=4.89,timezone=GMT+1,continent=EU',
+    regionalCookieHeader:
+      'prorigin=EU1; AKA_A2=NL; ak_loc=cc:NL,ct:AMSTERDAM; sfdc_locale=en_EU',
+    proriginCode: 'EU1',
+  },
+  americas: {
+    appId: 'americas',
+    regionCode: 'AMER-SAOPAULO',
+    regionLabel: 'São Paulo / Mexico City / Toronto (Akamai GRU-MEX-YYZ Edge PoP · sa-east-1)',
+    stagingPopCode: 'GRU-STG-02',
+    prodPopCode: 'GRU-PRD-05',
+    stagingEdgeIp: '23.44.82.19',
+    prodEdgeIp: '23.204.60.12',
+    stagingEdgeHost: 'a23-44-82-19.deploy.akamaitechnologies.com',
+    prodEdgeHost: 'a23-204-60-12.deploy.akamaitechnologies.com',
+    acceptLanguage: 'es-MX,pt-BR,en-CA,fr-CA,en;q=0.9',
+    contentLanguage: 'es-MX',
+    locale: 'es-MX',
+    countryCode: 'MX',
+    city: 'MEXICOCITY',
+    edgescapeHeader:
+      'georegion=154,country_code=MX,city=MEXICOCITY,lat=19.43,long=-99.13,timezone=GMT-6,continent=NA',
+    regionalCookieHeader:
+      'prorigin=LA1; AKA_A2=MX; ak_loc=cc:MX,ct:MEXICOCITY; sfdc_locale=es_MX',
+    proriginCode: 'LA1',
+  },
+};
+
+/**
+ * Infers the canonical Salesforce property ID (`japan`, `germany`, `uk`, `apac`, `emea`, `americas`, `www`, `login`, etc.)
+ * from a URL path/hostname or explicit appId.
+ */
+export function inferPropertyIdFromUrl(
+  url: string = '',
+  explicitAppId?: string
+): string {
+  if (explicitAppId && PROPERTY_TEST_SUITES[explicitAppId]) {
+    return explicitAppId;
+  }
+  const lower = (url || '').toLowerCase();
+  if (lower.includes('login.salesforce.com') || lower.includes('test.salesforce.com')) return 'login';
+  if (lower.includes('developer.salesforce.com') || lower.includes('developer-uat.salesforce.com')) return 'developer';
+  if (lower.includes('help.salesforce.com') || lower.includes('help-uat.salesforce.com')) return 'help';
+  if (lower.includes('trailhead.salesforce.com') || lower.includes('trailhead-uat.salesforce.com')) return 'trailhead';
+  if (lower.includes('status.salesforce.com')) return 'status';
+  if (lower.includes('appexchange.salesforce.com') || lower.includes('appexchange-uat.salesforce.com')) return 'appexchange';
+  if (lower.includes('partners.salesforce.com') || lower.includes('partners-uat.salesforce.com')) return 'partners';
+
+  // Regional path prefixes on www.salesforce.com
+  if (/\/(jp)(\/|\?|$)/.test(lower) || lower.includes('japan.salesforce.com')) return 'japan';
+  if (/\/(de)(\/|\?|$)/.test(lower) || lower.includes('germany.salesforce.com')) return 'germany';
+  if (/\/(uk)(\/|\?|$)/.test(lower) || lower.includes('uk.salesforce.com')) return 'uk';
+  if (/\/(ap|apac|au|in|sg|kr)(\/|\?|$)/.test(lower) || lower.includes('apac.salesforce.com')) return 'apac';
+  if (/\/(eu|emea|fr|es|it|nl|se)(\/|\?|$)/.test(lower) || lower.includes('emea.salesforce.com')) return 'emea';
+  if (/\/(americas|mx|br|ca|fr-ca|en-ca)(\/|\?|$)/.test(lower) || lower.includes('americas.salesforce.com')) return 'americas';
+
+  return explicitAppId || 'www';
+}
+
+/**
+ * Resolves the Region-Specific Akamai Edge Node (PoP, Staging/Prod Edge IPs,
+ * Accept-Language, Akamai Edgescape Geo Header, and Regional Origin Cookie)
+ * for any Salesforce property or URL.
+ */
+export function resolveRegionalEdgeNode(
+  appId?: string,
+  url?: string
+): RegionalEdgeNodeConfig {
+  const resolvedAppId = inferPropertyIdFromUrl(url || '', appId);
+  return REGIONAL_EDGE_NODES[resolvedAppId] || REGIONAL_EDGE_NODES.www;
+}
 
 export function getPropertyTestSuite(
   propId: string,
