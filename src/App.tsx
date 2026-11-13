@@ -95,9 +95,8 @@ import {
   History,
   Search,
   Activity,
-  Terminal,
 } from 'lucide-react';
-import { ComputeTerminal } from './components/ComputeTerminal';
+import { VsCodeWorkspace } from './components/VsCodeWorkspace';
 
 type ViewMode =
   | 'property'
@@ -2120,6 +2119,17 @@ export default function App() {
               </span>
             </>
           )}
+          {viewMode === 'terminal' && (
+            <>
+              <ChevronRight className="w-3.5 h-3.5 text-zinc-600 shrink-0" />
+              <span
+                className="text-sky-400 font-mono text-[11px] font-medium truncate"
+                title="Embedded VS Code Web IDE (Monaco Editor + Integrated Compute Terminal)"
+              >
+                VS Code IDE
+              </span>
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
@@ -2168,10 +2178,10 @@ export default function App() {
               },
               {
                 id: 'terminal',
-                label: 'Compute Shell',
-                ariaLabel: 'Compute Shell',
-                tooltip: 'Interactive App Compute Shell (@xterm/xterm) — run make deploy & CLI commands',
-                icon: Terminal,
+                label: 'VS Code',
+                ariaLabel: 'VS Code',
+                tooltip: 'Embedded VS Code Web IDE (Monaco Editor + Integrated Terminal) — edit files & run make deploy',
+                icon: Code2,
               },
               {
                 id: 'settings',
@@ -2372,7 +2382,7 @@ export default function App() {
         />
       )}
 
-      {viewMode === 'terminal' && <ComputeTerminal />}
+      {viewMode === 'terminal' && <VsCodeWorkspace theme={theme} />}
 
       {viewMode === 'settings' && (
         <SettingsView

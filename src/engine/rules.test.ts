@@ -1320,3 +1320,87 @@ test('computeShell parses Makefile targets, resolves make deploy/deply to pnpm, 
   );
 });
 
+// ---------------------------------------------------------------------------
+// 16. Embedded VS Code Workspace Path Sanitization, Language Detection & FS
+// ---------------------------------------------------------------------------
+import {
+  CURATED_WORKSPACE_QUICK_FILES,
+  detectMonacoLanguage,
+  isBinaryWorkspaceFile,
+  sanitizeWorkspacePath,
+} from './workspacePaths';
+import {
+  listWorkspaceTree,
+  readWorkspaceFile,
+  searchWorkspaceFiles,
+  writeWorkspaceFile,
+} from './workspaceServer';
+
+test('workspacePaths enforces traversal boundaries and maps Monaco languages accurately', () => {
+  assert.deepEqual(sanitizeWorkspacePath('Makefile'), {
+    valid: true,
+    normalized: 'Makefile',
+  });
+  assert.deepEqual(sanitizeWorkspacePath('./src/config/template.config.ts'), {
+    valid: true,
+    normalized: 'src/config/template.config.ts',
+  });
+  assert.deepEqual(sanitizeWorkspacePath('.env'), {
+    valid: true,
+    normalized: '.env',
+  });
+
+  // Path traversal & blocked internal directories
+  assert.equal(sanitizeWorkspacePath('../etc/passwd').valid, false);
+  assert.equal(sanitizeWorkspacePath('src/../../secret').valid, false);
+  assert.equal(sanitizeWorkspacePath('node_modules/react/index.js').valid, false);
+  assert.equal(sanitizeWorkspacePath('.git/config').valid, false);
+  assert.equal(sanitizeWorkspacePath('C:\\Windows\\system32').valid, false);
+  assert.equal(sanitizeWorkspacePath('').valid, false);
+
+  // Language mapping & binary detection
+  assert.equal(detectMonacoLanguage('src/App.tsx'), 'typescript');
+  assert.equal(detectMonacoLanguage('infra/terraform/main.tf'), 'hcl');
+  assert.equal(detectMonacoLanguage('.env'), 'ini');
+  assert.equal(detectMonacoLanguage('Makefile'), 'shell');
+  assert.equal(detectMonacoLanguage('package.json'), 'json');
+  assert.equal(isBinaryWorkspaceFile('public/screenshots/www-T01-sideA.jpg'), true);
+  assert.equal(isBinaryWorkspaceFile('src/engine/rules.ts'), false);
+  assert.ok(CURATED_WORKSPACE_QUICK_FILES.some((f) => f.path === 'Makefile'));
+  assert.ok(CURATED_WORKSPACE_QUICK_FILES.some((f) => f.path === '.env'));
+});
+
+test('workspaceServer lists workspace tree, reads/writes scoped files safely, and searches text', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vscode-ws-test-'));
+  try {
+    writeWorkspaceFile(tmpRoot, 'Makefile', 'deploy:\n\t@echo ok\n');
+    writeWorkspaceFile(tmpRoot, 'src/hello.ts', 'export const greeting = "akamai-gate";\n');
+
+    const tree = listWorkspaceTree(tmpRoot);
+    assert.ok(tree.some((e) => e.name === 'src' && e.type === 'directory'));
+    assert.ok(tree.some((e) => e.name === 'Makefile' && e.type === 'file'));
+
+    const readBack = readWorkspaceFile(tmpRoot, 'src/hello.ts');
+    assert.equal(readBack.language, 'typescript');
+    assert.match(readBack.content, /akamai-gate/);
+
+    const hits = searchWorkspaceFiles(tmpRoot, 'akamai-gate');
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0].path, 'src/hello.ts');
+    assert.equal(hits[0].line, 1);
+
+    assert.throws(() => readWorkspaceFile(tmpRoot, '../outside.txt'), /traversal/i);
+    assert.throws(
+      () => writeWorkspaceFile(tmpRoot, 'src/hello.ts', 'dup', { createOnly: true }),
+      /already exists/i
+    );
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+

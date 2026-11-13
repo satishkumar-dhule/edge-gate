@@ -48,6 +48,12 @@ import {
   resolveComputeCommand,
 } from './src/engine/computeShell';
 import { ensureComputeBinShims } from './src/engine/computeShims';
+import {
+  listWorkspaceTree,
+  readWorkspaceFile,
+  searchWorkspaceFiles,
+  writeWorkspaceFile,
+} from './src/engine/workspaceServer';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1449,6 +1455,91 @@ async function startServer() {
       }, 1500);
     }
     res.json({ killed: true, sessionId: session.id });
+  });
+
+  // ==========================================================================
+  // 15. EMBEDDED VS CODE WORKSPACE FILESYSTEM API (/api/v1/workspace/*)
+  // ==========================================================================
+  app.get('/api/v1/workspace/tree', (_req, res) => {
+    try {
+      const entries = listWorkspaceTree(__dirname);
+      res.json({
+        rootName: path.basename(__dirname) || 'applet',
+        cwd: __dirname,
+        entries,
+      });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to list workspace tree',
+      });
+    }
+  });
+
+  app.get('/api/v1/workspace/file', (req, res) => {
+    const filePath = typeof req.query.path === 'string' ? req.query.path : '';
+    try {
+      const payload = readWorkspaceFile(__dirname, filePath);
+      res.json(payload);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to read file';
+      const status = msg.includes('not found') ? 404 : 400;
+      res.status(status).json({ error: msg });
+    }
+  });
+
+  app.put('/api/v1/workspace/file', (req, res) => {
+    const filePath = typeof req.body?.path === 'string' ? req.body.path : '';
+    const content = typeof req.body?.content === 'string' ? req.body.content : null;
+    if (content === null) {
+      res.status(400).json({ error: 'Request body must include string content' });
+      return;
+    }
+    try {
+      const saved = writeWorkspaceFile(__dirname, filePath, content);
+      if (saved.path === '.env') {
+        awsEnv = loadDotEnvCredentials();
+        defaultZeroTokenEngine.updateEnvMetadata({
+          accountId: awsEnv.accountId,
+          operatorUsername: awsEnv.operatorUsername,
+          maskedAccessKey: awsEnv.maskedAccessKey,
+          region: awsEnv.region,
+          cycleStatus: 'VERIFIED_LOCAL_STANDBY',
+          cycleAt: new Date().toISOString(),
+        });
+      }
+      res.json({ ok: true, ...saved });
+    } catch (err) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Failed to save file',
+      });
+    }
+  });
+
+  app.post('/api/v1/workspace/file', (req, res) => {
+    const filePath = typeof req.body?.path === 'string' ? req.body.path : '';
+    const content = typeof req.body?.content === 'string' ? req.body.content : '';
+    try {
+      const created = writeWorkspaceFile(__dirname, filePath, content, {
+        createOnly: true,
+      });
+      res.status(201).json({ ok: true, ...created });
+    } catch (err) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Failed to create file',
+      });
+    }
+  });
+
+  app.get('/api/v1/workspace/search', (req, res) => {
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    try {
+      const hits = searchWorkspaceFiles(__dirname, q);
+      res.json({ query: q, hits });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Search failed',
+      });
+    }
   });
 
   // Vite Middleware (Development) or Static Dist (Production)
