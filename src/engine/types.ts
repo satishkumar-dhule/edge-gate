@@ -79,6 +79,19 @@ export interface HttpFlowSummary {
   resolvedEdgeCname?: string;
   liveCaptured?: boolean;
   capturedAt?: string;
+  executionPopId?: string;
+  executionPopCode?: string;
+}
+
+export interface ExecutionPopMeta {
+  id: string;
+  popCode: string;
+  regionLabel: string;
+  awsRegion: string;
+  stagingPopCode: string;
+  prodPopCode: string;
+  stagingEdgeIp: string;
+  prodEdgeIp: string;
 }
 
 export interface TestResult {
@@ -113,11 +126,22 @@ export interface TestResult {
   note?: string;
   probedAt?: string;
   probeCount?: number;
+  screenshotCaptured?: boolean;
   screenshotRevision?: number;
   screenshotCapturedAt?: string;
   screenshotSha256?: string;
   screenshotBytes?: number;
   s3ScreenshotKey?: string;
+  screenshotSource?:
+    | 'playwright-chromium'
+    | 'aws-lambda-chromium'
+    | 'aws-cloudwatch-synthetics-canary'
+    | 'canary-async-pending'
+    | 'none';
+  captureEngine?: string;
+  canaryDispatched?: boolean;
+  canaryName?: string;
+  canaryError?: string;
   pixelDiffPercent?: number;
 }
 
@@ -125,6 +149,7 @@ export interface RunRecord {
   key: string;
   target: string; // e.g. "www.prod.staging"
   appId: string;
+  suiteAppId?: string;
   envId: string;
   network: 'staging' | 'prod';
   suiteKey: string;
@@ -138,6 +163,7 @@ export interface RunRecord {
   by: string;
   label?: string;
   pinnedAsBaseline?: boolean;
+  executionPop?: ExecutionPopMeta;
   results: TestResult[];
 }
 
@@ -173,6 +199,8 @@ export interface VisualJudgeResult {
   costGateSkippedAi: boolean;
   pixelDiffPercent?: number;
   summary: string;
+  affectedArea?: string;
+  shortCallout?: string;
   differences: VisualDifferenceRegion[];
   primaryModel: string;
   shadowModel?: string;

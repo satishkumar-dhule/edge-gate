@@ -105,6 +105,13 @@ output "adhoc_runner_lambda_function_name" {
   value       = var.deploy_serverless_lambda ? aws_lambda_function.adhoc_edge_runner[0].function_name : "disabled"
 }
 
+output "chromium_runner_lambda_function_name" {
+  description = "Headless Chromium AWS Lambda Function Name (zero-Docker Sparticuz ZIP runner or ECR container) for synchronous 1280x760 browser captures"
+  value = local.use_ecr_chromium_runner ? aws_lambda_function.chromium_screenshot_runner[0].function_name : (
+    local.use_sparticuz_chromium_runner ? aws_lambda_function.sparticuz_chromium_runner[0].function_name : "disabled"
+  )
+}
+
 output "control_plane_lambda_function_url" {
   description = "Direct HTTPS AWS Lambda Function URL for the Scale-to-Zero Control Plane & MCP Server"
   value       = var.deploy_serverless_lambda && var.enable_lambda_function_url ? aws_lambda_function_url.control_plane_url[0].function_url : "disabled"

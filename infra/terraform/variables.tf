@@ -28,7 +28,7 @@ variable "project_name" {
 
 variable "operator_email" {
   type        = string
-  default     = "user-tcchhlxprfng@salesforce.com"
+  default     = "user-nvaupcuppghi@salesforce.com"
   description = "Default Principal Edge SRE operator identity seeded into Control Plane config"
 }
 
@@ -40,7 +40,7 @@ variable "operator_role" {
 
 variable "akamai_account_context" {
   type        = string
-  default     = "SFDC-EDGE-735234585484 (AWS 735234585484 · Akamai Prod + Staging)"
+  default     = "SFDC-EDGE-030771555103 (AWS 030771555103 · Akamai Prod + Staging)"
   description = "Akamai Control Center account context identifier"
 }
 
@@ -367,6 +367,42 @@ variable "adhoc_runner_lambda_timeout_seconds" {
   description = "Timeout in seconds for the Ad-Hoc On-Demand Akamai Edge Synthetic Runner AWS Lambda function"
 }
 
+variable "enable_sparticuz_chromium_lambda" {
+  type        = bool
+  default     = true
+  description = "Enable zero-Docker scale-to-zero AWS Lambda ZIP Chromium runner (@sparticuz/chromium-min + puppeteer-core reading compressed .br binaries from S3)"
+}
+
+variable "sparticuz_chromium_s3_prefix" {
+  type        = string
+  default     = "lambda-artifacts/sparticuz-chromium-153.0.0"
+  description = "S3 prefix storing compressed @sparticuz/chromium .br binaries (uploaded automatically by make deploy)"
+}
+
+variable "enable_chromium_screenshot_lambda" {
+  type        = bool
+  default     = false
+  description = "Enable optional Docker container AWS Lambda running headless Playwright Chromium for synchronous 1280x760 screenshots"
+}
+
+variable "chromium_runner_image_uri" {
+  type        = string
+  default     = ""
+  description = "ECR image URI built from aws-lambda/Dockerfile.chromium when enable_chromium_screenshot_lambda = true"
+}
+
+variable "chromium_runner_lambda_memory_mb" {
+  type        = number
+  default     = 3008
+  description = "Memory in MB for the serverless Chromium Lambda (3008 MB provides ~1.8 vCPU for fast Brotli decompression & page render)"
+}
+
+variable "chromium_runner_lambda_timeout_seconds" {
+  type        = number
+  default     = 45
+  description = "Timeout in seconds for the Playwright Chromium container Lambda"
+}
+
 variable "enable_lambda_function_url" {
   type        = bool
   default     = true
@@ -405,8 +441,8 @@ variable "initial_operator_users" {
   }))
   default = [
     {
-      email        = "user-tcchhlxprfng@salesforce.com"
-      display_name = "Lead Edge Release Engineer (AWS 735234585484)"
+      email        = "user-nvaupcuppghi@salesforce.com"
+      display_name = "Lead Edge Release Engineer (AWS 030771555103)"
       role         = "admin"
     },
     {

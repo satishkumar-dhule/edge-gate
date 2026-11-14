@@ -24,6 +24,7 @@
  */
 
 import { evaluateNovaLiteVisualDiff } from './awsBlueprint';
+import { type VisualZoneMetrics } from './pixelDiff';
 
 /**
  * Pure, isomorphic 128-bit deterministic hex digest (works identically in browser SPA & Node.js CLI/Server).
@@ -83,6 +84,8 @@ export interface ZeroTokenDiffSignatureInput {
     baselineValue?: string;
   }>;
   pixelDiffPercent: number;
+  changedBox?: { x: number; y: number; w: number; h: number } | null;
+  zones?: VisualZoneMetrics | null;
   forceBypassCache?: boolean;
 }
 
@@ -107,6 +110,8 @@ export interface ZeroTokenEvaluationDecision {
   confidence: number;
   modelId: string;
   summary: string;
+  affectedArea?: string;
+  shortCallout?: string;
   reason: string;
   differences: Array<{
     region?: string;
@@ -126,6 +131,8 @@ export interface ZeroTokenCachedVerdict {
   confidence: number;
   modelId: string;
   summary: string;
+  affectedArea?: string;
+  shortCallout?: string;
   differences: Array<{
     region?: string;
     description: string;
@@ -296,9 +303,9 @@ export class ZeroTokenArchitectureEngine {
         verdict: 'same',
         confidence: 1.0,
         modelId: 'zero-token-deterministic-gate',
-        summary: `Zero-Token Tier 1 Skip: Pixel delta ${pct.toFixed(
-          2
-        )}% <= ${COST_GATE_THRESHOLD_PCT}% threshold (0 tokens consumed, $0.00).`,
+        summary: 'Staging and Production render the same page layout, navigation, typography, and imagery with no visible differences.',
+        affectedArea: 'None',
+        shortCallout: 'Visually identical',
         reason: 'PIXEL_DELTA_BELOW_COST_GATE',
         differences: [],
         evaluatedAt: now,
@@ -329,9 +336,9 @@ export class ZeroTokenArchitectureEngine {
         verdict: cached.verdict,
         confidence: cached.confidence,
         modelId: `${cached.modelId} (cached:${fingerprint})`,
-        summary: `Zero-Token Tier 2 Cache Hit [${fingerprint}]: Reused verified AI verdict (${cached.verdict.toUpperCase()}) with 0 tokens consumed (hit #${
-          cached.hitCount
-        }). ${cached.summary}`,
+        summary: cached.summary,
+        affectedArea: cached.affectedArea,
+        shortCallout: cached.shortCallout,
         reason: 'KNOWN_DIFF_SIGNATURE_CACHED',
         differences: cached.differences,
         evaluatedAt: now,
@@ -344,9 +351,13 @@ export class ZeroTokenArchitectureEngine {
     this.tier3NovelAiInvocations += 1;
     const novaResult = evaluateNovaLiteVisualDiff({
       testId: input.testId,
+      testName: input.testName,
+      url,
       candidateTarget: input.candidateTarget || 'www.prod.staging',
       baselineTarget: input.baselineTarget || 'www.prod.prod',
       pixelDiffPercent: pct,
+      changedBox: input.changedBox ?? null,
+      zones: input.zones ?? null,
     });
 
     const newCacheEntry: ZeroTokenCachedVerdict = {
@@ -358,6 +369,8 @@ export class ZeroTokenArchitectureEngine {
       confidence: novaResult.confidence,
       modelId: novaResult.modelId,
       summary: novaResult.summary,
+      affectedArea: novaResult.affectedArea,
+      shortCallout: novaResult.shortCallout,
       differences: novaResult.differences,
       firstEvaluatedAt: now,
       hitCount: 1,
@@ -379,7 +392,9 @@ export class ZeroTokenArchitectureEngine {
       verdict: novaResult.verdict,
       confidence: novaResult.confidence,
       modelId: novaResult.modelId,
-      summary: `Novel Diff Signature [${fingerprint}] — Invoked ${novaResult.modelId} and cached for future zero-token reuse: ${novaResult.summary}`,
+      summary: novaResult.summary,
+      affectedArea: novaResult.affectedArea,
+      shortCallout: novaResult.shortCallout,
       reason: 'NEW_UNSEEN_DIFF_SIGNATURE',
       differences: novaResult.differences,
       evaluatedAt: now,

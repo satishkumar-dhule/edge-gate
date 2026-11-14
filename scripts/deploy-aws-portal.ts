@@ -158,7 +158,7 @@ export function verifyCompiledSpaBundle(
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const fullPath = path.join(dir, entry.name);
       const rel = path.relative(distDir, fullPath).replace(/\\/g, '/');
-      if (rel.startsWith('assets/aistudio/')) continue;
+      if (rel.startsWith('assets/aistudio/') || rel.startsWith('screenshots/')) continue;
       if (entry.isDirectory()) {
         walk(fullPath);
       } else if (entry.isFile()) {
@@ -363,6 +363,297 @@ async function putS3ObjectSigV4(params: {
   });
 }
 
+async function headS3ObjectSigV4(params: {
+  bucket: string;
+  region: string;
+  key: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+}): Promise<{ exists: boolean; contentLength: number }> {
+  const { bucket, region, key, accessKeyId, secretAccessKey } = params;
+  const host = `${bucket}.s3.${region}.amazonaws.com`;
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const dateStamp = amzDate.slice(0, 8);
+  const payloadHash = sha256Hex('');
+  const encodedKey = key
+    .split('/')
+    .map((seg) => encodeURIComponent(seg))
+    .join('/');
+  const canonicalUri = `/${encodedKey}`;
+  const canonicalHeaders =
+    `host:${host}\n` +
+    `x-amz-content-sha256:${payloadHash}\n` +
+    `x-amz-date:${amzDate}\n`;
+  const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
+  const canonicalRequest = `HEAD\n${canonicalUri}\n\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`;
+  const credentialScope = `${dateStamp}/${region}/s3/aws4_request`;
+  const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${credentialScope}\n${sha256Hex(canonicalRequest)}`;
+  const kDate = hmac(`AWS4${secretAccessKey}`, dateStamp);
+  const kRegion = hmac(kDate, region);
+  const kService = hmac(kRegion, 's3');
+  const kSigning = hmac(kService, 'aws4_request');
+  const signature = crypto.createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex');
+  const authorization = `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        host,
+        path: canonicalUri,
+        method: 'HEAD',
+        headers: {
+          'X-Amz-Content-Sha256': payloadHash,
+          'X-Amz-Date': amzDate,
+          Authorization: authorization,
+        },
+      },
+      (res) => {
+        res.resume();
+        const exists = res.statusCode === 200;
+        const contentLength = Number(res.headers['content-length'] || 0);
+        resolve({ exists, contentLength });
+      }
+    );
+    req.on('error', () => resolve({ exists: false, contentLength: 0 }));
+    req.end();
+  });
+}
+
+export const SPARTICUZ_CHROMIUM_VERSION = '153.0.0';
+export const SPARTICUZ_PUPPETEER_VERSION = '25.17.0';
+export const SPARTICUZ_S3_PREFIX = `lambda-artifacts/sparticuz-chromium-${SPARTICUZ_CHROMIUM_VERSION}`;
+export const SPARTICUZ_PACK_FILES = [
+  'chromium.br',
+  'fonts.tar.br',
+  'swiftshader.tar.br',
+  'al2023.tar.br',
+];
+
+/**
+ * Builds the zero-Docker serverless Chromium Lambda bundle (`aws-lambda/.dist/sparticuz-screenshot-runner.js`, ~1 MB)
+ * using esbuild + `@sparticuz/chromium-min` + `puppeteer-core`, and caches the compressed
+ * `@sparticuz/chromium` Brotli binaries under `.cache/sparticuz-chromium-153.0.0/bin/`.
+ */
+export function buildSparticuzChromiumArtifacts(rootDir: string = ROOT_DIR): {
+  ok: boolean;
+  bundlePath: string;
+  binDir: string;
+  bundleBytes: number;
+  error?: string;
+} {
+  const srcRunner = path.resolve(rootDir, 'aws-lambda/sparticuz-screenshot-runner.mjs');
+  const distDir = path.resolve(rootDir, 'aws-lambda/.dist');
+  const bundlePath = path.join(distDir, 'sparticuz-screenshot-runner.js');
+  const packCacheDir = path.resolve(
+    rootDir,
+    `.cache/sparticuz-chromium-${SPARTICUZ_CHROMIUM_VERSION}`
+  );
+  const binDir = path.join(packCacheDir, 'package/bin');
+  const buildDepsDir = path.resolve(rootDir, '.cache/sparticuz-build');
+
+  if (!fs.existsSync(srcRunner)) {
+    return {
+      ok: false,
+      bundlePath,
+      binDir,
+      bundleBytes: 0,
+      error: `Missing source handler at ${srcRunner}`,
+    };
+  }
+
+  fs.mkdirSync(distDir, { recursive: true });
+  fs.mkdirSync(packCacheDir, { recursive: true });
+  fs.mkdirSync(buildDepsDir, { recursive: true });
+
+  // 1. Ensure compressed .br Chromium pack files are cached locally
+  const hasAllBr = SPARTICUZ_PACK_FILES.every((f) => fs.existsSync(path.join(binDir, f)));
+  if (!hasAllBr) {
+    console.log(
+      `[CHROMIUM PACK] Downloading @sparticuz/chromium@${SPARTICUZ_CHROMIUM_VERSION} Brotli binaries (~70 MB)...`
+    );
+    const packRes = spawnSync(
+      'npm',
+      [
+        'pack',
+        `@sparticuz/chromium@${SPARTICUZ_CHROMIUM_VERSION}`,
+        '--pack-destination',
+        packCacheDir,
+      ],
+      { cwd: rootDir, stdio: 'inherit' }
+    );
+    if (packRes.status !== 0) {
+      return {
+        ok: false,
+        bundlePath,
+        binDir,
+        bundleBytes: 0,
+        error: 'Failed to download @sparticuz/chromium npm tarball',
+      };
+    }
+    const tgz = fs
+      .readdirSync(packCacheDir)
+      .find((f) => f.startsWith('sparticuz-chromium-') && f.endsWith('.tgz'));
+    if (!tgz) {
+      return {
+        ok: false,
+        bundlePath,
+        binDir,
+        bundleBytes: 0,
+        error: 'Downloaded @sparticuz/chromium tarball not found',
+      };
+    }
+    const tarRes = spawnSync(
+      'tar',
+      ['-xzf', path.join(packCacheDir, tgz), '-C', packCacheDir, 'package/bin'],
+      { cwd: rootDir, stdio: 'inherit' }
+    );
+    fs.rmSync(path.join(packCacheDir, tgz), { force: true });
+    if (tarRes.status !== 0) {
+      return {
+        ok: false,
+        bundlePath,
+        binDir,
+        bundleBytes: 0,
+        error: 'Failed to extract Brotli binaries from @sparticuz/chromium tarball',
+      };
+    }
+  }
+
+  // 2. Ensure puppeteer-core + @sparticuz/chromium-min are installed in isolated cache dir
+  const hasBuildDeps =
+    fs.existsSync(path.join(buildDepsDir, 'node_modules/@sparticuz/chromium-min/package.json')) &&
+    fs.existsSync(path.join(buildDepsDir, 'node_modules/puppeteer-core/package.json'));
+  if (!hasBuildDeps) {
+    console.log(
+      `[CHROMIUM ZIP] Installing @sparticuz/chromium-min@${SPARTICUZ_CHROMIUM_VERSION} & puppeteer-core@${SPARTICUZ_PUPPETEER_VERSION} in .cache/sparticuz-build...`
+    );
+    const installRes = spawnSync(
+      'npm',
+      [
+        'install',
+        '--prefix',
+        buildDepsDir,
+        '--no-save',
+        '--omit=dev',
+        `@sparticuz/chromium-min@${SPARTICUZ_CHROMIUM_VERSION}`,
+        `puppeteer-core@${SPARTICUZ_PUPPETEER_VERSION}`,
+      ],
+      { cwd: rootDir, stdio: 'inherit' }
+    );
+    if (installRes.status !== 0) {
+      return {
+        ok: false,
+        bundlePath,
+        binDir,
+        bundleBytes: 0,
+        error: 'Failed to install @sparticuz/chromium-min / puppeteer-core build deps',
+      };
+    }
+  }
+
+  // 3. Bundle with esbuild (~1 MB single CJS file; @aws-sdk/* provided by Node 22 Lambda runtime)
+  const needsBundle =
+    !fs.existsSync(bundlePath) ||
+    fs.statSync(srcRunner).mtimeMs > fs.statSync(bundlePath).mtimeMs;
+  if (needsBundle) {
+    const esbuildBin = path.resolve(rootDir, 'node_modules/.bin/esbuild');
+    const esbuildCmd = fs.existsSync(esbuildBin) ? esbuildBin : 'esbuild';
+    const envWithNodePath = {
+      ...process.env,
+      NODE_PATH: path.join(buildDepsDir, 'node_modules'),
+    };
+    const buildRes = spawnSync(
+      esbuildCmd,
+      [
+        srcRunner,
+        '--bundle',
+        '--platform=node',
+        '--target=node22',
+        '--format=cjs',
+        '--external:@aws-sdk/*',
+        `--outfile=${bundlePath}`,
+        '--minify',
+      ],
+      { cwd: rootDir, stdio: 'inherit', env: envWithNodePath }
+    );
+    if (buildRes.status !== 0 || !fs.existsSync(bundlePath)) {
+      return {
+        ok: false,
+        bundlePath,
+        binDir,
+        bundleBytes: 0,
+        error: 'esbuild failed to bundle sparticuz-screenshot-runner.mjs',
+      };
+    }
+  }
+
+  const bundleBytes = fs.statSync(bundlePath).size;
+  console.log(
+    `[CHROMIUM ZIP READY] ${path.relative(rootDir, bundlePath)} (${(bundleBytes / 1024).toFixed(1)} KB) + Brotli bin pack (${SPARTICUZ_PACK_FILES.length} files)`
+  );
+  return { ok: true, bundlePath, binDir, bundleBytes };
+}
+
+export async function syncSparticuzPackToS3(params: {
+  bucket: string;
+  region: string;
+  binDir: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+}): Promise<{ uploaded: number; skipped: number; failed: number; errors: string[] }> {
+  const { bucket, region, binDir, accessKeyId, secretAccessKey } = params;
+  let uploaded = 0;
+  let skipped = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const filename of SPARTICUZ_PACK_FILES) {
+    const filePath = path.join(binDir, filename);
+    if (!fs.existsSync(filePath)) {
+      failed++;
+      errors.push(`Missing local Brotli file ${filePath}`);
+      continue;
+    }
+    const body = fs.readFileSync(filePath);
+    const key = `${SPARTICUZ_S3_PREFIX}/${filename}`;
+    const head = await headS3ObjectSigV4({
+      bucket,
+      region,
+      key,
+      accessKeyId,
+      secretAccessKey,
+    });
+    if (head.exists && head.contentLength === body.length) {
+      skipped++;
+      continue;
+    }
+    console.log(
+      `[CHROMIUM S3 SYNC] Uploading ${filename} (${(body.length / 1024 / 1024).toFixed(2)} MB) -> s3://${bucket}/${key}...`
+    );
+    const put = await putS3ObjectSigV4({
+      bucket,
+      region,
+      key,
+      body,
+      contentType: 'application/octet-stream',
+      accessKeyId,
+      secretAccessKey,
+    });
+    if (put.ok) {
+      uploaded++;
+    } else {
+      failed++;
+      errors.push(`${key}: HTTP ${put.status} ${put.message || ''}`.trim());
+    }
+  }
+
+  console.log(
+    `[CHROMIUM S3 READY] s3://${bucket}/${SPARTICUZ_S3_PREFIX}/ (uploaded=${uploaded}, cached=${skipped}, failed=${failed})`
+  );
+  return { uploaded, skipped, failed, errors };
+}
+
 /**
  * Invalidates CloudFront distribution cache (`/*`) using AWS Signature Version 4.
  */
@@ -513,22 +804,94 @@ export function resolveCloudFrontDeploymentInfo(
   };
 }
 
-async function syncUiBundleToS3(params: {
+export const DEFAULT_S3_SYNC_CONCURRENCY = 12;
+export const DEFAULT_S3_SYNC_MAX_ATTEMPTS = 3;
+
+export async function uploadFilesWithRetryPool<T>(params: {
+  items: T[];
+  concurrency?: number;
+  maxAttempts?: number;
+  retryDelayMs?: number;
+  worker: (item: T, attempt: number) => Promise<{ ok: boolean; status?: number; message?: string }>;
+}): Promise<{ uploadedCount: number; failedCount: number; errors: string[] }> {
+  const concurrency = Math.max(1, params.concurrency ?? DEFAULT_S3_SYNC_CONCURRENCY);
+  const maxAttempts = Math.max(1, params.maxAttempts ?? DEFAULT_S3_SYNC_MAX_ATTEMPTS);
+  const retryDelayMs = params.retryDelayMs ?? 250;
+
+  let index = 0;
+  let uploadedCount = 0;
+  let failedCount = 0;
+  const errors: string[] = [];
+
+  async function runWorker() {
+    while (true) {
+      const current = index++;
+      if (current >= params.items.length) break;
+      const item = params.items[current];
+      let succeeded = false;
+      let lastMessage = 'failed';
+      let lastStatus = 0;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const res = await params.worker(item, attempt);
+          if (res.ok) {
+            succeeded = true;
+            break;
+          }
+          lastStatus = res.status ?? 0;
+          lastMessage = res.message || `status ${lastStatus}`;
+        } catch (err) {
+          lastMessage = err instanceof Error ? err.message : String(err);
+        }
+        if (attempt < maxAttempts && retryDelayMs > 0) {
+          await new Promise((r) => setTimeout(r, retryDelayMs * attempt));
+        }
+      }
+
+      if (succeeded) {
+        uploadedCount++;
+      } else {
+        failedCount++;
+        errors.push(`item[${current}] (${lastStatus || 'ERR'}): ${lastMessage}`);
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, Math.max(1, params.items.length)) }, () => runWorker());
+  await Promise.all(workers);
+
+  return { uploadedCount, failedCount, errors };
+}
+
+export async function syncUiBundleToS3(params: {
   bucket: string;
   region: string;
   check: SpaBundleVerification;
   accessKeyId: string;
   secretAccessKey: string;
-}): Promise<{ uploadedCount: number; failedCount: number }> {
+  concurrency?: number;
+  maxAttempts?: number;
+}): Promise<{ uploadedCount: number; failedCount: number; errors: string[] }> {
   const { bucket, region, check, accessKeyId, secretAccessKey } = params;
   console.log(
-    `Uploading ${check.files.length} compiled SPA files from dist/ to s3://${bucket}/portal-ui/ ...`
+    `Uploading ${check.files.length} compiled SPA & screenshot files from dist/ to s3://${bucket}/portal-ui/ (concurrency=${params.concurrency ?? DEFAULT_S3_SYNC_CONCURRENCY}, retries=${params.maxAttempts ?? DEFAULT_S3_SYNC_MAX_ATTEMPTS})...`
   );
-  let uploadedCount = 0;
-  let failedCount = 0;
-  for (const f of check.files) {
-    const body = fs.readFileSync(path.join(DIST_DIR, f.relativePath));
-    if (accessKeyId && secretAccessKey) {
+
+  if (!accessKeyId || !secretAccessKey) {
+    return {
+      uploadedCount: 0,
+      failedCount: check.files.length,
+      errors: ['Missing AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY'],
+    };
+  }
+
+  const poolRes = await uploadFilesWithRetryPool({
+    items: check.files,
+    concurrency: params.concurrency ?? DEFAULT_S3_SYNC_CONCURRENCY,
+    maxAttempts: params.maxAttempts ?? DEFAULT_S3_SYNC_MAX_ATTEMPTS,
+    worker: async (f) => {
+      const body = fs.readFileSync(path.join(DIST_DIR, f.relativePath));
       const res = await putS3ObjectSigV4({
         bucket,
         region,
@@ -538,21 +901,19 @@ async function syncUiBundleToS3(params: {
         accessKeyId,
         secretAccessKey,
       });
-      if (res.ok) {
-        uploadedCount++;
-        console.log(`  [UPLOADED] s3://${bucket}/${f.s3Key} (${f.contentType})`);
-      } else {
-        failedCount++;
+      if (!res.ok) {
         console.warn(
           `  [S3 PUT STATUS ${res.status}] s3://${bucket}/${f.s3Key}: ${res.message || 'failed'}`
         );
       }
-    }
-  }
+      return res;
+    },
+  });
+
   console.log(
-    `[SYNC-UI COMPLETE] ${uploadedCount}/${check.files.length} SPA files uploaded to s3://${bucket}/portal-ui/`
+    `[SYNC-UI COMPLETE] ${poolRes.uploadedCount}/${check.files.length} SPA files uploaded to s3://${bucket}/portal-ui/ (failed=${poolRes.failedCount})`
   );
-  return { uploadedCount, failedCount };
+  return poolRes;
 }
 
 /**
@@ -774,6 +1135,7 @@ async function main() {
   }
 
   if (action === 'tf-validate') {
+    buildSparticuzChromiumArtifacts();
     const tf = resolveTerraformBin();
     process.exit(runCmd(tf, [`-chdir=${TF_DIR}`, 'validate']));
   }
@@ -782,6 +1144,10 @@ async function main() {
     archiveMismatchedTerraformState(awsEnv.accountId);
     if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
       if (runCmd('pnpm', ['run', 'build']) !== 0) process.exit(1);
+    }
+    const chromiumBuild = buildSparticuzChromiumArtifacts();
+    if (!chromiumBuild.ok) {
+      console.warn(`[CHROMIUM ZIP WARNING] ${chromiumBuild.error}`);
     }
     const tf = resolveTerraformBin();
     process.exit(runCmd(tf, [`-chdir=${TF_DIR}`, 'plan', '-input=false']));
@@ -817,6 +1183,10 @@ async function main() {
       console.error('[SPA BUNDLE INVALID]:', check.errors.join('; '));
       process.exit(1);
     }
+    const chromiumBuild = buildSparticuzChromiumArtifacts();
+    if (!chromiumBuild.ok) {
+      console.warn(`[CHROMIUM ZIP WARNING] ${chromiumBuild.error} — continuing without Sparticuz Lambda`);
+    }
     const tf = resolveTerraformBin();
     runCmd(tf, [`-chdir=${TF_DIR}`, 'init', '-input=false']);
     const applyCode = runCmd(tf, [
@@ -831,6 +1201,15 @@ async function main() {
     }
     runCmd(tf, [`-chdir=${TF_DIR}`, 'output']);
     const cfInfo = resolveCloudFrontDeploymentInfo(awsEnv.accountId, region);
+    if (chromiumBuild.ok && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+      await syncSparticuzPackToS3({
+        bucket: cfInfo.s3Bucket,
+        region,
+        binDir: chromiumBuild.binDir,
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      });
+    }
     let invRes: { ok: boolean; status: number } = { ok: false, status: 0 };
     if (cfInfo.distributionId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
       invRes = await invalidateCloudFrontSigV4({
@@ -872,6 +1251,7 @@ async function main() {
     });
     const cfInfo = resolveCloudFrontDeploymentInfo(awsEnv.accountId, region);
     let uploadedCount = 0;
+    let syncFailedCount = 0;
     let invRes: { ok: boolean; status: number } = { ok: false, status: 0 };
 
     if (sts.valid) {
@@ -883,6 +1263,11 @@ async function main() {
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
       });
       uploadedCount = syncStats.uploadedCount;
+      syncFailedCount = syncStats.failedCount;
+      if (syncFailedCount > 0) {
+        console.error(`[SYNC-UI FAILED] ${syncFailedCount} files failed to upload to S3:`, syncStats.errors.slice(0, 5));
+        process.exit(1);
+      }
 
       if (cfInfo.distributionId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
         invRes = await invalidateCloudFrontSigV4({
@@ -912,6 +1297,35 @@ async function main() {
     return;
   }
 
+  if (action === 'sync-chromium') {
+    const chromiumBuild = buildSparticuzChromiumArtifacts();
+    if (!chromiumBuild.ok) {
+      console.error('[CHROMIUM BUILD FAILED]:', chromiumBuild.error);
+      process.exit(1);
+    }
+    const sts = await verifyAwsStsSession({
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+    });
+    if (!sts.valid) {
+      console.error('[AWS STS INVALID]:', sts.error);
+      process.exit(1);
+    }
+    const cfInfo = resolveCloudFrontDeploymentInfo(awsEnv.accountId, region);
+    const packSync = await syncSparticuzPackToS3({
+      bucket: cfInfo.s3Bucket,
+      region,
+      binDir: chromiumBuild.binDir,
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+    });
+    if (packSync.failed > 0) {
+      console.error('[SYNC-CHROMIUM FAILED]:', packSync.errors.join('; '));
+      process.exit(1);
+    }
+    return;
+  }
+
   if (action === 'deploy-all') {
     archiveMismatchedTerraformState(awsEnv.accountId);
     if (!fs.existsSync(path.join(ROOT_DIR, 'node_modules'))) {
@@ -927,6 +1341,11 @@ async function main() {
     if (!check.valid) {
       console.error('[SPA BUNDLE INVALID]:', check.errors.join('; '));
       process.exit(1);
+    }
+
+    const chromiumBuild = buildSparticuzChromiumArtifacts();
+    if (!chromiumBuild.ok) {
+      console.warn(`[CHROMIUM ZIP WARNING] ${chromiumBuild.error} — continuing without Sparticuz Lambda`);
     }
 
     const sts = await verifyAwsStsSession({
@@ -948,6 +1367,20 @@ async function main() {
       runCmd(tf, [`-chdir=${TF_DIR}`, 'output']);
 
       const cfInfo = resolveCloudFrontDeploymentInfo(awsEnv.accountId, region);
+      if (chromiumBuild.ok && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+        const packSync = await syncSparticuzPackToS3({
+          bucket: cfInfo.s3Bucket,
+          region,
+          binDir: chromiumBuild.binDir,
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+        });
+        if (packSync.failed > 0) {
+          console.error('[DEPLOY-ALL FAILED] Failed uploading Chromium .br pack to S3:', packSync.errors.join('; '));
+          process.exit(1);
+        }
+      }
+
       const syncStats = await syncUiBundleToS3({
         bucket: cfInfo.s3Bucket,
         region,
@@ -955,6 +1388,10 @@ async function main() {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
       });
+      if (syncStats.failedCount > 0) {
+        console.error(`[DEPLOY-ALL FAILED] ${syncStats.failedCount} S3 assets failed to upload:`, syncStats.errors.slice(0, 5));
+        process.exit(1);
+      }
 
       let invRes: { ok: boolean; status: number } = { ok: false, status: 0 };
       if (cfInfo.distributionId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {

@@ -1328,4 +1328,25 @@ export function resolveLiveScreenshotUrl(options: DomScreenshotOptions): string 
   return `/screenshots/${propId}-${idUpper}-${effectiveSide}.jpg?v=live5${revSuffix}`;
 }
 
+/**
+ * Resolves the API-backed screenshot proxy endpoint (`/api/v1/screenshots/<prop>-<testId>-side<A|B>.jpg`)
+ * which searches S3 portal-ui/ and runs/ prefixes cleanly and returns 404 JSON instead of SPA index.html.
+ */
+export function resolveApiScreenshotUrl(options: DomScreenshotOptions): string {
+  const {
+    appId,
+    testId = 'T01',
+    url = 'https://www.salesforce.com/',
+    side = 'A',
+    revision,
+  } = options;
+  const idUpper = (testId || 'T01').toUpperCase();
+  const propId = inferPropertyIdFromUrl(url, appId);
+  const effectiveSide = side === 'B' ? 'sideB' : 'sideA';
+
+  const revSuffix = revision ? `&r=${encodeURIComponent(String(revision))}` : '';
+  return `/api/v1/screenshots/${propId}-${idUpper}-${effectiveSide}.jpg?v=live5${revSuffix}`;
+}
+
+
 

@@ -174,6 +174,59 @@ export async function runCloudFrontE2ETests(baseUrl?: string): Promise<void> {
     `  ✓ Ad-Hoc Run executed: key=${runPayload.key} | target=${runPayload.targetId} | checks=${runPayload.results.length}/8`
   );
 
+  // Verify real JPEG screenshot delivery (both static /screenshots/* and Lambda/API /api/v1/screenshots/*)
+  const staticShotRes = await fetch(`${portalUrl}/screenshots/www-T01-sideA.jpg`);
+  assert.equal(staticShotRes.status, 200, 'Expected HTTP 200 from /screenshots/www-T01-sideA.jpg');
+  const staticType = staticShotRes.headers.get('content-type') || '';
+  assert.ok(staticType.startsWith('image/'), `Expected image/* content-type on /screenshots/www-T01-sideA.jpg, got ${staticType}`);
+
+  const apiShotRes = await fetch(`${portalUrl}/api/v1/screenshots/www-T01-sideA.jpg`);
+  assert.equal(apiShotRes.status, 200, 'Expected HTTP 200 from /api/v1/screenshots/www-T01-sideA.jpg');
+  const apiType = apiShotRes.headers.get('content-type') || '';
+  assert.ok(apiType.startsWith('image/'), `Expected image/* content-type on /api/v1/screenshots/www-T01-sideA.jpg, got ${apiType}`);
+
+  const missingShotRes = await fetch(`${portalUrl}/api/v1/screenshots/__nonexistent-e2e-check__-T99-sideA.jpg`);
+  assert.equal(
+    missingShotRes.status,
+    404,
+    'Missing screenshot on /api/v1/screenshots/* must return HTTP 404 JSON (not CloudFront 200 HTML)'
+  );
+  const missingType = missingShotRes.headers.get('content-type') || '';
+  assert.ok(
+    missingType.includes('application/json'),
+    `Expected application/json on missing screenshot 404, got ${missingType}`
+  );
+  const missingJson = (await missingShotRes.json()) as { captured?: boolean };
+  assert.equal(missingJson.captured, false);
+
+  const liveProbeRes = await fetchJson<{
+    probed?: boolean;
+    screenshotCaptured?: boolean;
+    screenshotBytes?: number;
+    screenshotUrl?: string | null;
+    screenshotSource?: string;
+  }>(`${portalUrl}/api/v1/probe/live`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      url: 'https://www.salesforce.com/',
+      network: 'staging',
+      testId: 'T01',
+      targetId: 'www.prod.staging',
+      captureScreenshot: false,
+      triggerCanary: false,
+    }),
+  });
+  assert.equal(liveProbeRes.status, 200);
+  assert.equal(liveProbeRes.data.probed, true);
+  assert.equal(
+    liveProbeRes.data.screenshotCaptured,
+    false,
+    'captureScreenshot: false must report screenshotCaptured === false honestly'
+  );
+  assert.equal(liveProbeRes.data.screenshotBytes, 0);
+  assert.equal(liveProbeRes.data.screenshotUrl, null);
+
   // --------------------------------------------------------------------------
   // STEP 4: Trigger 3-Dimensional Release Gate Comparison (`POST /api/v1/compare`)
   // --------------------------------------------------------------------------

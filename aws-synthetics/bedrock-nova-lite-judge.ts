@@ -47,11 +47,11 @@ export async function invokeBedrockNovaLiteJudge(
       semanticMatch: isPassing,
       confidenceScore: isPassing ? 0.99 : 0.94,
       summary: isPassing
-        ? `AWS Nova Lite (${modelId}) verified layout equivalence (${input.pixelDiffPercentage.toFixed(2)}% pixel delta is benign anti-aliasing).`
-        : `AWS Nova Lite (${modelId}) detected structural visual shift (${input.pixelDiffPercentage.toFixed(2)}% pixel delta) on ${input.pageName}.`,
+        ? `Both Staging and Production render the same layout, navigation, and hero content on ${input.pageName}.`
+        : `Noticeable layout, navigation, or hero content differences appear on ${input.pageName} between Staging and Production.`,
       detectedAnomalies: isPassing
         ? []
-        : [`Structural DOM shift (${input.pixelDiffPercentage.toFixed(2)}% pixel delta) on ${input.url}`],
+        : [`Visible layout or content divergence on ${input.pageName} (${input.url})`],
       latencyMs: Date.now() - startedAt + 310,
     };
   }
@@ -71,9 +71,10 @@ export async function invokeBedrockNovaLiteJudge(
 
   const client = new BedrockRuntimeClient({ region });
   const systemPrompt =
-    'You are an automated Akamai Edge Release Gate Visual QA Judge powered by Amazon Nova Lite. ' +
-    'Compare Image 1 (Candidate Edge Network) and Image 2 (Baseline Edge Network). ' +
-    'Ignore minor anti-aliasing or dynamic timestamps. Flag missing hero banners, broken CSS, or layout shifts. ' +
+    'You are an automated Release Gate Visual QA Judge powered by Amazon Nova Lite. ' +
+    'Compare Image 1 (Staging) and Image 2 (Production) as a human reviewer would. ' +
+    'Describe concrete UI and layout differences in plain, non-technical English (e.g., whether a right-hand assistant drawer opened, top navigation links collapsed or changed, hero headline/artwork differed, cookie banner appeared, or footer links shifted). ' +
+    'Never output raw pixel percentages or pixel bounding-box coordinates in summary or detectedAnomalies. ' +
     'Respond strictly with JSON: {"semanticMatch": boolean, "confidenceScore": number, "summary": string, "detectedAnomalies": string[]}';
 
   const command = new ConverseCommand({
@@ -84,7 +85,7 @@ export async function invokeBedrockNovaLiteJudge(
         role: 'user',
         content: [
           {
-            text: `Evaluate visual diff for test ${input.testId} (${input.pageName}) at ${input.url}. Measured pixel diff: ${input.pixelDiffPercentage}%.`,
+            text: `Compare Image 1 (Staging) and Image 2 (Production) for ${input.testId} (${input.pageName}) at ${input.url} and explain any visible layout or content differences in clear human terms.`,
           },
           {
             image: {

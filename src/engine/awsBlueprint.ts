@@ -17,6 +17,10 @@ import {
   TemplateConfig,
   resolvePropertyHostname,
 } from '../config/template.config';
+import {
+  describeVisualDiffLogically,
+  type VisualZoneMetrics,
+} from './pixelDiff';
 
 export interface OpenApiEndpointDescriptor {
   id: string;
@@ -37,11 +41,15 @@ export interface OpenApiEndpointDescriptor {
 
 export interface NovaLiteJudgeRequest {
   testId: string;
+  testName?: string;
+  url?: string;
   candidateTarget: string;
   baselineTarget: string;
   s3CandidateUri?: string;
   s3BaselineUri?: string;
   pixelDiffPercent?: number;
+  changedBox?: { x: number; y: number; w: number; h: number } | null;
+  zones?: VisualZoneMetrics | null;
 }
 
 export interface NovaLiteJudgeResponse {
@@ -53,6 +61,8 @@ export interface NovaLiteJudgeResponse {
   pixelDiffPercent: number;
   confidence: number;
   summary: string;
+  affectedArea?: string;
+  shortCallout?: string;
   differences: {
     region: string;
     description: string;
@@ -72,6 +82,15 @@ export function evaluateNovaLiteVisualDiff(
   config: TemplateConfig = DEFAULT_TEMPLATE_CONFIG
 ): NovaLiteJudgeResponse {
   const deltaPct = req.pixelDiffPercent !== undefined ? req.pixelDiffPercent : 0.0;
+  const logical = describeVisualDiffLogically({
+    pixelDiffPercent: deltaPct,
+    changedBox: req.changedBox ?? null,
+    zones: req.zones ?? null,
+    candidateLabel: req.candidateTarget,
+    baselineLabel: req.baselineTarget,
+    pageName: req.testName,
+    url: req.url,
+  });
 
   if (deltaPct > 0.1) {
     return {
@@ -79,16 +98,16 @@ export function evaluateNovaLiteVisualDiff(
       provider: config.infrastructure.visualJudgeProvider,
       executionMode: 'deterministic-fallback',
       testId: req.testId,
-      verdict: deltaPct > 5.0 ? 'different' : 'minor',
+      verdict: logical.verdict === 'same' ? 'minor' : logical.verdict,
       pixelDiffPercent: deltaPct,
       confidence: 0.97,
-      summary: `AWS Bedrock ${config.infrastructure.visualJudgeModel} evaluated ${deltaPct.toFixed(
-        2
-      )}% measured pixel delta between ${req.candidateTarget} and ${req.baselineTarget}.`,
+      summary: `AWS Bedrock ${config.infrastructure.visualJudgeModel}: ${logical.summary}`,
+      affectedArea: logical.affectedArea,
+      shortCallout: logical.shortCallout,
       differences: [
         {
-          region: 'measured-viewport',
-          description: `Measured ${deltaPct.toFixed(2)}% pixel variance between captured screenshots.`,
+          region: logical.affectedArea,
+          description: logical.shortCallout,
           severity: deltaPct > 5.0 ? 'different' : 'minor',
         },
       ],
@@ -104,7 +123,9 @@ export function evaluateNovaLiteVisualDiff(
     verdict: 'same',
     pixelDiffPercent: 0.0,
     confidence: 0.99,
-    summary: `AWS Bedrock ${config.infrastructure.visualJudgeModel} verified pixel-identical DOM layout (0.0% delta) between ${req.candidateTarget} and ${req.baselineTarget}.`,
+    summary: `AWS Bedrock ${config.infrastructure.visualJudgeModel}: ${logical.summary}`,
+    affectedArea: logical.affectedArea,
+    shortCallout: logical.shortCallout,
     differences: [],
     evaluatedAt: new Date().toISOString(),
   };
@@ -766,6 +787,43 @@ resource "aws_lambda_function" "adhoc_edge_runner" {
   timeout          = 60
 }
 
+locals {
+  sparticuz_runner_bundle_path  = "\${path.module}/../../aws-lambda/.dist/sparticuz-screenshot-runner.js"
+  use_sparticuz_chromium_runner = var.deploy_serverless_lambda && fileexists(local.sparticuz_runner_bundle_path)
+}
+
+data "archive_file" "sparticuz_chromium_lambda_zip" {
+  count       = local.use_sparticuz_chromium_runner ? 1 : 0
+  type        = "zip"
+  output_path = "\${path.module}/.terraform/tmp/sparticuz-screenshot-runner.zip"
+  source {
+    content  = file(local.sparticuz_runner_bundle_path)
+    filename = "sparticuz-screenshot-runner.js"
+  }
+}
+
+resource "aws_lambda_function" "sparticuz_chromium_runner" {
+  count            = local.use_sparticuz_chromium_runner ? 1 : 0
+  function_name    = "akamai-gate-chromium-zip-runner-\${var.environment}"
+  role             = aws_iam_role.synthetics_canary_role.arn
+  handler          = "sparticuz-screenshot-runner.handler"
+  runtime          = "nodejs22.x"
+  architectures    = ["x86_64"]
+  filename         = data.archive_file.sparticuz_chromium_lambda_zip[0].output_path
+  source_code_hash = data.archive_file.sparticuz_chromium_lambda_zip[0].output_base64sha256
+  memory_size      = 3008
+  timeout          = 45
+  ephemeral_storage {
+    size = 1024
+  }
+  environment {
+    variables = {
+      SYNTHETICS_S3_BUCKET    = aws_s3_bucket.synthetics_artifacts.id
+      CHROMIUM_PACK_S3_PREFIX = "lambda-artifacts/sparticuz-chromium-153.0.0"
+    }
+  }
+}
+
 resource "aws_lambda_function" "control_plane_api" {
   count            = var.deploy_serverless_lambda ? 1 : 0
   function_name    = "akamai-gate-control-plane-\${var.environment}"
@@ -777,6 +835,13 @@ resource "aws_lambda_function" "control_plane_api" {
   source_code_hash = data.archive_file.control_plane_lambda_zip.output_base64sha256
   memory_size      = 512
   timeout          = 30
+  environment {
+    variables = {
+      SYNTHETICS_S3_BUCKET        = aws_s3_bucket.synthetics_artifacts.id
+      ADHOC_RUNNER_LAMBDA_NAME    = aws_lambda_function.adhoc_edge_runner[0].function_name
+      CHROMIUM_RUNNER_LAMBDA_NAME = local.use_sparticuz_chromium_runner ? aws_lambda_function.sparticuz_chromium_runner[0].function_name : ""
+    }
+  }
 }
 
 resource "aws_lambda_function_url" "control_plane_url" {
@@ -796,7 +861,7 @@ locals {
   spa_dist_dir = "\${path.module}/../../dist"
   spa_dist_files = toset([
     for f in fileset(local.spa_dist_dir, "**/*") : f
-    if !startswith(f, "assets/aistudio/")
+    if !startswith(f, "assets/aistudio/") && !startswith(f, "screenshots/")
   ])
   spa_mime_types = {
     ".html" = "text/html; charset=utf-8"
@@ -805,17 +870,20 @@ locals {
     ".json" = "application/json; charset=utf-8"
     ".svg"  = "image/svg+xml"
     ".png"  = "image/png"
+    ".jpg"  = "image/jpeg"
+    ".jpeg" = "image/jpeg"
     ".ico"  = "image/x-icon"
   }
 }
 
 resource "aws_s3_object" "portal_spa_bundle" {
-  for_each     = local.spa_dist_files
-  bucket       = aws_s3_bucket.synthetics_artifacts.id
-  key          = "portal-ui/\${each.value}"
-  source       = "\${local.spa_dist_dir}/\${each.value}"
-  etag         = filemd5("\${local.spa_dist_dir}/\${each.value}")
-  content_type = try(lookup(local.spa_mime_types, regex("\\\\.[^.]+$", each.value), "application/octet-stream"), "application/octet-stream")
+  for_each      = local.spa_dist_files
+  bucket        = aws_s3_bucket.synthetics_artifacts.id
+  key           = "portal-ui/\${each.value}"
+  source        = "\${local.spa_dist_dir}/\${each.value}"
+  etag          = filemd5("\${local.spa_dist_dir}/\${each.value}")
+  content_type  = try(lookup(local.spa_mime_types, regex("\\\\.[^.]+$", each.value), "application/octet-stream"), "application/octet-stream")
+  cache_control = each.value == "index.html" ? "no-cache, max-age=0, must-revalidate" : "public, max-age=31536000, immutable"
 }
 
 resource "aws_cloudfront_origin_access_control" "portal_oac" {
@@ -825,6 +893,7 @@ resource "aws_cloudfront_origin_access_control" "portal_oac" {
   signing_behavior                  = "always"
   signing_protocol                  = "sigv4"
 }
+
 
 resource "aws_cloudfront_distribution" "portal_cdn" {
   count               = var.deploy_cloudfront_distribution && var.deploy_serverless_lambda ? 1 : 0
@@ -856,7 +925,23 @@ resource "aws_cloudfront_distribution" "portal_cdn" {
     target_origin_id       = "S3PortalSpaOrigin"
     viewer_protocol_policy = "redirect-to-https"
     forwarded_values {
-      query_string = false
+      query_string = true
+      cookies { forward = "none" }
+    }
+  }
+
+  ordered_cache_behavior {
+    path_pattern           = "/screenshots/*"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "ControlPlaneApiOrigin"
+    viewer_protocol_policy = "redirect-to-https"
+    min_ttl                = 0
+    default_ttl            = 0
+    max_ttl                = 0
+    forwarded_values {
+      query_string = true
+      headers      = ["Accept", "Authorization", "Origin"]
       cookies { forward = "none" }
     }
   }
@@ -1292,6 +1377,7 @@ export function generateSyntheticsCanaryScript(
  * ============================================================================
  */
 
+const crypto = require('crypto');
 const synthetics = require('Synthetics');
 const log = require('SyntheticsLogger');
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
@@ -1328,8 +1414,8 @@ exports.handler = async () => {
   const s3Bucket = process.env.S3_ARTIFACT_BUCKET || '${config.infrastructure.s3Bucket.replace(/^s3:\/\//, '')}';
   const dynamoTable = process.env.DYNAMODB_RUNS_TABLE || '${config.infrastructure.dynamodbTable}';
   const bedrockModelId = process.env.BEDROCK_NOVA_LITE_MODEL_ID || '${config.infrastructure.visualJudgeModel}';
-  const viewportWidth = parseInt(process.env.VIEWPORT_WIDTH || '1440', 10);
-  const viewportHeight = parseInt(process.env.VIEWPORT_HEIGHT || '900', 10);
+  const viewportWidth = parseInt(process.env.VIEWPORT_WIDTH || '1280', 10);
+  const viewportHeight = parseInt(process.env.VIEWPORT_HEIGHT || '760', 10);
   const navTimeoutMs = parseInt(process.env.NAVIGATION_TIMEOUT_MS || '30000', 10);
   const userAgent = process.env.CANARY_USER_AGENT || 'Akamai-Synthetics-Runner/2.4';
   const pragmaList = (process.env.AKAMAI_PRAGMA_HEADERS || '${config.infrastructure.pragmaHeaders.join(',')}').split(',');
@@ -1342,6 +1428,9 @@ exports.handler = async () => {
   const hostname = hostMap[canonicalHost] || (envId === 'prod' ? canonicalHost : \`\${envId}-\${appId}.\${domain}\`);
   const runKey = \`run-\${appId}-\${envId}-\${network}-\${Date.now()}\`;
   const startTime = new Date().toISOString();
+  const sideSuffix = network === 'staging' ? 'sideA' : 'sideB';
+  const s3 = new S3Client({ region });
+  const ddb = new DynamoDBClient({ region });
 
   // Configure CloudWatch Synthetics to pin hostname DNS resolution to Akamai Staging/Prod Edge IP
   const synConfig = synthetics.getConfiguration();
@@ -1383,6 +1472,44 @@ exports.handler = async () => {
 
       await synthetics.takeScreenshot(check.id, 'loaded');
 
+      const portalScreenshotKey = \`portal-ui/screenshots/\${appId}-\${check.id}-\${sideSuffix}.jpg\`;
+      const runScreenshotKey = \`runs/\${targetId}/\${runKey}/screenshots/\${check.id}.jpg\`;
+      let screenshotBytes = 0;
+      let screenshotSha256 = '';
+      const screenshotRevision = Date.now();
+      const screenshotCapturedAt = new Date(screenshotRevision).toISOString();
+
+      try {
+        const jpegBuf = await page.screenshot({
+          type: 'jpeg',
+          quality: 84,
+          clip: { x: 0, y: 0, width: Math.min(viewportWidth, 1280), height: Math.min(viewportHeight, 760) },
+        });
+        if (jpegBuf && jpegBuf.length > 0) {
+          screenshotBytes = jpegBuf.length;
+          screenshotSha256 = crypto.createHash('sha256').update(jpegBuf).digest('hex').slice(0, 16);
+          await Promise.all([
+            s3.send(new PutObjectCommand({
+              Bucket: s3Bucket,
+              Key: portalScreenshotKey,
+              Body: jpegBuf,
+              ContentType: 'image/jpeg',
+              CacheControl: 'no-cache, max-age=0, must-revalidate',
+              Metadata: { capturedat: screenshotCapturedAt, revision: String(screenshotRevision), sha256: screenshotSha256, targetid: targetId, testid: check.id }
+            })),
+            s3.send(new PutObjectCommand({
+              Bucket: s3Bucket,
+              Key: runScreenshotKey,
+              Body: jpegBuf,
+              ContentType: 'image/jpeg',
+              CacheControl: 'no-cache, max-age=0, must-revalidate'
+            }))
+          ]);
+        }
+      } catch (shotErr) {
+        log.warn(\`[ReleaseGateCanary] JPEG capture failed for \${check.id}: \${shotErr.message}\`);
+      }
+
       results.push({
         id: check.id,
         name: check.name,
@@ -1397,7 +1524,14 @@ exports.handler = async () => {
         capturedCookies,
         stagingEdgeIp: network === 'staging' ? edgeIp : undefined,
         edgeHostname: \`\${hostname}\${process.env.EDGE_HOST_SUFFIX || ''}\`,
-        screenshotKey: \`runs/\${targetId}/\${runKey}/\${check.id}-loaded.png\`
+        screenshotKey: screenshotBytes > 0 ? runScreenshotKey : \`runs/\${targetId}/\${runKey}/\${check.id}-loaded.png\`,
+        s3ScreenshotKey: screenshotBytes > 0 ? \`s3://\${s3Bucket}/\${portalScreenshotKey}\` : undefined,
+        screenshotBytes,
+        screenshotSha256,
+        screenshotRevision,
+        screenshotCapturedAt,
+        screenshotCaptured: screenshotBytes > 0,
+        screenshotUrl: screenshotBytes > 0 ? \`/api/v1/screenshots/\${appId}-\${check.id}-\${sideSuffix}.jpg?v=\${screenshotRevision}\` : null
       });
     } catch (err) {
       const durationMs = Date.now() - startMs;
@@ -1416,20 +1550,24 @@ exports.handler = async () => {
         capturedHeaders: {},
         capturedCookies: {},
         stagingEdgeIp: network === 'staging' ? edgeIp : undefined,
-        edgeHostname: \`\${hostname}\${process.env.EDGE_HOST_SUFFIX || ''}\`
+        edgeHostname: \`\${hostname}\${process.env.EDGE_HOST_SUFFIX || ''}\`,
+        screenshotCaptured: false,
+        screenshotBytes: 0,
+        screenshotUrl: null
       });
     }
   }
 
   const finishTime = new Date().toISOString();
-  const s3 = new S3Client({ region });
   const manifestS3Key = \`runs/\${targetId}/\${runKey}/manifest.json\`;
   const manifest = {
     key: runKey,
     target: targetId,
+    targetId,
     appId,
     envId,
     network,
+    executionEngine: 'aws-cloudwatch-synthetics-canary',
     visualJudgeModel: bedrockModelId,
     startTime,
     finishTime,
@@ -1446,7 +1584,6 @@ exports.handler = async () => {
     ContentType: 'application/json'
   }));
 
-  const ddb = new DynamoDBClient({ region });
   await ddb.send(new PutItemCommand({
     TableName: dynamoTable,
     Item: {
@@ -1461,7 +1598,8 @@ exports.handler = async () => {
       passedTests: { N: String(manifest.passedTests) },
       failedTests: { N: String(manifest.failedTests) },
       s3ManifestUri: { S: \`s3://\${s3Bucket}/\${manifestS3Key}\` },
-      visualJudgeModel: { S: bedrockModelId }
+      visualJudgeModel: { S: bedrockModelId },
+      payloadJson: { S: JSON.stringify(manifest) }
     }
   }));
 
@@ -1517,7 +1655,7 @@ export async function judgeVisualScreenshotsWithNovaLite(params: {
           role: 'user',
           content: [
             {
-              text: \`Compare Candidate (\${params.candidateTarget}) vs Baseline (\${params.baselineTarget}) DOM screenshots for test \${params.testId}. Return JSON with verdict ("same" | "minor" | "different"), summary, and differences[]\`,
+              text: \`Compare Candidate (\${params.candidateTarget}) vs Baseline (\${params.baselineTarget}) screenshots for test \${params.testId}. Explain in plain, human-understandable English what visible UI sections differ (navigation bar, hero headline/artwork, right sidebar/chat drawer, buttons, cookie banner, footer) and the layout impact. Do not quote raw pixel percentages or coordinate numbers in the summary. Return JSON with verdict ("same" | "minor" | "different"), shortCallout, affectedArea, summary, and differences[]\`,
             },
             {
               image: {
@@ -1549,9 +1687,11 @@ export async function judgeVisualScreenshotsWithNovaLite(params: {
     modelId: BEDROCK_NOVA_LITE_MODEL_ID,
     verdict: delta > 5.0 ? 'different' : delta > 0.1 ? 'minor' : 'same',
     summary:
-      delta > 0.1
-        ? \`AWS Bedrock amazon.nova-lite-v1:0 evaluated \${delta.toFixed(2)}% measured pixel delta.\`
-        : 'Screenshots match (0.0% delta).',
+      delta > 5.0
+        ? 'Visible layout, navigation, or hero content differs noticeably between Staging and Production.'
+        : delta > 0.1
+        ? 'Overall page layout matches closely with subtle spacing, copy, or badge variations.'
+        : 'Both Staging and Production render the same page layout, navigation, and imagery.',
   };
 }
 `;

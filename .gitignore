@@ -7,3 +7,5 @@ coverage/
 pnpm-debug.log*
 .env*
 !.env.example
+.cache/
+aws-lambda/.dist/

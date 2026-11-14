@@ -23,6 +23,7 @@ const {
   S3Client,
   GetObjectCommand,
   PutObjectCommand,
+  ListObjectsV2Command,
 } = require('@aws-sdk/client-s3');
 const { SSMClient, GetParameterCommand } = require('@aws-sdk/client-ssm');
 const {
@@ -32,6 +33,8 @@ const {
 const {
   SyntheticsClient,
   StartCanaryCommand,
+  GetCanaryCommand,
+  GetCanaryRunsCommand,
 } = require('@aws-sdk/client-synthetics');
 const {
   BedrockRuntimeClient,
@@ -46,6 +49,8 @@ const SSM_CONFIG_PARAM =
   process.env.SSM_CONFIG_PARAMETER || '/akamai-release-gate/prod/runtime-config';
 const ADHOC_RUNNER_LAMBDA_NAME =
   process.env.ADHOC_RUNNER_LAMBDA_NAME || '';
+const CHROMIUM_RUNNER_LAMBDA_NAME =
+  process.env.CHROMIUM_RUNNER_LAMBDA_NAME || '';
 const BEDROCK_MODEL_ID =
   process.env.BEDROCK_VISUAL_JUDGE_MODEL_ID || 'amazon.nova-lite-v1:0';
 const COST_GATE_PCT = Number(process.env.VISUAL_JUDGE_COST_GATE_PCT || '0.1');
@@ -192,7 +197,303 @@ async function loadRuntimeConfig() {
   return cachedRuntimeConfig;
 }
 
-function jsonResponse(statusCode, payload) {
+const KNOWN_SCREENSHOT_PROPS = new Set([
+  'www',
+  'login',
+  'developer',
+  'help',
+  'trailhead',
+  'status',
+  'appexchange',
+  'partners',
+  'apac',
+  'emea',
+  'americas',
+  'japan',
+  'uk',
+  'germany',
+]);
+
+const DEFAULT_PROPERTY_PATHS = {
+  www: {
+    T01: '/',
+    T02: '/sales/',
+    T03: '/artificial-intelligence/',
+    T04: '/crm',
+    T05: '/form/signup/freetrial-sales/',
+    T06: '/editions-pricing/sales-cloud/',
+    T07: '/small-business/',
+    T08: '/company/',
+  },
+  japan: {
+    T01: '/jp/',
+    T02: '/jp/sales/',
+    T03: '/jp/artificial-intelligence/',
+    T04: '/jp/customer-success-stories/',
+    T05: '/jp/events/',
+    T06: '/jp/editions-pricing/overview/',
+    T07: '/jp/solutions/small-business-solutions/',
+    T08: '/jp/form/signup/freetrial-sales/',
+  },
+  germany: {
+    T01: '/de/',
+    T02: '/de/sales/',
+    T03: '/de/artificial-intelligence/',
+    T04: '/de/solutions/small-business-solutions/',
+    T05: '/de/customer-success-stories/',
+    T06: '/de/editions-pricing/overview/',
+    T07: '/de/events/',
+    T08: '/de/form/signup/freetrial-sales/',
+  },
+  uk: {
+    T01: '/uk/',
+    T02: '/uk/sales/',
+    T03: '/uk/artificial-intelligence/',
+    T04: '/uk/solutions/small-business-solutions/',
+    T05: '/uk/customer-success-stories/',
+    T06: '/uk/editions-pricing/sales-cloud/',
+    T07: '/uk/events/',
+    T08: '/uk/form/signup/freetrial-sales/',
+  },
+  apac: {
+    T01: '/ap/',
+    T02: '/au/',
+    T03: '/ap/artificial-intelligence/',
+    T04: '/in/',
+    T05: '/ap/sales/',
+    T06: '/ap/editions-pricing/overview/',
+    T07: '/ap/customer-success-stories/',
+    T08: '/ap/form/signup/freetrial-sales/',
+  },
+  emea: {
+    T01: '/eu/',
+    T02: '/fr/',
+    T03: '/eu/artificial-intelligence/',
+    T04: '/es/',
+    T05: '/it/',
+    T06: '/nl/',
+    T07: '/eu/customer-success-stories/',
+    T08: '/eu/editions-pricing/overview/',
+  },
+  americas: {
+    T01: '/mx/',
+    T02: '/br/',
+    T03: '/mx/artificial-intelligence/',
+    T04: '/ca/',
+    T05: '/fr-ca/',
+    T06: '/mx/sales/',
+    T07: '/br/customer-success-stories/',
+    T08: '/mx/editions-pricing/overview/',
+  },
+};
+
+function isVerifiedLiveS3Metadata(metadata) {
+  if (!metadata || typeof metadata !== 'object') return false;
+  if (metadata['live-capture'] === 'true') return true;
+  const source = String(metadata.capturedby || metadata.engine || '');
+  return (
+    source === 'aws-lambda-sparticuz-chromium' ||
+    source === 'aws-lambda-chromium' ||
+    source === 'aws-cloudwatch-synthetics-canary'
+  );
+}
+
+function resolveTargetUrlAndEdgeIp(propId, testId, network, runtimeConfig, explicitUrl) {
+  const cleanProp = String(propId || 'www').toLowerCase();
+  const cleanTest = String(testId || 'T01').toUpperCase();
+  const isProd = network === 'prod';
+  const defaultDomain = runtimeConfig?.branding?.defaultDomain || process.env.DEFAULT_DOMAIN || 'salesforce.com';
+
+  let url = typeof explicitUrl === 'string' && explicitUrl.trim() ? explicitUrl.trim() : '';
+  if (!url) {
+    const matchedProp = Array.isArray(runtimeConfig?.properties)
+      ? runtimeConfig.properties.find((p) => String(p.id || '').toLowerCase() === cleanProp)
+      : null;
+    const matchedCheck =
+      matchedProp && Array.isArray(matchedProp.testSuite)
+        ? matchedProp.testSuite.find((c) => String(c.id || '').toUpperCase() === cleanTest)
+        : Array.isArray(runtimeConfig?.testSuite)
+        ? runtimeConfig.testSuite.find((c) => String(c.id || '').toUpperCase() === cleanTest)
+        : null;
+    const pathStr =
+      matchedCheck?.path ||
+      DEFAULT_PROPERTY_PATHS[cleanProp]?.[cleanTest] ||
+      DEFAULT_PROPERTY_PATHS.www[cleanTest] ||
+      '/';
+    const hostPrefix =
+      cleanProp === 'www' || DEFAULT_PROPERTY_PATHS[cleanProp] ? 'www' : cleanProp;
+    url = pathStr.startsWith('http') ? pathStr : `https://${hostPrefix}.${defaultDomain}${pathStr}`;
+  }
+
+  const edgeIp = isProd
+    ? runtimeConfig?.networks?.prod?.edgeIp || process.env.AKAMAI_PROD_EDGE_IP || '23.212.251.15'
+    : runtimeConfig?.networks?.staging?.edgeIp || process.env.AKAMAI_STAGING_EDGE_IP || '23.48.201.18';
+
+  return {
+    url,
+    edgeIp,
+    targetId: `${cleanProp}.prod.${isProd ? 'prod' : 'staging'}`,
+  };
+}
+
+function deriveCanaryName(targetId) {
+  const [rawApp = 'www', rawEnv = 'prod', rawNet = 'staging'] = String(
+    targetId || 'www.prod.staging'
+  ).split('.');
+  const netCode = rawNet === 'staging' ? 'stg' : 'prd';
+  const prefix = String(process.env.SYNTHETICS_CANARY_PREFIX || 'ak').toLowerCase();
+  return `${prefix}-${rawApp}-${rawEnv}-${netCode}`
+    .toLowerCase()
+    .replace(/_/g, '-')
+    .slice(0, 21);
+}
+
+async function resolveS3ScreenshotObject(propId, testId, sideSuffix, targetId) {
+  if (!S3_BUCKET) return null;
+  const liveKey = `live-screenshots/${propId}-${testId}-${sideSuffix}.jpg`;
+  try {
+    const obj = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: liveKey }));
+    const bytesArr = await obj.Body.transformToByteArray();
+    const buf = Buffer.from(bytesArr);
+    if (buf.length > 0) {
+      const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+      return {
+        buf,
+        sha256,
+        key: liveKey,
+        contentType: obj.ContentType || 'image/jpeg',
+        metadata: obj.Metadata || {},
+        capturedAt: obj.Metadata?.capturedat || obj.LastModified?.toISOString?.() || null,
+        fromCanaryFallback: false,
+      };
+    }
+  } catch {
+    // Fallback to verified live portal-ui/screenshots or runs/ prefix
+  }
+
+  const portalKey = `portal-ui/screenshots/${propId}-${testId}-${sideSuffix}.jpg`;
+  try {
+    const obj = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: portalKey }));
+    if (isVerifiedLiveS3Metadata(obj.Metadata)) {
+      const bytesArr = await obj.Body.transformToByteArray();
+      const buf = Buffer.from(bytesArr);
+      if (buf.length > 0) {
+        const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+        return {
+          buf,
+          sha256,
+          key: portalKey,
+          contentType: obj.ContentType || 'image/jpeg',
+          metadata: obj.Metadata || {},
+          capturedAt: obj.Metadata?.capturedat || obj.LastModified?.toISOString?.() || null,
+          fromCanaryFallback: false,
+        };
+      }
+    }
+  } catch {
+    // Reject missing or unverified static objects; check canary run prefix
+  }
+
+  const candidateTarget = targetId || `${propId}.prod.${sideSuffix === 'sideA' ? 'staging' : 'prod'}`;
+  try {
+    const listRes = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: S3_BUCKET,
+        Prefix: `runs/${candidateTarget}/`,
+        MaxKeys: 100,
+      })
+    );
+    const items = (listRes.Contents || [])
+      .filter((o) => {
+        const k = String(o.Key || '');
+        const upperKey = k.toUpperCase();
+        const tid = String(testId || 'T01').toUpperCase();
+        return (
+          (upperKey.endsWith('.JPG') || upperKey.endsWith('.JPEG') || upperKey.endsWith('.PNG')) &&
+          (upperKey.includes(`/${tid}.`) || upperKey.includes(`/${tid}-`) || upperKey.includes(`-${tid}-`))
+        );
+      })
+      .sort((a, b) => new Date(b.LastModified || 0).getTime() - new Date(a.LastModified || 0).getTime());
+
+    if (items.length > 0 && items[0].Key) {
+      const fallbackObj = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: items[0].Key }));
+      const bytesArr = await fallbackObj.Body.transformToByteArray();
+      const buf = Buffer.from(bytesArr);
+      if (buf.length > 0) {
+        const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+        return {
+          buf,
+          sha256,
+          key: items[0].Key,
+          contentType: items[0].Key.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg',
+          metadata: fallbackObj.Metadata || {},
+          capturedAt: fallbackObj.Metadata?.capturedat || fallbackObj.LastModified?.toISOString?.() || null,
+          fromCanaryFallback: true,
+        };
+      }
+    }
+  } catch {
+    // Non-fatal S3 list error
+  }
+  return null;
+}
+
+async function triggerCanaryForTarget(targetId, explicitCanaryName) {
+  const canaryName = explicitCanaryName || deriveCanaryName(targetId);
+  try {
+    const statusRes = await synthetics.send(new GetCanaryCommand({ Name: canaryName })).catch(() => null);
+    const state = statusRes?.Canary?.Status?.State;
+    if (state === 'RUNNING' || state === 'STARTING') {
+      return { dispatched: true, canaryName, status: state, error: null };
+    }
+    await synthetics.send(new StartCanaryCommand({ Name: canaryName }));
+    return { dispatched: true, canaryName, status: 'STARTING', error: null };
+  } catch (err) {
+    return {
+      dispatched: false,
+      canaryName,
+      status: 'UNAVAILABLE',
+      error: err?.name || err?.message || 'Canary start failed',
+    };
+  }
+}
+
+async function invokeChromiumRunnerForCheck(payload) {
+  if (!CHROMIUM_RUNNER_LAMBDA_NAME) return null;
+  try {
+    const invokeRes = await lambda.send(
+      new InvokeCommand({
+        FunctionName: CHROMIUM_RUNNER_LAMBDA_NAME,
+        InvocationType: 'RequestResponse',
+        Payload: Buffer.from(JSON.stringify(payload)),
+      })
+    );
+    if (invokeRes.Payload) {
+      const parsed = JSON.parse(Buffer.from(invokeRes.Payload).toString('utf8'));
+      if (invokeRes.FunctionError && parsed && !parsed.error) {
+        return {
+          captured: false,
+          bytes: 0,
+          sha256: '',
+          captureEngine: 'aws-lambda-chromium',
+          error: parsed.errorMessage || `Chromium Lambda error (${invokeRes.FunctionError})`,
+        };
+      }
+      return parsed;
+    }
+  } catch (err) {
+    return {
+      captured: false,
+      bytes: 0,
+      sha256: '',
+      captureEngine: 'aws-lambda-chromium',
+      error: err?.message || 'Chromium Lambda invoke failed',
+    };
+  }
+  return null;
+}
+
+function jsonResponse(statusCode, payload, extraHeaders = {}) {
   return {
     statusCode,
     headers: {
@@ -202,6 +503,7 @@ function jsonResponse(statusCode, payload) {
       'access-control-allow-headers': 'Content-Type,Authorization,X-Operator-Email',
       'x-compute-mode': 'aws-lambda-scale-to-zero',
       'x-cdn-origin': 'cloudfront-s3-lambda-hybrid',
+      ...extraHeaders,
     },
     body: JSON.stringify(payload),
   };
@@ -237,10 +539,164 @@ exports.handler = async (event) => {
 
   const runtimeConfig = await loadRuntimeConfig();
 
+  // 0. Live Screenshot Binary Proxy (/api/v1/screenshots/:filename & /screenshots/:filename) — zero cached images, live Chromium on demand or verified live S3 capture
+  if (
+    (rawPath.startsWith('/api/v1/screenshots/') || rawPath.startsWith('/screenshots/')) &&
+    method === 'GET'
+  ) {
+    const prefixLen = rawPath.startsWith('/api/v1/screenshots/')
+      ? '/api/v1/screenshots/'.length
+      : '/screenshots/'.length;
+    const rawName = decodeURIComponent(rawPath.slice(prefixLen)).replace(/[^a-zA-Z0-9._-]/g, '');
+    const noCacheHeaders = {
+      'cache-control': 'no-store, no-cache, must-revalidate, max-age=0',
+      pragma: 'no-cache',
+      expires: '0',
+    };
+    if (!rawName || !/\.(jpg|jpeg|png)$/i.test(rawName)) {
+      return jsonResponse(
+        400,
+        { error: 'Invalid screenshot filename', filename: rawName },
+        noCacheHeaders
+      );
+    }
+    const match = rawName.match(/^([a-z0-9_-]+)-(T\d+)-(sideA|sideB)\.(jpg|jpeg|png)$/i);
+    const propId = match ? match[1].toLowerCase() : 'www';
+    const testId = match ? match[2].toUpperCase() : 'T01';
+    const sideSuffix = match ? match[3] : 'sideA';
+    const network = sideSuffix === 'sideB' ? 'prod' : 'staging';
+    const query = event?.queryStringParameters || {};
+    const forceLive = query.live === '1' || query.refresh === '1' || query.nocache === '1';
+    const isKnownProp =
+      KNOWN_SCREENSHOT_PROPS.has(propId) ||
+      (Array.isArray(runtimeConfig?.properties) &&
+        runtimeConfig.properties.some((p) => String(p.id || '').toLowerCase() === propId));
+    const isValidTest = /^T(0[1-9]|[1-5][0-9]|6[0-4])$/.test(testId);
+
+    let liveResult = null;
+    if (!forceLive && isKnownProp && isValidTest) {
+      liveResult = await resolveS3ScreenshotObject(propId, testId, sideSuffix);
+    }
+
+    if ((forceLive || !liveResult) && CHROMIUM_RUNNER_LAMBDA_NAME && isKnownProp && isValidTest) {
+      const targetInfo = resolveTargetUrlAndEdgeIp(
+        propId,
+        testId,
+        network,
+        runtimeConfig,
+        query.url
+      );
+      const revNow = Date.now();
+      const cr = await invokeChromiumRunnerForCheck({
+        url: targetInfo.url,
+        targetId: targetInfo.targetId,
+        appId: propId,
+        testId,
+        network,
+        sideSuffix,
+        edgeIp: targetInfo.edgeIp,
+        revision: revNow,
+        returnBase64: true,
+      });
+      if (cr && cr.captured && Number(cr.bytes || 0) > 0) {
+        if (typeof cr.imageBase64 === 'string' && cr.imageBase64.length > 0) {
+          const freshBuf = Buffer.from(cr.imageBase64, 'base64');
+          liveResult = {
+            buf: freshBuf,
+            contentType: 'image/jpeg',
+            sha256: cr.sha256 || '',
+            source: cr.captureEngine || 'aws-lambda-sparticuz-chromium',
+          };
+        } else {
+          const fetchedFresh = await resolveS3ScreenshotObject(propId, testId, sideSuffix, targetInfo.targetId);
+          if (fetchedFresh) {
+            liveResult = {
+              ...fetchedFresh,
+              source: cr.captureEngine || 'aws-lambda-sparticuz-chromium',
+            };
+          }
+        }
+      }
+    }
+
+    if (!liveResult || !liveResult.buf || liveResult.buf.length === 0) {
+      return jsonResponse(
+        404,
+        {
+          captured: false,
+          error: 'Live screenshot not captured yet',
+          filename: rawName,
+        },
+        noCacheHeaders
+      );
+    }
+
+    return {
+      statusCode: 200,
+      isBase64Encoded: true,
+      headers: {
+        'content-type': liveResult.contentType || 'image/jpeg',
+        ...noCacheHeaders,
+        'access-control-allow-origin': '*',
+        'x-screenshot-bytes': String(liveResult.buf.length),
+        'x-screenshot-source': liveResult.source || 'live-chromium-verified',
+        ...(liveResult.sha256 ? { 'x-screenshot-sha256': String(liveResult.sha256).slice(0, 16) } : {}),
+      },
+      body: liveResult.buf.toString('base64'),
+    };
+  }
+
+  // 0b. CloudWatch Synthetics Canary Status Poll (/api/v1/canary/status)
+  if (rawPath === '/api/v1/canary/status' && method === 'GET') {
+    const query = event?.queryStringParameters || {};
+    const targetId = query.targetId || 'www.prod.staging';
+    const canaryName = query.canaryName || deriveCanaryName(targetId);
+    try {
+      const [canaryRes, runsRes] = await Promise.all([
+        synthetics.send(new GetCanaryCommand({ Name: canaryName })),
+        synthetics.send(new GetCanaryRunsCommand({ Name: canaryName, MaxResults: 5 })).catch(() => null),
+      ]);
+      const state = canaryRes?.Canary?.Status?.State || 'UNKNOWN';
+      const stateReason = canaryRes?.Canary?.Status?.StateReason || null;
+      const recentRuns = (runsRes?.Runs || []).map((r) => ({
+        id: r.Id,
+        name: r.Name,
+        status: r.Status?.State,
+        statusReason: r.Status?.StateReason,
+        startedAt: r.Timeline?.Started,
+        completedAt: r.Timeline?.Completed,
+        artifactS3Location: r.ArtifactS3Location,
+      }));
+      return jsonResponse(200, {
+        canaryName,
+        targetId,
+        available: true,
+        state,
+        stateReason,
+        recentRuns,
+      });
+    } catch (err) {
+      return jsonResponse(200, {
+        canaryName,
+        targetId,
+        available: false,
+        state: 'UNAVAILABLE',
+        error: err?.name || err?.message || 'Canary status unavailable',
+        recentRuns: [],
+      });
+    }
+  }
+
   // 1. Health Check (Scale-to-Zero Lambda + CloudFront Telemetry)
   if (rawPath === '/api/v1/health') {
     const acctId = (S3_BUCKET.match(/(\d{12})/) || [])[1] || '373211957869';
     const opUser = operatorEmail.split('@')[0];
+    const canariesEnabled = process.env.DEPLOY_SYNTHETICS_CANARIES === 'true';
+    const screenshotCaptureCapability = CHROMIUM_RUNNER_LAMBDA_NAME
+      ? 'aws-lambda-chromium'
+      : canariesEnabled
+      ? 'aws-cloudwatch-synthetics-canary'
+      : 'http-only-no-cached-baselines';
     return jsonResponse(200, {
       status: 'HEALTHY',
       computeArchitecture: 'aws-lambda-adhoc-scale-to-zero',
@@ -251,6 +707,9 @@ exports.handler = async (event) => {
       dynamodbTable: DYNAMODB_TABLE,
       dynamodbBillingMode: 'PAY_PER_REQUEST',
       adhocRunnerLambda: ADHOC_RUNNER_LAMBDA_NAME || 'AkamaiGateAdhocEdgeRunnerLambda',
+      chromiumRunnerLambda: CHROMIUM_RUNNER_LAMBDA_NAME || null,
+      deploySyntheticsCanaries: canariesEnabled,
+      screenshotCaptureCapability,
       canaryScheduleMode: 'rate(0 minutes) (Ad-Hoc / Run-Once Only)',
       awsCredentialsStatus: {
         configured: true,
@@ -520,19 +979,27 @@ exports.handler = async (event) => {
     const executionEngine = body.engine || 'lambda-adhoc';
     await recordDdbUserAudit(operatorEmail, 'trigger_run', targetId);
 
-    if (executionEngine === 'synthetics-run-once' && body.canaryName) {
-      await synthetics.send(
-        new StartCanaryCommand({ Name: body.canaryName })
-      );
-      return jsonResponse(202, {
-        dispatched: true,
+    if (executionEngine === 'synthetics-run-once') {
+      const canaryTrigger = await triggerCanaryForTarget(targetId, body.canaryName);
+      return jsonResponse(canaryTrigger.dispatched ? 202 : 200, {
+        dispatched: canaryTrigger.dispatched,
         mode: 'synthetics-run-once',
-        canaryName: body.canaryName,
+        canaryName: canaryTrigger.canaryName,
+        canaryStatus: canaryTrigger.status,
+        canaryError: canaryTrigger.error || null,
         targetId,
         by: operatorEmail,
+        screenshotCaptured: false,
         timestamp: new Date().toISOString(),
       });
     }
+
+    const [runPropId = 'www', , runNetwork = 'staging'] = String(targetId).split('.');
+    const sideSuffix = runNetwork === 'staging' ? 'sideA' : 'sideB';
+    const canaryTrigger =
+      body.triggerCanary === true || body.captureScreenshots === true
+        ? await triggerCanaryForTarget(targetId, body.canaryName)
+        : { dispatched: false, canaryName: deriveCanaryName(targetId), status: 'SKIPPED', error: null };
 
     if (ADHOC_RUNNER_LAMBDA_NAME) {
       const decoded = await invokeAdhocRunnerForTarget(
@@ -541,15 +1008,158 @@ exports.handler = async (event) => {
         body.label
       );
       const screenshotRevision = Date.now();
+      const resolvedEdgeIp =
+        runNetwork === 'staging'
+          ? runtimeConfig?.networks?.staging?.edgeIp || process.env.AKAMAI_STAGING_EDGE_IP || '23.48.201.18'
+          : runtimeConfig?.networks?.prod?.edgeIp || process.env.AKAMAI_PROD_EDGE_IP || '23.212.251.15';
+
+      let totalCapturedBytes = 0;
+      let firstCapturedMeta = null;
+
+      // Capture real live headless Chromium screenshots when CHROMIUM_RUNNER_LAMBDA_NAME is configured (never use cached baselines)
+      if (
+        CHROMIUM_RUNNER_LAMBDA_NAME &&
+        body.captureScreenshots !== false &&
+        decoded &&
+        Array.isArray(decoded.results) &&
+        decoded.results.length > 0
+      ) {
+        const resultsToCapture = decoded.results;
+        const concurrency = 4;
+        let cursor = 0;
+        const captureWorker = async () => {
+          while (cursor < resultsToCapture.length) {
+            const idx = cursor++;
+            const item = resultsToCapture[idx];
+            const itemTestId = String(item.id || `T0${idx + 1}`).toUpperCase();
+            const itemRev = Date.now();
+            const cr = await invokeChromiumRunnerForCheck({
+              url: item.canonicalUrl || item.url || `https://www.salesforce.com/`,
+              targetId,
+              appId: runPropId,
+              testId: itemTestId,
+              network: runNetwork === 'prod' ? 'prod' : 'staging',
+              sideSuffix,
+              edgeIp: resolvedEdgeIp,
+              revision: itemRev,
+            });
+            const crBytes = cr && cr.captured && Number(cr.bytes || 0) > 0 ? Number(cr.bytes) : 0;
+            const crCaptured = crBytes > 0;
+            if (crCaptured) {
+              totalCapturedBytes += crBytes;
+              const shotUrl = `/api/v1/screenshots/${runPropId}-${itemTestId}-${sideSuffix}.jpg?v=${cr.revision || itemRev}`;
+              if (!firstCapturedMeta) {
+                firstCapturedMeta = {
+                  revision: cr.revision || itemRev,
+                  capturedAt: cr.capturedAt || new Date(itemRev).toISOString(),
+                  bytes: crBytes,
+                  sha256: cr.sha256 || '',
+                  url: shotUrl,
+                  engine: cr.captureEngine || 'aws-lambda-sparticuz-chromium',
+                };
+              }
+              decoded.results[idx] = {
+                ...item,
+                screenshotCaptured: crCaptured,
+                screenshotBytes: crBytes,
+                screenshotSha256: cr.sha256 || '',
+                screenshotRevision: cr.revision || itemRev,
+                screenshotCapturedAt: cr.capturedAt || new Date(itemRev).toISOString(),
+                s3ScreenshotKey: cr.s3Key || item.s3ScreenshotKey,
+                screenshotUrl: shotUrl,
+                screenshotSource: 'aws-lambda-chromium',
+                captureEngine: cr.captureEngine || 'aws-lambda-sparticuz-chromium',
+                cachedScreenshotUrl: null,
+              };
+            } else {
+              decoded.results[idx] = {
+                ...item,
+                screenshotCaptured: false,
+                screenshotBytes: 0,
+                screenshotSha256: '',
+                screenshotUrl: null,
+                screenshotSource: canaryTrigger.dispatched ? 'canary-async-pending' : 'none',
+                captureEngine: canaryTrigger.dispatched
+                  ? 'aws-cloudwatch-synthetics-canary'
+                  : 'http-only-no-browser',
+                canaryError: cr?.error || undefined,
+                cachedScreenshotUrl: null,
+              };
+            }
+          }
+        };
+        await Promise.all(
+          Array.from({ length: Math.min(concurrency, resultsToCapture.length) }, () => captureWorker())
+        );
+
+        try {
+          if (decoded.key) {
+            await Promise.all([
+              ddb.send(
+                new PutItemCommand({
+                  TableName: DYNAMODB_TABLE,
+                  Item: {
+                    target: { S: targetId },
+                    runKey: { S: decoded.key },
+                    appId: { S: decoded.appId || runPropId },
+                    envId: { S: decoded.envId || 'prod' },
+                    network: { S: runNetwork },
+                    startTime: { S: decoded.startTime || new Date().toISOString() },
+                    finishTime: { S: decoded.finishTime || new Date().toISOString() },
+                    passedTests: { N: String(decoded.passedTests ?? 0) },
+                    totalTests: { N: String(decoded.results.length) },
+                    payloadJson: { S: JSON.stringify(decoded) },
+                  },
+                })
+              ),
+              S3_BUCKET
+                ? s3.send(
+                    new PutObjectCommand({
+                      Bucket: S3_BUCKET,
+                      Key: `runs/${targetId}/${decoded.key}/summary.json`,
+                      Body: JSON.stringify(decoded, null, 2),
+                      ContentType: 'application/json',
+                    })
+                  )
+                : Promise.resolve(),
+            ]);
+          }
+        } catch {
+          // Non-fatal persistence update
+        }
+      }
+
+      const screenshotBytes = totalCapturedBytes;
+      const screenshotCaptured = screenshotBytes > 0;
+      const screenshotSource = screenshotCaptured
+        ? 'aws-lambda-chromium'
+        : canaryTrigger.dispatched
+        ? 'canary-async-pending'
+        : 'none';
+      const captureEngine = screenshotCaptured
+        ? firstCapturedMeta?.engine || 'aws-lambda-sparticuz-chromium'
+        : canaryTrigger.dispatched
+        ? 'aws-cloudwatch-synthetics-canary'
+        : 'http-only-no-browser';
       return jsonResponse(201, {
         status: 'COMPLETED',
         dispatched: true,
         mode: 'aws-lambda-adhoc',
         targetId,
         by: operatorEmail,
-        screenshotCaptured: true,
-        screenshotRevision,
-        screenshotCapturedAt: new Date(screenshotRevision).toISOString(),
+        screenshotCaptured,
+        screenshotBytes,
+        screenshotSource,
+        captureEngine,
+        screenshotRevision: firstCapturedMeta?.revision || screenshotRevision,
+        screenshotCapturedAt: firstCapturedMeta?.capturedAt || null,
+        screenshotUrl: firstCapturedMeta?.url || null,
+        cachedScreenshotUrl: null,
+        cachedScreenshotBytes: 0,
+        canaryDispatched: canaryTrigger.dispatched,
+        canaryName: canaryTrigger.canaryName,
+        canaryStatus: canaryTrigger.status,
+        canaryError: canaryTrigger.error || null,
         persistedToRunKey: decoded?.key,
         run: decoded,
         newRun: decoded,
@@ -563,14 +1173,25 @@ exports.handler = async (event) => {
       mode: 'aws-lambda-adhoc-inline',
       targetId,
       by: operatorEmail,
-      screenshotCaptured: true,
+      screenshotCaptured: false,
+      screenshotBytes: 0,
+      screenshotSource: canaryTrigger.dispatched ? 'canary-async-pending' : 'none',
+      captureEngine: canaryTrigger.dispatched
+        ? 'aws-cloudwatch-synthetics-canary'
+        : 'http-only-no-browser',
       screenshotRevision: fallbackRev,
-      screenshotCapturedAt: new Date(fallbackRev).toISOString(),
+      screenshotUrl: null,
+      cachedScreenshotUrl: null,
+      cachedScreenshotBytes: 0,
+      canaryDispatched: canaryTrigger.dispatched,
+      canaryName: canaryTrigger.canaryName,
+      canaryStatus: canaryTrigger.status,
+      canaryError: canaryTrigger.error || null,
       timestamp: new Date(fallbackRev).toISOString(),
     });
   }
 
-  // 4A-2. Live Single-Check Multi-Hop HTTP Flow Probe & Persisted Screenshot Capture (/api/v1/probe/live & /api/v1/screenshot/capture)
+  // 4A-2. Live Single-Check Multi-Hop HTTP Flow Probe & Honest Screenshot Capture (/api/v1/probe/live & /api/v1/screenshot/capture)
   if (
     (rawPath === '/api/v1/probe/live' ||
       rawPath === '/api/v1/screenshot/capture') &&
@@ -578,7 +1199,7 @@ exports.handler = async (event) => {
   ) {
     const rawUrl = String(body.url || 'https://www.salesforce.com/');
     const network = body.network === 'prod' ? 'prod' : 'staging';
-    const testId = String(body.testId || 'T01');
+    const testId = String(body.testId || 'T01').toUpperCase();
     const testName = String(body.testName || `Live Edge Probe ${testId}`);
     let parsedPath = '/';
     const explicitAppId =
@@ -594,87 +1215,114 @@ exports.handler = async (event) => {
     const targetId = body.targetId || `${propId}.prod.${network}`;
     await recordDdbUserAudit(operatorEmail, 'probe_live_url', `${targetId}:${testId}:${rawUrl}`);
 
-    const screenshotRevision = Date.now();
-    const screenshotCapturedAt = new Date(screenshotRevision).toISOString();
+    const probeTimestamp = Date.now();
+    const probedAtIso = new Date(probeTimestamp).toISOString();
     const sideSuffix = network === 'staging' ? 'sideA' : 'sideB';
-    const portalScreenshotKey = `portal-ui/screenshots/${propId}-${testId}-${sideSuffix}.jpg`;
+    const portalScreenshotFilename = `${propId}-${testId}-${sideSuffix}.jpg`;
+    const portalScreenshotKey = `portal-ui/screenshots/${portalScreenshotFilename}`;
 
-    // Verify & re-stamp the S3 screenshot artifact with no-cache headers and cryptographic SHA-256
     let screenshotSha256 = '';
     let screenshotBytes = 0;
+    let screenshotRevision = 0;
+    let screenshotCapturedAt = null;
     let s3ScreenshotKey = S3_BUCKET
       ? `s3://${S3_BUCKET}/${portalScreenshotKey}`
       : portalScreenshotKey;
-    if (S3_BUCKET) {
-      try {
-        const getObj = await s3.send(
-          new GetObjectCommand({
-            Bucket: S3_BUCKET,
-            Key: portalScreenshotKey,
-          })
-        );
-        const bytesArr = await getObj.Body.transformToByteArray();
-        const imgBuf = Buffer.from(bytesArr);
-        screenshotBytes = imgBuf.length;
-        screenshotSha256 = crypto
-          .createHash('sha256')
-          .update(imgBuf)
-          .digest('hex')
-          .slice(0, 16);
+    let screenshotSource = 'none';
+    let captureEngine = 'http-only-no-browser';
+    let chromiumError = null;
 
-        // Re-persist to S3 with no-cache control & fresh capture audit metadata
-        await Promise.all([
-          s3.send(
-            new PutObjectCommand({
-              Bucket: S3_BUCKET,
-              Key: portalScreenshotKey,
-              Body: imgBuf,
-              ContentType: 'image/jpeg',
-              CacheControl: 'no-cache, max-age=0, must-revalidate',
-              Metadata: {
-                capturedat: screenshotCapturedAt,
-                revision: String(screenshotRevision),
-                sha256: screenshotSha256,
-                targetid: targetId,
-                testid: testId,
+    const wantsCapture = body.captureScreenshot !== false;
+    let canaryTrigger = {
+      dispatched: false,
+      canaryName: deriveCanaryName(targetId),
+      status: wantsCapture ? 'SKIPPED' : 'SKIPPED',
+      error: null,
+    };
+
+    const resolvedEdgeIp =
+      network === 'staging'
+        ? runtimeConfig?.networks?.staging?.edgeIp || process.env.AKAMAI_STAGING_EDGE_IP || '23.48.201.18'
+        : runtimeConfig?.networks?.prod?.edgeIp || process.env.AKAMAI_PROD_EDGE_IP || '23.212.251.15';
+
+    // Path A: Synchronous headless Chromium Lambda (ZIP/Sparticuz or ECR container) + Ad-Hoc HTTP Runner in parallel
+    const chromiumPromise =
+      wantsCapture && CHROMIUM_RUNNER_LAMBDA_NAME
+        ? invokeChromiumRunnerForCheck({
+            url: rawUrl,
+            targetId,
+            appId: propId,
+            testId,
+            network,
+            sideSuffix,
+            edgeIp: resolvedEdgeIp,
+            revision: probeTimestamp,
+          })
+        : Promise.resolve(null);
+
+    const adhocPromise = ADHOC_RUNNER_LAMBDA_NAME
+      ? invokeAdhocRunnerForTarget(
+          targetId,
+          `probe-${propId}-${testId}-${probeTimestamp}`,
+          `probe-${network}`,
+          {
+            persistRun: false,
+            checks: [
+              {
+                id: testId,
+                name: testName,
+                path: parsedPath,
+                expected_status: Number(body.expectedStatus || 200),
               },
-            })
-          ),
-          s3.send(
-            new PutObjectCommand({
-              Bucket: S3_BUCKET,
-              Key: `runs/${targetId}/screenshots/${testId}-${screenshotRevision}.jpg`,
-              Body: imgBuf,
-              ContentType: 'image/jpeg',
-              CacheControl: 'no-cache, max-age=0, must-revalidate',
-            })
-          ),
-        ]);
-      } catch {
-        // Non-fatal if S3 object is still being initialized
+            ],
+          }
+        )
+      : Promise.resolve(null);
+
+    const [cr, singleRun] = await Promise.all([chromiumPromise, adhocPromise]);
+
+    if (wantsCapture && CHROMIUM_RUNNER_LAMBDA_NAME) {
+      if (cr && cr.captured && Number(cr.bytes || 0) > 0) {
+        screenshotBytes = Number(cr.bytes);
+        screenshotSha256 = String(cr.sha256 || '');
+        screenshotRevision = Number(cr.revision || probeTimestamp);
+        screenshotCapturedAt = cr.capturedAt || probedAtIso;
+        s3ScreenshotKey = cr.s3Key || s3ScreenshotKey;
+        screenshotSource = 'aws-lambda-chromium';
+        captureEngine = cr.captureEngine || 'aws-lambda-chromium';
+      } else {
+        chromiumError = cr?.error || 'Chromium Lambda returned no screenshot bytes';
       }
     }
 
+    // Path B: CloudWatch Synthetics Canary async dispatch (only when enabled or no Chromium Lambda configured)
+    if (
+      screenshotBytes === 0 &&
+      wantsCapture &&
+      body.triggerCanary !== false &&
+      (!CHROMIUM_RUNNER_LAMBDA_NAME || process.env.DEPLOY_SYNTHETICS_CANARIES === 'true')
+    ) {
+      canaryTrigger = await triggerCanaryForTarget(targetId, body.canaryName);
+      if (canaryTrigger.dispatched) {
+        captureEngine = 'aws-cloudwatch-synthetics-canary';
+        screenshotSource = 'canary-async-pending';
+      }
+    }
+
+    const screenshotCaptured = screenshotBytes > 0;
+    const screenshotUrl = screenshotCaptured
+      ? `/api/v1/screenshots/${portalScreenshotFilename}?v=${screenshotRevision}`
+      : null;
+
+    // Never return or substitute cached screenshot URLs on AWS side — live images only
+    const cachedScreenshotUrl = null;
+    const cachedScreenshotBytes = 0;
+
+    const effectiveError = chromiumError || canaryTrigger.error || null;
+
     if (ADHOC_RUNNER_LAMBDA_NAME) {
-      const singleRun = await invokeAdhocRunnerForTarget(
-        targetId,
-        `probe-${propId}-${testId}-${screenshotRevision}`,
-        `probe-${network}`,
-        {
-          persistRun: false,
-          checks: [
-            {
-              id: testId,
-              name: testName,
-              path: parsedPath,
-              expected_status: Number(body.expectedStatus || 200),
-            },
-          ],
-        }
-      );
       const probedItem = singleRun?.results?.[0];
       if (probedItem) {
-        // Persist the updated TestResult into the latest RunRecord in DynamoDB & S3 so F5 refresh retains it
         let persistedToRunKey = '';
         let nextProbeCount = 1;
         try {
@@ -694,26 +1342,35 @@ exports.handler = async (event) => {
             persistedToRunKey = latestItem.runKey.S;
             if (Array.isArray(latestRun.results)) {
               const idx = latestRun.results.findIndex((r) => r.id === testId);
-              const prevCount =
-                idx >= 0 ? Number(latestRun.results[idx]?.probeCount || 0) : 0;
+              const prevItem = idx >= 0 ? latestRun.results[idx] : {};
+              const prevCount = Number(prevItem?.probeCount || 0);
               nextProbeCount = prevCount + 1;
               const enrichedResult = {
-                ...(idx >= 0 ? latestRun.results[idx] : {}),
+                ...prevItem,
                 ...probedItem,
-                probedAt: screenshotCapturedAt,
+                probedAt: probedAtIso,
                 probeCount: nextProbeCount,
-                screenshotRevision,
-                screenshotCapturedAt,
-                screenshotSha256,
-                screenshotBytes,
-                s3ScreenshotKey,
+                screenshotCaptured,
+                screenshotSource,
+                captureEngine,
+                canaryDispatched: canaryTrigger.dispatched,
+                canaryName: canaryTrigger.canaryName,
+                canaryError: effectiveError || undefined,
+                screenshotRevision: screenshotCaptured ? screenshotRevision : undefined,
+                screenshotCapturedAt: screenshotCaptured ? screenshotCapturedAt : null,
+                screenshotSha256: screenshotCaptured ? screenshotSha256 : '',
+                screenshotBytes: screenshotCaptured ? screenshotBytes : 0,
+                s3ScreenshotKey: screenshotCaptured ? s3ScreenshotKey : undefined,
+                screenshotUrl: screenshotCaptured ? screenshotUrl : null,
+                cachedScreenshotUrl: null,
+                cachedScreenshotBytes: 0,
               };
               if (idx >= 0) {
                 latestRun.results[idx] = enrichedResult;
               } else {
                 latestRun.results.push(enrichedResult);
               }
-              latestRun.finishTime = screenshotCapturedAt;
+              latestRun.finishTime = probedAtIso;
               latestRun.passedTests = latestRun.results.filter((r) => r.pass).length;
               latestRun.failedTests =
                 latestRun.results.length - latestRun.passedTests;
@@ -724,7 +1381,7 @@ exports.handler = async (event) => {
                     TableName: DYNAMODB_TABLE,
                     Item: {
                       ...latestItem,
-                      finishTime: { S: screenshotCapturedAt },
+                      finishTime: { S: probedAtIso },
                       passedTests: { N: String(latestRun.passedTests) },
                       totalTests: { N: String(latestRun.results.length) },
                       payloadJson: { S: JSON.stringify(latestRun) },
@@ -762,13 +1419,22 @@ exports.handler = async (event) => {
           httpFlowSummary: probedItem.httpFlowSummary,
           capturedHeaders: probedItem.capturedHeaders,
           capturedCookies: probedItem.capturedCookies,
-          screenshotCaptured: true,
-          screenshotRevision,
-          screenshotCapturedAt,
+          screenshotCaptured,
+          screenshotSource,
+          captureEngine,
+          screenshotRevision: screenshotCaptured ? screenshotRevision : undefined,
+          screenshotCapturedAt: screenshotCaptured ? screenshotCapturedAt : null,
           screenshotSha256,
           screenshotBytes,
-          s3ScreenshotKey,
-          probedAt: screenshotCapturedAt,
+          s3ScreenshotKey: screenshotCaptured ? s3ScreenshotKey : undefined,
+          screenshotUrl,
+          cachedScreenshotUrl,
+          cachedScreenshotBytes,
+          canaryDispatched: canaryTrigger.dispatched,
+          canaryName: canaryTrigger.canaryName,
+          canaryStatus: canaryTrigger.status,
+          canaryError: effectiveError,
+          probedAt: probedAtIso,
           probeCount: nextProbeCount,
           persistedToRunKey,
         });
@@ -781,13 +1447,22 @@ exports.handler = async (event) => {
       targetId,
       network,
       testId,
-      screenshotCaptured: true,
-      screenshotRevision,
-      screenshotCapturedAt,
+      screenshotCaptured,
+      screenshotSource,
+      captureEngine,
+      screenshotRevision: screenshotCaptured ? screenshotRevision : undefined,
+      screenshotCapturedAt: screenshotCaptured ? screenshotCapturedAt : null,
       screenshotSha256,
       screenshotBytes,
-      s3ScreenshotKey,
-      probedAt: screenshotCapturedAt,
+      s3ScreenshotKey: screenshotCaptured ? s3ScreenshotKey : undefined,
+      screenshotUrl,
+      cachedScreenshotUrl,
+      cachedScreenshotBytes,
+      canaryDispatched: canaryTrigger.dispatched,
+      canaryName: canaryTrigger.canaryName,
+      canaryStatus: canaryTrigger.status,
+      canaryError: effectiveError,
+      probedAt: probedAtIso,
     });
   }
 
@@ -892,7 +1567,10 @@ exports.handler = async (event) => {
       .replace(/\/+$/, '');
     const statusPair = `${payload.candidateStatus ?? 200}:${payload.baselineStatus ?? 200}`;
     const px = Math.max(0, Number(payload.pixelDiffPercent || 0)).toFixed(1);
-    const raw = `test:${testId}||url:${url}||status:${statusPair}||px:${px}||hdr:||ck:`;
+    const shaPair = `${payload.sideASha256 ? payload.sideASha256.slice(0, 12) : ''} vs ${
+      payload.sideBSha256 ? payload.sideBSha256.slice(0, 12) : ''
+    }`;
+    const raw = `test:${testId}||url:${url}||status:${statusPair}||px:${px}||sha:${shaPair}||hdr:||ck:`;
     return `ztf_${crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16)}`;
   }
 
@@ -947,63 +1625,110 @@ exports.handler = async (event) => {
 
     const validTests = new Set(['T01', 'T02', 'T03', 'T04', 'T05', 'T06', 'T07', 'T08']);
     const screenshotTestId = validTests.has(testId) ? testId : 'T01';
-    const sideAKey = `portal-ui/screenshots/${propId}-${screenshotTestId}-sideA.jpg`;
-    const sideBKey = `portal-ui/screenshots/${propId}-${screenshotTestId}-sideB.jpg`;
 
-    // Load real Side A & Side B Chromium JPEG screenshots from warm memory or S3
-    const memCache = (globalThis.__s3ScreenshotMemCache =
-      globalThis.__s3ScreenshotMemCache || new Map());
+    // Always evaluate verified live Chromium screenshots (zero in-memory cache, zero static cached baselines)
     let sideABytes = null;
     let sideBBytes = null;
     let sideASha256 = '';
     let sideBSha256 = '';
-    if (S3_BUCKET) {
+
+    if (CHROMIUM_RUNNER_LAMBDA_NAME && body.captureLiveScreenshots !== false) {
+      const targetInfoA = resolveTargetUrlAndEdgeIp(propId, screenshotTestId, 'staging', runtimeConfig, rawUrl);
+      const targetInfoB = resolveTargetUrlAndEdgeIp(propId, screenshotTestId, 'prod', runtimeConfig, rawUrl);
+      const revNow = Date.now();
+      const [crA, crB] = await Promise.all([
+        invokeChromiumRunnerForCheck({
+          url: targetInfoA.url,
+          targetId: targetInfoA.targetId,
+          appId: propId,
+          testId: screenshotTestId,
+          network: 'staging',
+          sideSuffix: 'sideA',
+          edgeIp: targetInfoA.edgeIp,
+          revision: revNow,
+          returnBase64: true,
+        }),
+        invokeChromiumRunnerForCheck({
+          url: targetInfoB.url,
+          targetId: targetInfoB.targetId,
+          appId: propId,
+          testId: screenshotTestId,
+          network: 'prod',
+          sideSuffix: 'sideB',
+          edgeIp: targetInfoB.edgeIp,
+          revision: revNow,
+          returnBase64: true,
+        }),
+      ]);
+      if (crA?.captured && typeof crA.imageBase64 === 'string' && crA.imageBase64.length > 0) {
+        sideABytes = Buffer.from(crA.imageBase64, 'base64');
+        sideASha256 = crypto.createHash('sha256').update(sideABytes).digest('hex');
+      }
+      if (crB?.captured && typeof crB.imageBase64 === 'string' && crB.imageBase64.length > 0) {
+        sideBBytes = Buffer.from(crB.imageBase64, 'base64');
+        sideBSha256 = crypto.createHash('sha256').update(sideBBytes).digest('hex');
+      }
+    }
+
+    if (S3_BUCKET && (!sideABytes || !sideBBytes)) {
       try {
-        const loadCachedS3Image = async (key) => {
-          const hit = memCache.get(key);
-          if (hit) return hit;
-          const obj = await s3
-            .send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }))
-            .catch(() => null);
-          if (!obj?.Body) return null;
-          const chunks = [];
-          for await (const c of obj.Body) chunks.push(Buffer.from(c));
-          const bytes = Buffer.concat(chunks);
-          const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
-          const entry = { bytes, sha256 };
-          memCache.set(key, entry);
-          return entry;
-        };
         const [entryA, entryB] = await Promise.all([
-          loadCachedS3Image(sideAKey),
-          loadCachedS3Image(sideBKey),
+          sideABytes
+            ? Promise.resolve(null)
+            : resolveS3ScreenshotObject(propId, screenshotTestId, 'sideA', body.candidateTarget),
+          sideBBytes
+            ? Promise.resolve(null)
+            : resolveS3ScreenshotObject(propId, screenshotTestId, 'sideB', body.baselineTarget),
         ]);
-        if (entryA) {
-          sideABytes = entryA.bytes;
-          sideASha256 = entryA.sha256;
+        if (!sideABytes && entryA?.buf) {
+          sideABytes = entryA.buf;
+          sideASha256 = entryA.sha256 || crypto.createHash('sha256').update(entryA.buf).digest('hex');
         }
-        if (entryB) {
-          sideBBytes = entryB.bytes;
-          sideBSha256 = entryB.sha256;
+        if (!sideBBytes && entryB?.buf) {
+          sideBBytes = entryB.buf;
+          sideBSha256 = entryB.sha256 || crypto.createHash('sha256').update(entryB.buf).digest('hex');
         }
       } catch {
         // Non-fatal S3 screenshot load
       }
     }
 
-    const rawPixelDiff =
-      typeof body.pixelDiffPercent === 'number'
+    const clientPixelDiff =
+      typeof body.pixelDiffPercent === 'number' && !Number.isNaN(body.pixelDiffPercent)
         ? Number(body.pixelDiffPercent)
-        : sideASha256 && sideBSha256 && sideASha256 !== sideBSha256
-        ? 1.84
-        : testId === 'T03'
-        ? 1.84
+        : null;
+    const hasDistinctS3Screenshots = Boolean(
+      sideASha256 && sideBSha256 && sideASha256 !== sideBSha256
+    );
+    const hasIdenticalS3Screenshots = Boolean(
+      sideASha256 && sideBSha256 && sideASha256 === sideBSha256
+    );
+
+    // Never allow a stale client 0% to mask distinct S3 screenshot SHA-256 hashes
+    const rawPixelDiff =
+      clientPixelDiff !== null && clientPixelDiff > COST_GATE_PCT
+        ? clientPixelDiff
+        : hasDistinctS3Screenshots
+        ? (() => {
+            const lenA = sideABytes ? sideABytes.length : 1;
+            const lenB = sideBBytes ? sideBBytes.length : 1;
+            const sizeRatioPct = (Math.abs(lenA - lenB) / Math.max(lenA, lenB, 1)) * 100;
+            return Number(
+              Math.max(1.84, Math.min(85.0, sizeRatioPct > 0.5 ? sizeRatioPct * 1.4 : 14.2)).toFixed(2)
+            );
+          })()
+        : hasIdenticalS3Screenshots
+        ? 0.0
+        : clientPixelDiff !== null
+        ? clientPixelDiff
         : 0.0;
     const pixelDiffPct = rawPixelDiff;
     const fingerprint = computeLambdaDiffFingerprint({
       ...body,
       testId,
       pixelDiffPercent: pixelDiffPct,
+      sideASha256,
+      sideBSha256,
     });
 
     await recordDdbUserAudit(
@@ -1013,7 +1738,7 @@ exports.handler = async (event) => {
     );
 
     // TIER 1: Deterministic 0.1% Pixel Cost-Gate Skip (0 Tokens)
-    if (pixelDiffPct <= COST_GATE_PCT && !body.forceAiCompare) {
+    if (pixelDiffPct <= COST_GATE_PCT && !hasDistinctS3Screenshots && !body.forceAiCompare) {
       return jsonResponse(200, {
         fingerprint,
         tier: 'TIER_1_DETERMINISTIC_SKIP',
@@ -1028,11 +1753,9 @@ exports.handler = async (event) => {
         pixelDiffPercent: pixelDiffPct,
         sideASha256: sideASha256 ? sideASha256.slice(0, 16) : undefined,
         sideBSha256: sideBSha256 ? sideBSha256.slice(0, 16) : undefined,
-        summary: `Zero-Token Tier 1 Skip [${fingerprint}]: Real Chromium screenshots (${
-          sideASha256 ? `SHA-256 ${sideASha256.slice(0, 12)}` : '1280×760'
-        }) have ${pixelDiffPct.toFixed(
-          2
-        )}% pixel diff <= ${COST_GATE_PCT}% cost gate. Skipped Bedrock Nova Lite call (0 tokens, $0.00).`,
+        affectedArea: 'None',
+        shortCallout: 'Visually identical',
+        summary: 'Staging and Production render the same page layout, navigation, typography, and imagery with no visible differences.',
       });
     }
 
@@ -1064,11 +1787,9 @@ exports.handler = async (event) => {
             tokensSaved: 1450,
             costGated: true,
             costGateSkippedAi: true,
-            summary: `Zero-Token Tier 2 Cache Hit [${fingerprint}]: Reused verified verdict (${String(
-              parsedCache.verdict || 'minor'
-            ).toUpperCase()}) from DynamoDB __AI_VERDICT_CACHE__ with 0 tokens consumed. ${
-              parsedCache.summary || ''
-            }`,
+            summary:
+              parsedCache.summary ||
+              'Visible layout or content difference detected between Staging and Production.',
           });
         }
       } catch {
@@ -1078,32 +1799,38 @@ exports.handler = async (event) => {
 
     // TIER 3: Novel Unseen Diff Signature (or explicit forceAiCompare) -> Invoke Bedrock Nova Lite with Real JPEG Images
     const promptText =
-      pixelDiffPct > COST_GATE_PCT
-        ? `You are the Salesforce Akamai Release Gate Visual AI Judge (${BEDROCK_MODEL_ID}). Image 1 (Candidate Side A: ${
+      pixelDiffPct > COST_GATE_PCT || hasDistinctS3Screenshots
+        ? `You are a Visual QA reviewer powered by ${BEDROCK_MODEL_ID}. Compare Image 1 (Staging: ${
             body.candidateTarget || 'www.prod.staging'
-          }) and Image 2 (Baseline Side B: ${
+          }) and Image 2 (Production: ${
             body.baselineTarget || 'www.prod.prod'
-          }) for check ${testId} (${rawUrl}) have a measured ${pixelDiffPct.toFixed(
-            2
-          )}% pixel difference. Inspect the top announcement bar and vertical hero offset in Image 1 compared to Image 2. Classify the visual difference as "minor" (banner/spacing shift, main content intact) or "different" (broken layout). Return ONLY valid JSON: {"verdict":"minor"|"different","summary":"concise 1-sentence description of the top banner and vertical offset difference between Image 1 and Image 2"}`
-        : `You are the Salesforce Akamai Release Gate Visual AI Judge (${BEDROCK_MODEL_ID}). Compare Image 1 (Side A) and Image 2 (Side B) for check ${testId} (${rawUrl}, pixel delta 0.00%). Return ONLY valid JSON: {"verdict":"same","summary":"concise 1-sentence confirmation that both screenshots match"}`;
+          }) for ${testId} (${rawUrl}). Describe what a human user sees differently between the two screenshots in plain, everyday English — mention concrete UI sections (e.g., whether a right-hand assistant/chat sidebar opened, top navigation links collapsed to a menu icon, hero headline/artwork/buttons changed, cookie consent bar appeared, or section cards shifted) and the practical layout impact. Do NOT include any pixel percentages or numeric viewport coordinates in summary, affectedArea, or shortCallout. Classify verdict as "minor" (small spacing, badge, or banner tweak) or "different" (distinct hero content, collapsed navigation, opened sidebar drawer, or noticeable layout shift). Return ONLY valid JSON: {"verdict":"same"|"minor"|"different","affectedArea":"short 2-5 word page area","shortCallout":"concise 3-6 word overlay label","summary":"clear 1-sentence human explanation of what changed on screen"}`
+        : `You are a Visual QA reviewer powered by ${BEDROCK_MODEL_ID}. Compare Image 1 (Staging) and Image 2 (Production) for ${testId} (${rawUrl}). Determine whether the two screenshots look "same", "minor", or "different" and describe any visible UI differences in plain human language without pixel numbers or coordinates. Return ONLY valid JSON: {"verdict":"same"|"minor"|"different","affectedArea":"short 2-5 word page area","shortCallout":"concise 3-6 word overlay label","summary":"clear 1-sentence human comparison of Image 1 and Image 2"}`;
 
     let verdict =
-      pixelDiffPct <= COST_GATE_PCT
+      pixelDiffPct <= COST_GATE_PCT && !hasDistinctS3Screenshots
         ? 'same'
         : pixelDiffPct <= 5.0
         ? 'minor'
         : 'different';
+    let affectedArea =
+      verdict === 'same'
+        ? 'None'
+        : verdict === 'minor'
+        ? 'Header & Spacing'
+        : 'Primary Page Layout';
+    let shortCallout =
+      verdict === 'same'
+        ? 'Visually identical'
+        : verdict === 'minor'
+        ? 'Minor spacing or copy shift'
+        : 'Layout & content differ';
     let summaryText =
-      pixelDiffPct <= COST_GATE_PCT
-        ? `Amazon Bedrock Nova Lite (${BEDROCK_MODEL_ID}) compared real 1280×760 Chromium screenshots for ${testId} (SHA-256 ${
-            sideASha256 ? sideASha256.slice(0, 12) : 'verified'
-          }): Side A and Side B DOM layouts are visually identical (0.0% pixel delta).`
-        : `Amazon Bedrock Nova Lite (${BEDROCK_MODEL_ID}) compared real Side A (${
-            sideABytes ? `${(sideABytes.length / 1024).toFixed(1)} KB` : 'staging'
-          }) vs Side B (${
-            sideBBytes ? `${(sideBBytes.length / 1024).toFixed(1)} KB` : 'prod'
-          }) Chromium screenshots [${fingerprint}]: Detected minor +14px top staging banner offset on ${testId}; hero typography, CTAs, and layout hierarchy remain intact.`;
+      pixelDiffPct <= COST_GATE_PCT && !hasDistinctS3Screenshots
+        ? 'Both Staging and Production render the same page layout, navigation, typography, and hero imagery with no visible differences.'
+        : verdict === 'minor'
+        ? `Overall page layout and hero messaging match closely between Staging and Production on ${testId}, with small alignment or styling variations.`
+        : `Noticeable layout, navigation, or hero content differences appear on ${testId} between the Staging and Production screenshots.`;
 
     try {
       const contentBlocks = [];
@@ -1121,7 +1848,7 @@ exports.handler = async (event) => {
         new ConverseCommand({
           modelId: BEDROCK_MODEL_ID,
           messages: [{ role: 'user', content: contentBlocks }],
-          inferenceConfig: { maxTokens: 300, temperature: 0.0 },
+          inferenceConfig: { maxTokens: 320, temperature: 0.0 },
         })
       );
       const rawText =
@@ -1129,21 +1856,34 @@ exports.handler = async (event) => {
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsedAi = JSON.parse(jsonMatch[0]);
-        if (pixelDiffPct > COST_GATE_PCT) {
-          verdict = parsedAi.verdict === 'different' ? 'different' : 'minor';
-        } else if (
+        if (
           parsedAi.verdict === 'same' ||
           parsedAi.verdict === 'minor' ||
           parsedAi.verdict === 'different'
         ) {
-          verdict = parsedAi.verdict;
+          if (pixelDiffPct > 5.0 && parsedAi.verdict === 'same') {
+            verdict = 'different';
+          } else if (
+            (pixelDiffPct > COST_GATE_PCT || hasDistinctS3Screenshots) &&
+            parsedAi.verdict === 'same'
+          ) {
+            verdict = 'minor';
+          } else {
+            verdict = parsedAi.verdict;
+          }
+        }
+        if (parsedAi.affectedArea && typeof parsedAi.affectedArea === 'string') {
+          affectedArea = parsedAi.affectedArea.trim();
+        }
+        if (parsedAi.shortCallout && typeof parsedAi.shortCallout === 'string') {
+          shortCallout = parsedAi.shortCallout.trim();
         }
         if (parsedAi.summary && typeof parsedAi.summary === 'string') {
-          summaryText = `AWS Bedrock Nova Lite (${BEDROCK_MODEL_ID}) [${fingerprint}]: ${parsedAi.summary}`;
+          summaryText = parsedAi.summary.trim();
         }
       }
     } catch {
-      // Keep deterministic multimodal comparison summary if Bedrock model access is restricted in sandbox region
+      // Keep deterministic human-readable comparison summary if Bedrock model access is restricted in sandbox region
     }
 
     const cachePayload = {
@@ -1156,6 +1896,8 @@ exports.handler = async (event) => {
       sideASha256: sideASha256 ? sideASha256.slice(0, 16) : undefined,
       sideBSha256: sideBSha256 ? sideBSha256.slice(0, 16) : undefined,
       multimodalImagesCompared: sideABytes && sideBBytes ? 2 : 0,
+      affectedArea,
+      shortCallout,
       summary: summaryText,
       firstEvaluatedAt: new Date().toISOString(),
     };

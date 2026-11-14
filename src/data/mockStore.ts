@@ -25,6 +25,11 @@ import {
   getPropertyTestSuite,
   resolveRegionalEdgeNode,
 } from '../config/template.config';
+import {
+  describeVisualDiffLogically,
+  humanizeVisualSummary,
+  type VisualZoneMetrics,
+} from '../engine/pixelDiff';
 import liveScreenshotManifest from './liveScreenshotManifest.json';
 
 export const APPS: AppConfig[] = DEFAULT_TEMPLATE_CONFIG.properties;
@@ -75,6 +80,7 @@ export function buildHttpFlowForTest(params: {
   durationMs: number;
   capturedHeaders: Record<string, string | undefined>;
   capturedCookies: Record<string, string>;
+  popOverrideId?: string;
 }): { redirectChain: RedirectHop[]; httpFlowSummary: HttpFlowSummary } {
   const {
     appId,
@@ -88,9 +94,14 @@ export function buildHttpFlowForTest(params: {
     durationMs,
     capturedHeaders,
     capturedCookies,
+    popOverrideId,
   } = params;
 
-  const regionalNode = resolveRegionalEdgeNode(appId, `https://${envHost}${path}`);
+  const regionalNode = resolveRegionalEdgeNode(
+    appId,
+    `https://${envHost}${path}`,
+    popOverrideId
+  );
   const resolvedEdgeIp =
     edgeIp &&
     edgeIp !== '23.48.201.18' &&
@@ -261,6 +272,8 @@ export function buildHttpFlowForTest(params: {
         resolvedEdgeCname: edgeCname,
         liveCaptured: true,
         capturedAt: new Date().toISOString(),
+        executionPopId: regionalNode.popId,
+        executionPopCode: regionalNode.popCode,
       },
     };
   }
@@ -319,13 +332,15 @@ export function buildHttpFlowForTest(params: {
       protocol: 'HTTP/2',
       tlsVersion: tlsProtocol,
       tlsCipher,
-      resolvedEdgeIp,
-      resolvedEdgeCname: edgeCname,
-      liveCaptured: true,
-      capturedAt: new Date().toISOString(),
-    },
-  };
-}
+        resolvedEdgeIp,
+        resolvedEdgeCname: edgeCname,
+        liveCaptured: true,
+        capturedAt: new Date().toISOString(),
+        executionPopId: regionalNode.popId,
+        executionPopCode: regionalNode.popCode,
+      },
+    };
+  }
 
 export function generateTestResults(
   target: string,
@@ -336,7 +351,8 @@ export function generateTestResults(
     | 'prev_prod'
     | 'new_run',
   customSuite?: TestCaseDefinition[],
-  config: TemplateConfig = DEFAULT_TEMPLATE_CONFIG
+  config: TemplateConfig = DEFAULT_TEMPLATE_CONFIG,
+  popOverrideId?: string
 ): TestResult[] {
   const [appId, envId, network] = target.split('.');
   const isStaging = network === 'staging';
@@ -361,7 +377,8 @@ export function generateTestResults(
 
     const regionalNode = resolveRegionalEdgeNode(
       appId,
-      `https://${envHost}${tc.path}`
+      `https://${envHost}${tc.path}`,
+      popOverrideId
     );
     const edgeIp = isStaging
       ? regionalNode.stagingEdgeIp
@@ -454,6 +471,7 @@ export function generateTestResults(
       durationMs,
       capturedHeaders,
       capturedCookies,
+      popOverrideId,
     });
 
     return {
@@ -597,7 +615,12 @@ export interface BuildComparisonOptions extends ApplyRulesOptions {
     {
       verdict: 'same' | 'minor' | 'different';
       summary: string;
+      affectedArea?: string;
+      shortCallout?: string;
       pixelDiffPercent?: number;
+      changedBox?: { x: number; y: number; w: number; h: number } | null;
+      zones?: VisualZoneMetrics | null;
+      costGate?: 'identical-bytes' | 'pixel-gate-passed' | 'ai-judged';
     }
   >;
 }
@@ -641,12 +664,23 @@ export function buildInitialComparison(
         ? manifestEntry.pixelDiffPercent
         : 0;
 
-    let visualResult: ComparisonItem['visualResult'] = {
+    const baseLogical = describeVisualDiffLogically({
+      pixelDiffPercent: measuredDiff,
+      changedBox: manifestEntry?.changedBox ?? null,
+      candidateLabel: candidateRun.network,
+      baselineLabel: baselineRun.network,
+      pageName: candRes.name,
+      url: candRes.canonicalUrl,
+    });
+
+    let visualResult: NonNullable<ComparisonItem['visualResult']> = {
       verdict: 'same',
       costGate: 'identical-bytes',
       costGateSkippedAi: true,
       pixelDiffPercent: measuredDiff,
-      summary: 'Screenshots match within 0.1% pixel gate (cost-gate skipped AI).',
+      summary: baseLogical.summary,
+      affectedArea: baseLogical.affectedArea,
+      shortCallout: baseLogical.shortCallout,
       differences: [],
       primaryModel: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
     };
@@ -657,12 +691,12 @@ export function buildInitialComparison(
         costGate: 'ai-judged',
         costGateSkippedAi: false,
         pixelDiffPercent: measuredDiff,
-        summary: `Measured ${measuredDiff.toFixed(
-          2
-        )}% pixel variance between captured Side A and Side B Chromium screenshots.`,
+        summary: baseLogical.summary,
+        affectedArea: baseLogical.affectedArea,
+        shortCallout: baseLogical.shortCallout,
         differences: [
           {
-            description: `Measured ${measuredDiff.toFixed(2)}% pixel variance across captured viewport`,
+            description: baseLogical.shortCallout,
             severity: measuredDiff > 5.0 ? 'major' : 'minor',
             ...(manifestEntry?.changedBox ? { box: manifestEntry.changedBox } : {}),
           },
@@ -671,16 +705,83 @@ export function buildInitialComparison(
       };
     }
 
-    const aiOverride = options.aiJudgeOverrides?.[candRes.id];
-    if (aiOverride && visualResult) {
+    const aiOverride =
+      options.aiJudgeOverrides?.[`${candidateRun.appId}-${candRes.id}`] ??
+      options.aiJudgeOverrides?.[candRes.id];
+    if (aiOverride && candidateRun.key !== baselineRun.key) {
+      const effectivePixelDiff =
+        typeof aiOverride.pixelDiffPercent === 'number'
+          ? aiOverride.pixelDiffPercent
+          : visualResult.pixelDiffPercent ?? 0;
+      const effectiveBox = aiOverride.changedBox ?? manifestEntry?.changedBox ?? undefined;
+      const overrideLogical = describeVisualDiffLogically({
+        pixelDiffPercent: effectivePixelDiff,
+        changedBox: effectiveBox ?? null,
+        zones: aiOverride.zones ?? null,
+        candidateLabel: candidateRun.network,
+        baselineLabel: baselineRun.network,
+        pageName: candRes.name,
+        url: candRes.canonicalUrl,
+      });
+      const resolvedSummary = humanizeVisualSummary(aiOverride.summary, {
+        pixelDiffPercent: effectivePixelDiff,
+        changedBox: effectiveBox ?? null,
+        zones: aiOverride.zones ?? null,
+        candidateLabel: candidateRun.network,
+        baselineLabel: baselineRun.network,
+        pageName: candRes.name,
+        url: candRes.canonicalUrl,
+      });
+      const resolvedShortCallout =
+        aiOverride.shortCallout || overrideLogical.shortCallout;
+      const resolvedArea =
+        aiOverride.affectedArea || overrideLogical.affectedArea;
+      const diffBadgeDescription =
+        aiOverride.shortCallout ||
+        (aiOverride.summary && aiOverride.summary.length <= 80 && !/pixel/i.test(aiOverride.summary)
+          ? aiOverride.summary
+          : resolvedShortCallout);
+
+      const overrideDifferences =
+        aiOverride.verdict === 'same'
+          ? []
+          : visualResult.differences && visualResult.differences.length > 0
+          ? visualResult.differences.map((d, idx) =>
+              idx === 0
+                ? {
+                    ...d,
+                    description: diffBadgeDescription || d.description,
+                    severity: aiOverride.verdict === 'different' ? ('major' as const) : ('minor' as const),
+                    ...(effectiveBox ? { box: effectiveBox } : {}),
+                  }
+                : d
+            )
+          : [
+              {
+                description:
+                  aiOverride.shortCallout ||
+                  (aiOverride.summary && !/pixel/i.test(aiOverride.summary)
+                    ? aiOverride.summary
+                    : resolvedShortCallout),
+                severity: aiOverride.verdict === 'different' ? ('major' as const) : ('minor' as const),
+                ...(effectiveBox ? { box: effectiveBox } : {}),
+              },
+            ];
+
       visualResult = {
         ...visualResult,
         verdict: aiOverride.verdict,
-        summary: aiOverride.summary,
-        pixelDiffPercent:
-          aiOverride.pixelDiffPercent ?? visualResult.pixelDiffPercent,
-        costGate: 'ai-judged',
-        costGateSkippedAi: false,
+        summary: resolvedSummary,
+        affectedArea: resolvedArea,
+        shortCallout: resolvedShortCallout,
+        pixelDiffPercent: effectivePixelDiff,
+        differences: overrideDifferences,
+        costGate:
+          aiOverride.costGate ??
+          (aiOverride.verdict === 'same' && effectivePixelDiff <= 0.1
+            ? 'identical-bytes'
+            : 'ai-judged'),
+        costGateSkippedAi: aiOverride.verdict === 'same' && effectivePixelDiff <= 0.1,
       };
     }
 

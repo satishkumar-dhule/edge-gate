@@ -431,11 +431,15 @@ export function applyRulesToItem(
       : updatedDifferences;
     let newVerdict = updatedVisual.verdict;
     if (updatedVisual.verdict !== 'error') {
-      if (unaccepted.length === 0) {
+      if (isVisualTestAccepted && ignoreAccepted) {
         newVerdict = 'same';
-      } else {
-        const hasMajor = unaccepted.some((d) => d.severity === 'major');
-        newVerdict = hasMajor ? 'different' : 'minor';
+      } else if (updatedDifferences.length > 0) {
+        if (unaccepted.length === 0) {
+          newVerdict = 'same';
+        } else {
+          const hasMajor = unaccepted.some((d) => d.severity === 'major');
+          newVerdict = hasMajor ? 'different' : 'minor';
+        }
       }
     }
 
@@ -443,7 +447,9 @@ export function applyRulesToItem(
       ...updatedVisual,
       differences: updatedDifferences,
       verdict: newVerdict,
-      acceptedRulesAppliedCount: updatedDifferences.filter((d) => d.accepted).length,
+      acceptedRulesAppliedCount:
+        updatedDifferences.filter((d) => d.accepted).length +
+        (isVisualTestAccepted && updatedDifferences.length === 0 ? 1 : 0),
     };
   }
 

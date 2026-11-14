@@ -92,12 +92,12 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
       'Live HTTP Flow, Header, Set-Cookie & AWS Bedrock Nova Lite Visual Verification for salesforce.com',
     defaultDomain: 'salesforce.com',
     defaultOperator: {
-      email: 'user-tcchhlxprfng@salesforce.com',
+      email: 'user-nvaupcuppghi@salesforce.com',
       role: 'Lead Edge Release Engineer',
-      account: 'SFDC-EDGE-735234585484 (AWS 735234585484 · Akamai Prod + Staging)',
+      account: 'SFDC-EDGE-030771555103 (AWS 030771555103 · Akamai Prod + Staging)',
     },
     accountOptions: [
-      'SFDC-EDGE-735234585484 (AWS 735234585484 · Akamai Prod + Staging)',
+      'SFDC-EDGE-030771555103 (AWS 030771555103 · Akamai Prod + Staging)',
       'SFDC-TRAILHEAD-030771555103 (Trailhead & Developer Edge)',
       'SFDC-TRUST-GOV (Salesforce Trust & GovCloud Edge)',
     ],
@@ -130,7 +130,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
       { id: 'eu-west-1', label: 'eu-west-1 (Ireland)' },
       { id: 'ap-northeast-1', label: 'ap-northeast-1 (Tokyo)' },
     ],
-    s3Bucket: 's3://salesforce-akamai-synthetics-735234585484-us-east-1',
+    s3Bucket: 's3://salesforce-akamai-synthetics-030771555103-us-east-1',
     dynamodbTable: 'salesforce-synthetics-gate-state',
     mcpServerEndpoint: '/api/v1/mcp/rpc',
     mcpEndpoint: '/api/v1/mcp/rpc',
@@ -1002,6 +1002,9 @@ export const PROPERTY_TEST_SUITES: Record<string, TestCaseDefinition[]> = {
 
 export interface RegionalEdgeNodeConfig {
   appId: string;
+  popId?: string;
+  popCode?: string;
+  awsRegion?: string;
   regionCode: string;
   regionLabel: string;
   stagingPopCode: string;
@@ -1023,6 +1026,9 @@ export interface RegionalEdgeNodeConfig {
 export const REGIONAL_EDGE_NODES: Record<string, RegionalEdgeNodeConfig> = {
   www: {
     appId: 'www',
+    popId: 'iad',
+    popCode: 'IAD',
+    awsRegion: 'us-east-1',
     regionCode: 'NA-ASHBURN',
     regionLabel: 'Ashburn, Virginia (Akamai IAD Global Edge PoP)',
     stagingPopCode: 'IAD-STG-04',
@@ -1042,8 +1048,35 @@ export const REGIONAL_EDGE_NODES: Record<string, RegionalEdgeNodeConfig> = {
       'prorigin=US1; AKA_A2=US; ak_loc=cc:US,ct:ASHBURN,st:VA; sfdc_locale=en_US',
     proriginCode: 'US1',
   },
+  sfo: {
+    appId: 'sfo',
+    popId: 'sfo',
+    popCode: 'SFO',
+    awsRegion: 'us-west-2',
+    regionCode: 'NA-SANJOSE',
+    regionLabel: 'San Jose, California (Akamai SFO West Coast PoP · us-west-2)',
+    stagingPopCode: 'SJC-STG-02',
+    prodPopCode: 'SJC-PRD-09',
+    stagingEdgeIp: '23.72.140.18',
+    prodEdgeIp: '104.75.210.44',
+    stagingEdgeHost: 'a23-72-140-18.deploy.akamaitechnologies.com',
+    prodEdgeHost: 'a104-75-210-44.deploy.akamaitechnologies.com',
+    acceptLanguage: 'en-US,en;q=0.9',
+    contentLanguage: 'en-US',
+    locale: 'en-US',
+    countryCode: 'US',
+    city: 'SANJOSE',
+    edgescapeHeader:
+      'georegion=263,country_code=US,region_code=CA,city=SANJOSE,lat=37.34,long=-121.89,timezone=PST,continent=NA',
+    regionalCookieHeader:
+      'prorigin=US2; AKA_A2=US; ak_loc=cc:US,ct:SANJOSE,st:CA; sfdc_locale=en_US',
+    proriginCode: 'US2',
+  },
   japan: {
     appId: 'japan',
+    popId: 'nrt',
+    popCode: 'NRT',
+    awsRegion: 'ap-northeast-1',
     regionCode: 'JP-TOKYO',
     regionLabel: 'Tokyo, Japan (Akamai NRT Edge PoP · ap-northeast-1)',
     stagingPopCode: 'NRT-STG-01',
@@ -1065,6 +1098,9 @@ export const REGIONAL_EDGE_NODES: Record<string, RegionalEdgeNodeConfig> = {
   },
   germany: {
     appId: 'germany',
+    popId: 'fra',
+    popCode: 'FRA',
+    awsRegion: 'eu-central-1',
     regionCode: 'DE-FRANKFURT',
     regionLabel: 'Frankfurt, Germany (Akamai FRA Edge PoP · eu-central-1)',
     stagingPopCode: 'FRA-STG-01',
@@ -1086,6 +1122,9 @@ export const REGIONAL_EDGE_NODES: Record<string, RegionalEdgeNodeConfig> = {
   },
   uk: {
     appId: 'uk',
+    popId: 'lhr',
+    popCode: 'LHR',
+    awsRegion: 'eu-west-2',
     regionCode: 'UK-LONDON',
     regionLabel: 'London, United Kingdom (Akamai LHR Edge PoP · eu-west-2)',
     stagingPopCode: 'LHR-STG-02',
@@ -1107,6 +1146,9 @@ export const REGIONAL_EDGE_NODES: Record<string, RegionalEdgeNodeConfig> = {
   },
   apac: {
     appId: 'apac',
+    popId: 'sin',
+    popCode: 'SIN',
+    awsRegion: 'ap-southeast-1',
     regionCode: 'APAC-SINGAPORE',
     regionLabel: 'Singapore / Sydney (Akamai SIN-SYD Edge PoP · ap-southeast-1)',
     stagingPopCode: 'SIN-STG-02',
@@ -1126,8 +1168,35 @@ export const REGIONAL_EDGE_NODES: Record<string, RegionalEdgeNodeConfig> = {
       'prorigin=AP1; AKA_A2=SG; ak_loc=cc:SG,ct:SINGAPORE; sfdc_locale=en_AP',
     proriginCode: 'AP1',
   },
+  syd: {
+    appId: 'syd',
+    popId: 'syd',
+    popCode: 'SYD',
+    awsRegion: 'ap-southeast-2',
+    regionCode: 'APAC-SYDNEY',
+    regionLabel: 'Sydney, Australia (Akamai SYD Edge PoP · ap-southeast-2)',
+    stagingPopCode: 'SYD-STG-01',
+    prodPopCode: 'SYD-PRD-04',
+    stagingEdgeIp: '23.35.98.24',
+    prodEdgeIp: '104.88.42.19',
+    stagingEdgeHost: 'a23-35-98-24.deploy.akamaitechnologies.com',
+    prodEdgeHost: 'a104-88-42-19.deploy.akamaitechnologies.com',
+    acceptLanguage: 'en-AU,en;q=0.9',
+    contentLanguage: 'en-AU',
+    locale: 'en-AU',
+    countryCode: 'AU',
+    city: 'SYDNEY',
+    edgescapeHeader:
+      'georegion=14,country_code=AU,city=SYDNEY,lat=-33.87,long=151.21,timezone=GMT+10,continent=OC',
+    regionalCookieHeader:
+      'prorigin=AU1; AKA_A2=AU; ak_loc=cc:AU,ct:SYDNEY; sfdc_locale=en_AU',
+    proriginCode: 'AU1',
+  },
   emea: {
     appId: 'emea',
+    popId: 'ams',
+    popCode: 'AMS',
+    awsRegion: 'eu-west-1',
     regionCode: 'EMEA-AMSTERDAM',
     regionLabel: 'Amsterdam / Paris / Madrid (Akamai AMS-PAR Edge PoP · eu-west-1)',
     stagingPopCode: 'AMS-STG-03',
@@ -1149,6 +1218,9 @@ export const REGIONAL_EDGE_NODES: Record<string, RegionalEdgeNodeConfig> = {
   },
   americas: {
     appId: 'americas',
+    popId: 'gru',
+    popCode: 'GRU',
+    awsRegion: 'sa-east-1',
     regionCode: 'AMER-SAOPAULO',
     regionLabel: 'São Paulo / Mexico City / Toronto (Akamai GRU-MEX-YYZ Edge PoP · sa-east-1)',
     stagingPopCode: 'GRU-STG-02',
@@ -1169,6 +1241,172 @@ export const REGIONAL_EDGE_NODES: Record<string, RegionalEdgeNodeConfig> = {
     proriginCode: 'LA1',
   },
 };
+
+export interface ExecutionPopOption {
+  id: string;
+  popCode: string;
+  city: string;
+  awsRegion: string;
+  regionGroup: 'GLOBAL' | 'AMER' | 'APAC' | 'EMEA';
+  label: string;
+  stagingEdgeIp: string;
+  prodEdgeIp: string;
+  stagingPopCode: string;
+  prodPopCode: string;
+}
+
+export const GLOBAL_EXECUTION_POPS: ExecutionPopOption[] = [
+  {
+    id: 'iad',
+    popCode: 'IAD',
+    city: 'Ashburn, VA',
+    awsRegion: 'us-east-1',
+    regionGroup: 'AMER',
+    label: 'Ashburn IAD (us-east-1)',
+    stagingEdgeIp: REGIONAL_EDGE_NODES.www.stagingEdgeIp,
+    prodEdgeIp: REGIONAL_EDGE_NODES.www.prodEdgeIp,
+    stagingPopCode: REGIONAL_EDGE_NODES.www.stagingPopCode,
+    prodPopCode: REGIONAL_EDGE_NODES.www.prodPopCode,
+  },
+  {
+    id: 'sfo',
+    popCode: 'SFO',
+    city: 'San Jose, CA',
+    awsRegion: 'us-west-2',
+    regionGroup: 'AMER',
+    label: 'San Jose SFO (us-west-2)',
+    stagingEdgeIp: REGIONAL_EDGE_NODES.sfo.stagingEdgeIp,
+    prodEdgeIp: REGIONAL_EDGE_NODES.sfo.prodEdgeIp,
+    stagingPopCode: REGIONAL_EDGE_NODES.sfo.stagingPopCode,
+    prodPopCode: REGIONAL_EDGE_NODES.sfo.prodPopCode,
+  },
+  {
+    id: 'nrt',
+    popCode: 'NRT',
+    city: 'Tokyo, JP',
+    awsRegion: 'ap-northeast-1',
+    regionGroup: 'APAC',
+    label: 'Tokyo NRT (ap-northeast-1)',
+    stagingEdgeIp: REGIONAL_EDGE_NODES.japan.stagingEdgeIp,
+    prodEdgeIp: REGIONAL_EDGE_NODES.japan.prodEdgeIp,
+    stagingPopCode: REGIONAL_EDGE_NODES.japan.stagingPopCode,
+    prodPopCode: REGIONAL_EDGE_NODES.japan.prodPopCode,
+  },
+  {
+    id: 'sin',
+    popCode: 'SIN',
+    city: 'Singapore, SG',
+    awsRegion: 'ap-southeast-1',
+    regionGroup: 'APAC',
+    label: 'Singapore SIN (ap-southeast-1)',
+    stagingEdgeIp: REGIONAL_EDGE_NODES.apac.stagingEdgeIp,
+    prodEdgeIp: REGIONAL_EDGE_NODES.apac.prodEdgeIp,
+    stagingPopCode: REGIONAL_EDGE_NODES.apac.stagingPopCode,
+    prodPopCode: REGIONAL_EDGE_NODES.apac.prodPopCode,
+  },
+  {
+    id: 'syd',
+    popCode: 'SYD',
+    city: 'Sydney, AU',
+    awsRegion: 'ap-southeast-2',
+    regionGroup: 'APAC',
+    label: 'Sydney SYD (ap-southeast-2)',
+    stagingEdgeIp: REGIONAL_EDGE_NODES.syd.stagingEdgeIp,
+    prodEdgeIp: REGIONAL_EDGE_NODES.syd.prodEdgeIp,
+    stagingPopCode: REGIONAL_EDGE_NODES.syd.stagingPopCode,
+    prodPopCode: REGIONAL_EDGE_NODES.syd.prodPopCode,
+  },
+  {
+    id: 'fra',
+    popCode: 'FRA',
+    city: 'Frankfurt, DE',
+    awsRegion: 'eu-central-1',
+    regionGroup: 'EMEA',
+    label: 'Frankfurt FRA (eu-central-1)',
+    stagingEdgeIp: REGIONAL_EDGE_NODES.germany.stagingEdgeIp,
+    prodEdgeIp: REGIONAL_EDGE_NODES.germany.prodEdgeIp,
+    stagingPopCode: REGIONAL_EDGE_NODES.germany.stagingPopCode,
+    prodPopCode: REGIONAL_EDGE_NODES.germany.prodPopCode,
+  },
+  {
+    id: 'lhr',
+    popCode: 'LHR',
+    city: 'London, UK',
+    awsRegion: 'eu-west-2',
+    regionGroup: 'EMEA',
+    label: 'London LHR (eu-west-2)',
+    stagingEdgeIp: REGIONAL_EDGE_NODES.uk.stagingEdgeIp,
+    prodEdgeIp: REGIONAL_EDGE_NODES.uk.prodEdgeIp,
+    stagingPopCode: REGIONAL_EDGE_NODES.uk.stagingPopCode,
+    prodPopCode: REGIONAL_EDGE_NODES.uk.prodPopCode,
+  },
+  {
+    id: 'ams',
+    popCode: 'AMS',
+    city: 'Amsterdam, NL',
+    awsRegion: 'eu-west-1',
+    regionGroup: 'EMEA',
+    label: 'Amsterdam AMS (eu-west-1)',
+    stagingEdgeIp: REGIONAL_EDGE_NODES.emea.stagingEdgeIp,
+    prodEdgeIp: REGIONAL_EDGE_NODES.emea.prodEdgeIp,
+    stagingPopCode: REGIONAL_EDGE_NODES.emea.stagingPopCode,
+    prodPopCode: REGIONAL_EDGE_NODES.emea.prodPopCode,
+  },
+  {
+    id: 'gru',
+    popCode: 'GRU',
+    city: 'São Paulo / Mexico',
+    awsRegion: 'sa-east-1',
+    regionGroup: 'AMER',
+    label: 'São Paulo GRU (sa-east-1)',
+    stagingEdgeIp: REGIONAL_EDGE_NODES.americas.stagingEdgeIp,
+    prodEdgeIp: REGIONAL_EDGE_NODES.americas.prodEdgeIp,
+    stagingPopCode: REGIONAL_EDGE_NODES.americas.stagingPopCode,
+    prodPopCode: REGIONAL_EDGE_NODES.americas.prodPopCode,
+  },
+];
+
+const POP_ID_ALIAS_MAP: Record<string, keyof typeof REGIONAL_EDGE_NODES> = {
+  iad: 'www',
+  us: 'www',
+  www: 'www',
+  sfo: 'sfo',
+  sjc: 'sfo',
+  nrt: 'japan',
+  jp: 'japan',
+  japan: 'japan',
+  tokyo: 'japan',
+  sin: 'apac',
+  apac: 'apac',
+  sg: 'apac',
+  syd: 'syd',
+  au: 'syd',
+  fra: 'germany',
+  de: 'germany',
+  germany: 'germany',
+  lhr: 'uk',
+  uk: 'uk',
+  gb: 'uk',
+  ams: 'emea',
+  emea: 'emea',
+  nl: 'emea',
+  gru: 'americas',
+  americas: 'americas',
+  br: 'americas',
+};
+
+export function resolveExecutionPopOption(popId?: string): ExecutionPopOption | undefined {
+  if (!popId || popId === 'auto') return undefined;
+  const clean = popId.toLowerCase().trim();
+  const direct = GLOBAL_EXECUTION_POPS.find(
+    (p) => p.id === clean || p.popCode.toLowerCase() === clean
+  );
+  if (direct) return direct;
+  const mappedNodeKey = POP_ID_ALIAS_MAP[clean];
+  if (!mappedNodeKey) return undefined;
+  const node = REGIONAL_EDGE_NODES[mappedNodeKey];
+  return GLOBAL_EXECUTION_POPS.find((p) => p.popCode === node?.popCode);
+}
 
 /**
  * Infers the canonical Salesforce property ID (`japan`, `germany`, `uk`, `apac`, `emea`, `americas`, `www`, `login`, etc.)
@@ -1204,13 +1442,24 @@ export function inferPropertyIdFromUrl(
 /**
  * Resolves the Region-Specific Akamai Edge Node (PoP, Staging/Prod Edge IPs,
  * Accept-Language, Akamai Edgescape Geo Header, and Regional Origin Cookie)
- * for any Salesforce property or URL.
+ * for any Salesforce property, URL, and optional explicit execution PoP override (`nrt`, `fra`, `lhr`, `sin`, `iad`, etc.).
  */
 export function resolveRegionalEdgeNode(
   appId?: string,
-  url?: string
+  url?: string,
+  popOverrideId?: string
 ): RegionalEdgeNodeConfig {
   const resolvedAppId = inferPropertyIdFromUrl(url || '', appId);
+  if (popOverrideId && popOverrideId !== 'auto') {
+    const cleanOverride = popOverrideId.toLowerCase().trim();
+    const mappedNodeKey = POP_ID_ALIAS_MAP[cleanOverride];
+    if (mappedNodeKey && REGIONAL_EDGE_NODES[mappedNodeKey]) {
+      return {
+        ...REGIONAL_EDGE_NODES[mappedNodeKey],
+        appId: resolvedAppId,
+      };
+    }
+  }
   return REGIONAL_EDGE_NODES[resolvedAppId] || REGIONAL_EDGE_NODES.www;
 }
 

@@ -14,6 +14,7 @@
  * ============================================================================
  */
 
+const crypto = require('crypto');
 const synthetics = require('Synthetics');
 const log = require('SyntheticsLogger');
 const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
@@ -114,6 +115,7 @@ exports.handler = async () => {
 
   const runKey = `run-${appId}-${envId}-${network}-${Date.now()}`;
   const startTime = new Date().toISOString();
+  const sideSuffix = network === 'staging' ? 'sideA' : 'sideB';
 
   const s3 = new S3Client({ region });
   const ddb = new DynamoDBClient({ region });
@@ -199,6 +201,80 @@ exports.handler = async () => {
 
       await synthetics.takeScreenshot(check.id, 'loaded');
 
+      const liveScreenshotKey = `live-screenshots/${appId}-${check.id}-${sideSuffix}.jpg`;
+      const portalScreenshotKey = `portal-ui/screenshots/${appId}-${check.id}-${sideSuffix}.jpg`;
+      const runScreenshotKey = `runs/${targetId}/${runKey}/screenshots/${check.id}.jpg`;
+      let screenshotBytes = 0;
+      let screenshotSha256 = '';
+      const screenshotRevision = Date.now();
+      const screenshotCapturedAt = new Date(screenshotRevision).toISOString();
+
+      try {
+        const jpegBuf = await page.screenshot({
+          type: 'jpeg',
+          quality: 84,
+          clip: {
+            x: 0,
+            y: 0,
+            width: Math.min(viewportWidth, 1280),
+            height: Math.min(viewportHeight, 760),
+          },
+        });
+        if (jpegBuf && jpegBuf.length > 0) {
+          screenshotBytes = jpegBuf.length;
+          screenshotSha256 = crypto
+            .createHash('sha256')
+            .update(jpegBuf)
+            .digest('hex')
+            .slice(0, 16);
+          const liveMetadata = {
+            'live-capture': 'true',
+            capturedby: 'aws-cloudwatch-synthetics-canary',
+            capturedat: screenshotCapturedAt,
+            revision: String(screenshotRevision),
+            sha256: screenshotSha256,
+            targetid: targetId,
+            testid: check.id,
+            engine: 'aws-cloudwatch-synthetics-canary',
+          };
+
+          await Promise.all([
+            s3.send(
+              new PutObjectCommand({
+                Bucket: s3Bucket,
+                Key: liveScreenshotKey,
+                Body: jpegBuf,
+                ContentType: 'image/jpeg',
+                CacheControl: 'no-store, no-cache, must-revalidate, max-age=0',
+                Metadata: liveMetadata,
+              })
+            ),
+            s3.send(
+              new PutObjectCommand({
+                Bucket: s3Bucket,
+                Key: portalScreenshotKey,
+                Body: jpegBuf,
+                ContentType: 'image/jpeg',
+                CacheControl: 'no-store, no-cache, must-revalidate, max-age=0',
+                Metadata: liveMetadata,
+              })
+            ),
+            s3.send(
+              new PutObjectCommand({
+                Bucket: s3Bucket,
+                Key: runScreenshotKey,
+                Body: jpegBuf,
+                ContentType: 'image/jpeg',
+                CacheControl: 'no-store, no-cache, must-revalidate, max-age=0',
+                Metadata: liveMetadata,
+              })
+            ),
+          ]);
+        }
+      } catch (shotErr) {
+        log.warn(`[ReleaseGateCanary] JPEG capture failed for ${check.id}: ${shotErr.message}`);
+      }
+
       results.push({
         id: check.id,
         name: check.name,
@@ -216,7 +292,21 @@ exports.handler = async () => {
         capturedCookies,
         stagingEdgeIp: network === 'staging' ? edgeIp : undefined,
         edgeHostname: `${hostname}${process.env.EDGE_HOST_SUFFIX || ''}`,
-        screenshotKey: `runs/${targetId}/${runKey}/${check.id}-loaded.png`,
+        screenshotKey:
+          screenshotBytes > 0
+            ? runScreenshotKey
+            : `runs/${targetId}/${runKey}/${check.id}-loaded.png`,
+        s3ScreenshotKey:
+          screenshotBytes > 0 ? `s3://${s3Bucket}/${portalScreenshotKey}` : undefined,
+        screenshotBytes,
+        screenshotSha256,
+        screenshotRevision,
+        screenshotCapturedAt,
+        screenshotCaptured: screenshotBytes > 0,
+        screenshotUrl:
+          screenshotBytes > 0
+            ? `/api/v1/screenshots/${appId}-${check.id}-${sideSuffix}.jpg?v=${screenshotRevision}`
+            : null,
       });
     } catch (err) {
       const durationMs = Date.now() - startMs;
@@ -236,6 +326,9 @@ exports.handler = async () => {
         capturedCookies: {},
         stagingEdgeIp: network === 'staging' ? edgeIp : undefined,
         edgeHostname: `${hostname}${process.env.EDGE_HOST_SUFFIX || ''}`,
+        screenshotCaptured: false,
+        screenshotBytes: 0,
+        screenshotUrl: null,
       });
     }
   }
@@ -244,9 +337,11 @@ exports.handler = async () => {
   const manifest = {
     key: runKey,
     target: targetId,
+    targetId,
     appId,
     envId,
     network,
+    executionEngine: 'aws-cloudwatch-synthetics-canary',
     suiteKey: process.env.SUITE_S3_KEY || `config/suites/${appId}.json`,
     visualJudgeModel: bedrockModelId,
     startTime,
@@ -269,7 +364,7 @@ exports.handler = async () => {
     })
   );
 
-  // 2. Index Run Summary in DynamoDB for low-latency Control Plane & MCP queries
+  // 2. Index Run Summary + payloadJson in DynamoDB for low-latency Control Plane & MCP queries
   await ddb.send(
     new PutItemCommand({
       TableName: dynamoTable,
@@ -286,6 +381,7 @@ exports.handler = async () => {
         failedTests: { N: String(manifest.failedTests) },
         s3ManifestKey: { S: manifestKey },
         visualJudgeModel: { S: bedrockModelId },
+        payloadJson: { S: JSON.stringify(manifest) },
       },
     })
   );

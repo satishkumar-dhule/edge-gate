@@ -26,7 +26,7 @@ BY ?= user-wbbmbfobdqdu@salesforce.com
 
 .PHONY: all deploy deply deploy-all zero-token-cycle zero-token-watch help install dev build test lint verify verify-bundle \
         tf-init tf-validate tf-plan tf-apply tf-destroy \
-        sync-ui invalidate-cloudfront deploy-cloudfront \
+        sync-ui sync-chromium invalidate-cloudfront deploy-cloudfront \
         run-adhoc compare api-health \
         user-list user-add user-reset-password user-disable user-enable user-delete user-auth user-stats user-audit
 
@@ -117,6 +117,8 @@ verify: test lint build
 	node --check aws-synthetics/canary-har-runner.js
 	node --check aws-lambda/control-plane-handler.js
 	node --check aws-lambda/adhoc-edge-runner.js
+	node --check aws-lambda/chromium-screenshot-runner.js
+	node --check aws-lambda/sparticuz-screenshot-runner.mjs
 	@echo "[VERIFY OK] All unit tests, TypeScript checks, Vite SPA bundle, and AWS Lambda/Canary handlers passed."
 
 # ----------------------------------------------------------------------------
@@ -139,6 +141,9 @@ tf-destroy:
 
 sync-ui:
 	pnpm exec tsx scripts/deploy-aws-portal.ts sync-ui
+
+sync-chromium:
+	pnpm exec tsx scripts/deploy-aws-portal.ts sync-chromium
 
 invalidate-cloudfront:
 	pnpm exec tsx scripts/deploy-aws-portal.ts invalidate-cloudfront

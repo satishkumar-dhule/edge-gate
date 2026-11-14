@@ -7,9 +7,9 @@
 aws_region             = "us-east-1"
 environment            = "prod"
 project_name           = "salesforce-edge-release-gate"
-operator_email         = "user-tcchhlxprfng@salesforce.com"
+operator_email         = "user-nvaupcuppghi@salesforce.com"
 operator_role          = "Lead Edge Release Engineer"
-akamai_account_context = "SFDC-EDGE-735234585484 (AWS 735234585484 · Akamai Prod + Staging)"
+akamai_account_context = "SFDC-EDGE-030771555103 (AWS 030771555103 · Akamai Prod + Staging)"
 
 s3_artifact_bucket                = "salesforce-akamai-synthetics"
 s3_force_destroy                  = true
@@ -73,6 +73,9 @@ control_plane_lambda_memory_mb       = 512
 control_plane_lambda_timeout_seconds = 30
 adhoc_runner_lambda_memory_mb        = 1024
 adhoc_runner_lambda_timeout_seconds  = 60
+enable_sparticuz_chromium_lambda     = true
+enable_chromium_screenshot_lambda    = false
+chromium_runner_image_uri            = ""
 enable_lambda_function_url           = true
 enable_apigateway_http_api           = true
 deploy_cloudfront_distribution       = true

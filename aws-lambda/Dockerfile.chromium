@@ -1,0 +1,23 @@
+# ============================================================================
+# AWS LAMBDA CONTAINER IMAGE: PLAYWRIGHT HEADLESS CHROMIUM SCREENSHOT RUNNER
+# ============================================================================
+# Build & push to ECR to enable real on-demand 1280x760 browser screenshots
+# in Scale-to-Zero AWS Lambda when CloudWatch Synthetics Canaries are blocked:
+#   docker build -f aws-lambda/Dockerfile.chromium -t chromium-screenshot-runner .
+#   # Push to ECR and set TF var:
+#   #   enable_chromium_screenshot_lambda = true
+#   #   chromium_runner_image_uri = "<account>.dkr.ecr.us-east-1.amazonaws.com/..."
+# ============================================================================
+
+FROM mcr.microsoft.com/playwright:v1.50.0-noble
+
+WORKDIR /var/task
+
+RUN npm init -y && \
+    npm install --omit=dev aws-lambda-ric @aws-sdk/client-s3 playwright-core
+
+COPY aws-lambda/chromium-screenshot-runner.js /var/task/index.js
+
+ENV NODE_ENV=production
+ENTRYPOINT ["/usr/bin/npx", "aws-lambda-ric"]
+CMD ["index.handler"]

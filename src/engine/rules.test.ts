@@ -1403,4 +1403,1083 @@ test('workspaceServer lists workspace tree, reads/writes scoped files safely, an
   }
 });
 
+// ---------------------------------------------------------------------------
+// 17. Scalable View Engine (50+ Regional PoPs & 64+ Suite Checks)
+// ---------------------------------------------------------------------------
+import {
+  buildScaledTestSuite,
+  classifyPropertyRegion,
+  filterAndPaginateDiffItems,
+  filterAndPaginateFleet,
+  filterAndPaginateSuiteStats,
+  FleetPropertyVerdictSummary,
+  SuiteCheckStatRow,
+} from './scalableViewEngine';
+
+test('scalableViewEngine classifies Regional PoPs, Global Core, and Enterprise Scale properties accurately', () => {
+  const jp = classifyPropertyRegion('japan');
+  assert.equal(jp.regionCode, 'APAC');
+  assert.equal(jp.cohort, 'regional-pop');
+  assert.equal(jp.popCode, 'NRT');
+
+  const de = classifyPropertyRegion('germany');
+  assert.equal(de.regionCode, 'EMEA');
+  assert.equal(de.popCode, 'FRA');
+
+  const us = classifyPropertyRegion('americas');
+  assert.equal(us.regionCode, 'AMER');
+  assert.equal(us.popCode, 'IAD');
+
+  const core = classifyPropertyRegion('www');
+  assert.equal(core.regionCode, 'GLOBAL');
+  assert.equal(core.cohort, 'global-core');
+  assert.equal(core.popCode, 'ANY');
+
+  const synthetic = classifyPropertyRegion('shard-edge-042');
+  assert.equal(synthetic.cohort, 'enterprise-scale');
+  assert.ok(['APAC', 'EMEA', 'AMER', 'GLOBAL'].includes(synthetic.regionCode));
+});
+
+test('filterAndPaginateFleet handles 50 properties with region/verdict filters, www priority pinning, and pagination', () => {
+  const scaled = generateEnterpriseScaleTopology(50);
+  const verdictMap: Record<string, FleetPropertyVerdictSummary> = {};
+  scaled.apps.forEach((app, idx) => {
+    const verdict = idx % 5 === 0 ? 'NO-GO' : idx % 3 === 0 ? 'REVIEW' : 'GO';
+    verdictMap[app.id] = {
+      verdict,
+      funcFails: verdict === 'NO-GO' ? 2 : 0,
+      cookieDiffs: verdict === 'NO-GO' ? 1 : 0,
+      visDiffs: verdict === 'REVIEW' ? 1 : 0,
+      stgTarget: `${app.id}.prod.staging`,
+      prdTarget: `${app.id}.prod.prod`,
+    };
+  });
+
+  // Page 1 at 15/pg always includes 'www' and activeAppId on page 1
+  const page1 = filterAndPaginateFleet(scaled.apps, verdictMap, {
+    activeAppId: 'japan',
+    page: 1,
+    pageSize: 15,
+  });
+  assert.equal(page1.totalItems, 50);
+  assert.equal(page1.totalPages, 4);
+  assert.equal(page1.items.length, 15);
+  assert.equal(page1.items[0].app.id, 'japan');
+  assert.ok(page1.items.some((item) => item.app.id === 'www'));
+  assert.equal(
+    page1.countsByRegion.APAC +
+      page1.countsByRegion.EMEA +
+      page1.countsByRegion.AMER +
+      page1.countsByRegion.GLOBAL,
+    50
+  );
+
+  // Region + verdict filter narrows down cleanly
+  const emeaNoGo = filterAndPaginateFleet(scaled.apps, verdictMap, {
+    region: 'EMEA',
+    verdict: 'NO-GO',
+    page: 1,
+    pageSize: 15,
+  });
+  assert.ok(emeaNoGo.allFiltered.every((item) => item.meta.regionCode === 'EMEA'));
+  assert.ok(emeaNoGo.allFiltered.every((item) => item.summary.verdict === 'NO-GO'));
+
+  // Page 4 returns remaining 5 items (50 = 15 + 15 + 15 + 5)
+  const page4 = filterAndPaginateFleet(scaled.apps, verdictMap, {
+    page: 4,
+    pageSize: 15,
+  });
+  assert.equal(page4.currentPage, 4);
+  assert.equal(page4.items.length, 5);
+});
+
+test('buildScaledTestSuite expands 8 base checks to 64 checks and powers Diff Inspector & Test Suites filtering/pagination', () => {
+  const baseSuite = getPropertyTestSuite('www');
+  assert.equal(baseSuite.length, 8);
+
+  const scaledSuite = buildScaledTestSuite(baseSuite, 64);
+  assert.equal(scaledSuite.length, 64);
+  assert.equal(scaledSuite[0].id, 'T01');
+  assert.equal(scaledSuite[63].id, 'T64');
+  assert.ok(scaledSuite[63].path.startsWith('/'));
+
+  // Build synthetic ComparisonItem[] & SuiteCheckStatRow[] across 64 checks
+  const diffItems: ComparisonItem[] = scaledSuite.map((tc, i) => {
+    const fullUrl = tc.path.startsWith('http') ? tc.path : `https://www.salesforce.com${tc.path}`;
+    return {
+      testId: tc.id,
+      testName: tc.name,
+      url: fullUrl,
+      candidateResult: {
+        id: tc.id,
+        name: tc.name,
+        url: fullUrl,
+        canonicalUrl: fullUrl,
+        pass: true,
+        errors: [],
+        expectedStatus: tc.expectedStatus,
+        actualStatus: Number(tc.expectedStatus) || 200,
+        durationMs: 40 + (i % 10) * 15,
+        capturedHeaders: {
+          'x-check-cacheable': i % 9 === 0 ? 'NO' : 'YES',
+          'cache-control': 'public, max-age=1800',
+        },
+        redirectChain:
+          i % 4 === 0
+            ? [
+                { method: 'GET', url: fullUrl, status: 301, startOffsetMs: 0, durationMs: 25 },
+                { method: 'GET', url: `${fullUrl}/`, status: 200, startOffsetMs: 25, durationMs: 35 },
+              ]
+            : [{ method: 'GET', url: fullUrl, status: 200, startOffsetMs: 0, durationMs: 40 }],
+      },
+      functionalDiffs: [],
+      itemVerdict: i === 0 || i === 12 ? 'different' : i === 2 ? 'minor' : 'same',
+    };
+  });
+
+  const diffResult = filterAndPaginateDiffItems(
+    diffItems,
+    {
+      getUnacceptedHeaderCount: (it) => (it.testId === 'T01' || it.testId === 'T13' ? 1 : 0),
+      getUnacceptedCookieCount: (it) => (it.testId === 'T02' ? 2 : 0),
+      hasActiveVisualDiff: (it) => it.testId === 'T03',
+    },
+    {
+      dimension: 'all',
+      selectedTestId: 'T02',
+      page: 2,
+      pageSize: 12,
+    }
+  );
+  assert.equal(diffResult.totalItems, 64);
+  assert.equal(diffResult.totalPages, 6);
+  assert.equal(diffResult.currentPage, 2);
+  assert.equal(diffResult.items.length, 12);
+  assert.equal(diffResult.facetCounts.headers, 2);
+  assert.equal(diffResult.facetCounts.cookies, 1);
+  assert.equal(diffResult.facetCounts.visual, 1);
+  assert.equal(diffResult.prevTestId, 'T01');
+  assert.equal(diffResult.nextTestId, 'T03');
+
+  const suiteRows: SuiteCheckStatRow[] = scaledSuite.map((tc, i) => ({
+    tc,
+    avgStg: 60 + i,
+    avgPrd: 50 + (i % 5),
+    minMs: 40,
+    maxMs: 120 + i,
+    stgCacheable: i % 9 === 0 ? 'NO' : 'YES',
+    prdCacheable: 'YES',
+    stgCacheStatus: i % 9 === 0 ? 'TCP_MISS' : 'TCP_HIT',
+    prdCacheStatus: 'TCP_HIT',
+    diffInfo: {
+      hDiffs: i === 0 ? 2 : 0,
+      cDiffs: i === 1 ? 1 : 0,
+      vDiff: i === 2,
+      hasAny: i <= 2,
+    },
+  }));
+
+  const suiteRes = filterAndPaginateSuiteStats(suiteRows, {
+    facet: 'drift',
+    sortBy: 'delta-desc',
+    page: 1,
+    pageSize: 12,
+  });
+  assert.ok(suiteRes.facetCounts.drift >= 3);
+  assert.ok(suiteRes.facetCounts['cache-anomaly'] >= 1);
+  assert.ok(suiteRes.items.length <= 12);
+});
+
+// ---------------------------------------------------------------------------
+// 18. Cross-PoP & Cross-Suite Execution Matrix ("Any Suite from Any PoP")
+// ---------------------------------------------------------------------------
+import {
+  GLOBAL_EXECUTION_POPS,
+  resolveExecutionPopOption,
+} from '../config/template.config';
+
+test('GLOBAL_EXECUTION_POPS exposes 9 global PoPs and resolves PoP overrides onto any property', () => {
+  assert.equal(GLOBAL_EXECUTION_POPS.length, 9);
+  assert.equal(resolveExecutionPopOption('auto'), undefined);
+
+  const nrt = resolveExecutionPopOption('nrt');
+  assert.ok(nrt);
+  assert.equal(nrt.popCode, 'NRT');
+  assert.equal(nrt.awsRegion, 'ap-northeast-1');
+
+  // Running www from Tokyo (nrt) keeps appId='www' while routing headers/IPs through NRT PoP
+  const wwwFromTokyo = resolveRegionalEdgeNode('www', 'https://www.salesforce.com/', 'nrt');
+  assert.equal(wwwFromTokyo.appId, 'www');
+  assert.equal(wwwFromTokyo.popCode, 'NRT');
+  assert.equal(wwwFromTokyo.stagingEdgeIp, '23.54.18.92');
+  assert.match(wwwFromTokyo.edgescapeHeader, /country_code=JP/);
+  assert.match(wwwFromTokyo.stagingPopCode, /NRT/);
+
+  // Running japan from London (lhr) routes through UK/LHR PoP
+  const japanFromLondon = resolveRegionalEdgeNode('japan', 'https://www.salesforce.com/jp/', 'lhr');
+  assert.equal(japanFromLondon.appId, 'japan');
+  assert.equal(japanFromLondon.popCode, 'LHR');
+  assert.match(japanFromLondon.edgescapeHeader, /country_code=GB/);
+});
+
+test('generateTestResults stamps explicit popOverrideId edge headers across cross-suite targets', () => {
+  const loginSuite = getPropertyTestSuite('login');
+  assert.ok(loginSuite.length >= 4);
+
+  const results = generateTestResults(
+    'www.prod.staging',
+    'normal_staging',
+    loginSuite,
+    DEFAULT_TEMPLATE_CONFIG,
+    'fra'
+  );
+  assert.equal(results.length, loginSuite.length);
+  const first = results[0];
+  assert.ok(first.httpFlowSummary);
+  assert.equal(first.httpFlowSummary.executionPopId, 'fra');
+  assert.equal(first.httpFlowSummary.executionPopCode, 'FRA');
+  assert.match(first.capturedHeaders['x-sfdc-edge-pop'] || '', /FRA/);
+  assert.match(first.capturedHeaders['x-akamai-edgescape'] || '', /country_code=DE/);
+  assert.equal(first.redirectChain[0]?.edgeIp, '2.16.106.34');
+});
+
+// ---------------------------------------------------------------------------
+// 19. Keyboard Shortcuts, Chords & Command Palette Fuzzy Engine
+// ---------------------------------------------------------------------------
+import {
+  CommandPaletteItem,
+  SHORTCUT_DEFINITIONS,
+  VIEW_CHORD_MAP,
+  filterCommandItems,
+  isEditableTarget,
+  resolveKeyboardAction,
+} from './shortcuts';
+
+test('isEditableTarget protects inputs, selects, contentEditable, and Monaco editor from shortcut hijacking', () => {
+  assert.equal(isEditableTarget(null), false);
+  assert.equal(isEditableTarget({ tagName: 'DIV' }), false);
+  assert.equal(isEditableTarget({ tagName: 'BUTTON' }), false);
+  assert.equal(isEditableTarget({ tagName: 'INPUT' }), true);
+  assert.equal(isEditableTarget({ tagName: 'TEXTAREA' }), true);
+  assert.equal(isEditableTarget({ tagName: 'SELECT' }), true);
+  assert.equal(isEditableTarget({ tagName: 'DIV', isContentEditable: true }), true);
+  assert.equal(
+    isEditableTarget({
+      tagName: 'DIV',
+      getAttribute: (k) => (k === 'contenteditable' ? 'true' : null),
+    }),
+    true
+  );
+  assert.equal(
+    isEditableTarget({
+      tagName: 'TEXTAREA',
+      closest: () => ({}),
+    }),
+    true
+  );
+  assert.equal(
+    isEditableTarget({
+      tagName: 'DIV',
+      closest: (sel) => (sel === '.monaco-editor' ? {} : null),
+    }),
+    true
+  );
+});
+
+test('resolveKeyboardAction handles global shortcuts, G navigation chords, inspector context, and modal guards', () => {
+  assert.ok(SHORTCUT_DEFINITIONS.length >= 18);
+  assert.equal(VIEW_CHORD_MAP.s, 'suites');
+
+  // Unauthenticated skips everything
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: '?', isAuthenticated: false } as unknown as { key: string },
+      { viewMode: 'property', pendingChord: null, hasOpenModal: false, isAuthenticated: false }
+    ),
+    { type: 'noop' }
+  );
+
+  // Cmd+K / Ctrl+K toggles Command Palette globally except inside Monaco
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 'k', metaKey: true },
+      { viewMode: 'property', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'toggle-command-palette' }
+  );
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 'k', ctrlKey: true, target: { tagName: 'DIV', closest: (s) => (s === '.monaco-editor' ? {} : null) } },
+      { viewMode: 'terminal', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'noop' }
+  );
+
+  // Typing inside input ignores single-key shortcuts, except Escape
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 'g', target: { tagName: 'INPUT' } },
+      { viewMode: 'property', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'noop' }
+  );
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 'Escape', target: { tagName: 'INPUT' } },
+      { viewMode: 'property', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'escape' }
+  );
+
+  // Start chord 'g' then resolve 'g s' -> suites
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 'g' },
+      { viewMode: 'property', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'start-chord', chord: 'g' }
+  );
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 's' },
+      { viewMode: 'property', pendingChord: 'g', hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'navigate', viewMode: 'suites' }
+  );
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 'z' },
+      { viewMode: 'property', pendingChord: 'g', hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'clear-chord' }
+  );
+
+  // Global quick actions: /, p, x, t, ?
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: '/' },
+      { viewMode: 'suites', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'focus-search' }
+  );
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 'x' },
+      { viewMode: 'property', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'open-suite-pop-launcher' }
+  );
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 'p' },
+      { viewMode: 'property', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'open-property-switcher' }
+  );
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 't' },
+      { viewMode: 'property', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'toggle-theme' }
+  );
+
+  // Diff inspector contextual navigation & tabs
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 'j' },
+      { viewMode: 'diff', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'step-check', delta: 1 }
+  );
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 'k' },
+      { viewMode: 'diff', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'step-check', delta: -1 }
+  );
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: '4' },
+      { viewMode: 'diff', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'switch-inspector-tab', tab: 'image' }
+  );
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 'f' },
+      { viewMode: 'diff', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'toggle-diffs-only' }
+  );
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 'c' },
+      { viewMode: 'diff', pendingChord: null, hasOpenModal: false, isAuthenticated: true }
+    ),
+    { type: 'copy-curl' }
+  );
+
+  // Modal open blocks background shortcuts while still letting '?' toggle help and 'Escape' close
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: 'x' },
+      { viewMode: 'diff', pendingChord: null, hasOpenModal: true, isAuthenticated: true }
+    ),
+    { type: 'noop' }
+  );
+  assert.deepEqual(
+    resolveKeyboardAction(
+      { key: '?' },
+      { viewMode: 'diff', pendingChord: null, hasOpenModal: true, isAuthenticated: true }
+    ),
+    { type: 'toggle-shortcuts-help' }
+  );
+});
+
+test('filterCommandItems ranks exact and prefix matches across actions, views, and PoPs', () => {
+  const noop = () => {};
+  const items: CommandPaletteItem[] = [
+    { id: 'v1', group: 'Views', label: 'Diff Inspector', subtitle: 'HTTP/Header diff', onSelect: noop },
+    { id: 'p1', group: 'Execution PoPs', label: 'Tokyo NRT', badge: 'NRT', subtitle: 'ap-northeast-1', onSelect: noop },
+    { id: 'a1', group: 'Actions', label: 'Launch Suite @ Any PoP', keywords: 'cross pop suite nrt', onSelect: noop },
+    { id: 's1', group: 'Suite Checks', label: 'T01 Home', subtitle: '/ Tokyo mirror', onSelect: noop },
+  ];
+
+  const nrtHits = filterCommandItems(items, 'nrt');
+  assert.equal(nrtHits[0].id, 'p1');
+  assert.ok(nrtHits.some((h) => h.id === 'a1'));
+
+  const multiTokenHits = filterCommandItems(items, 'launch tokyo');
+  assert.equal(multiTokenHits.length, 0);
+
+  const suitePopHits = filterCommandItems(items, 'launch pop');
+  assert.equal(suitePopHits[0].id, 'a1');
+});
+
+import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
+import { resolveApiScreenshotUrl } from './domScreenshotRenderer';
+import {
+  DEFAULT_S3_SYNC_CONCURRENCY,
+  DEFAULT_S3_SYNC_MAX_ATTEMPTS,
+  uploadFilesWithRetryPool,
+  verifyCompiledSpaBundle,
+} from '../../scripts/deploy-aws-portal';
+
+test('AWS Terraform IAM & S3 MIME mappings support on-demand Canary screenshot capture and JPEG serving', () => {
+  const tfMain = fs.readFileSync(path.resolve(process.cwd(), 'infra/terraform/main.tf'), 'utf8');
+  assert.ok(tfMain.includes('"synthetics:StartCanary"'), 'Terraform IAM must grant synthetics:StartCanary');
+  assert.ok(tfMain.includes('"synthetics:GetCanary"'), 'Terraform IAM must grant synthetics:GetCanary');
+  assert.ok(tfMain.includes('SYNTHETICS_CANARY_PREFIX'), 'Lambda env should configure SYNTHETICS_CANARY_PREFIX');
+
+  const blueprintTf = generateTerraformBundle(DEFAULT_TEMPLATE_CONFIG);
+  assert.ok(blueprintTf.mainTf.includes('".jpg"  = "image/jpeg"'), 'awsBlueprint must map .jpg to image/jpeg');
+  assert.ok(blueprintTf.mainTf.includes('".jpeg" = "image/jpeg"'), 'awsBlueprint must map .jpeg to image/jpeg');
+  assert.ok(
+    blueprintTf.mainTf.includes('CloudWatchSyntheticsOnDemandTrigger') || tfMain.includes('CloudWatchSyntheticsOnDemandTrigger'),
+    'IAM policy must include on-demand Synthetics trigger statement'
+  );
+});
+
+test('AWS Synthetics Canary script captures unmodified 1280x760 JPEG screenshots and writes S3 + DynamoDB payloadJson', () => {
+  const canaryScript = fs.readFileSync(
+    path.resolve(process.cwd(), 'aws-synthetics/canary-har-runner.js'),
+    'utf8'
+  );
+  assert.ok(canaryScript.includes('page.screenshot('), 'Canary runner must invoke Chromium page.screenshot');
+  assert.ok(canaryScript.includes("type: 'jpeg'"), 'Canary runner must capture JPEG images');
+  assert.ok(canaryScript.includes('portal-ui/screenshots/${appId}-${check.id}-${sideSuffix}.jpg'), 'Canary must upload directly to portal-ui/screenshots/');
+  assert.ok(canaryScript.includes('screenshotCaptured: screenshotBytes > 0'), 'Canary must derive screenshotCaptured honestly from byte count');
+  assert.ok(canaryScript.includes('payloadJson: { S: JSON.stringify(manifest) }'), 'Canary must persist payloadJson in DynamoDB');
+});
+
+test('AWS Lambda control-plane-handler proxies screenshots without HTML fallback and never fakes screenshotCaptured', () => {
+  const lambdaCode = fs.readFileSync(
+    path.resolve(process.cwd(), 'aws-lambda/control-plane-handler.js'),
+    'utf8'
+  );
+  assert.ok(lambdaCode.includes("rawPath.startsWith('/api/v1/screenshots/')"), 'Lambda must expose /api/v1/screenshots/:filename');
+  assert.ok(lambdaCode.includes('function deriveCanaryName(targetId)'), 'Lambda must derive Canary names matching Terraform');
+  assert.ok(lambdaCode.includes('const screenshotCaptured = screenshotBytes > 0;'), 'Lambda must compute screenshotCaptured from actual S3 bytes');
+  assert.ok(!/screenshotCaptured:\s*true\b/.test(lambdaCode), 'Lambda must NEVER hardcode screenshotCaptured: true');
+  assert.ok(!/captured:\s*true\b/.test(lambdaCode), 'Lambda must NEVER hardcode captured: true');
+});
+
+test('resolveApiScreenshotUrl formats canonical /api/v1/screenshots path', () => {
+  const url = resolveApiScreenshotUrl({ appId: 'www', testId: 'T01', side: 'A', revision: 1700000000000 });
+  assert.equal(url, '/api/v1/screenshots/www-T01-sideA.jpg?v=live5&r=1700000000000');
+  const urlB = resolveApiScreenshotUrl({ appId: 'developer', testId: 't04', side: 'B' });
+  assert.equal(urlB, '/api/v1/screenshots/developer-T04-sideB.jpg?v=live5');
+});
+
+test('uploadFilesWithRetryPool retries transient S3 upload failures with bounded concurrency and counts failures accurately', async () => {
+  assert.equal(DEFAULT_S3_SYNC_CONCURRENCY, 12);
+  assert.equal(DEFAULT_S3_SYNC_MAX_ATTEMPTS, 3);
+
+  const attempts = new Map<string, number>();
+  let inFlight = 0;
+  let maxObservedInFlight = 0;
+
+  const res = await uploadFilesWithRetryPool({
+    items: ['a.js', 'b.css', 'c.jpg', 'd.jpg', 'always-fail.png'],
+    concurrency: 2,
+    maxAttempts: 3,
+    retryDelayMs: 1,
+    worker: async (item) => {
+      inFlight++;
+      if (inFlight > maxObservedInFlight) maxObservedInFlight = inFlight;
+      await new Promise((r) => setTimeout(r, 2));
+      inFlight--;
+
+      const n = (attempts.get(item) || 0) + 1;
+      attempts.set(item, n);
+
+      if (item === 'c.jpg' && n < 3) {
+        return { ok: false, status: 503, message: 'SlowDown' };
+      }
+      if (item === 'always-fail.png') {
+        return { ok: false, status: 500, message: 'Persistent failure' };
+      }
+      return { ok: true, status: 200 };
+    },
+  });
+
+  assert.ok(maxObservedInFlight <= 2, `Concurrency exceeded bound: ${maxObservedInFlight}`);
+  assert.equal(res.uploadedCount, 4);
+  assert.equal(res.failedCount, 1);
+  assert.equal(attempts.get('c.jpg'), 3);
+  assert.equal(attempts.get('always-fail.png'), 3);
+  assert.equal(res.errors.length, 1);
+  assert.ok(res.errors[0].includes('500'));
+});
+
+test('CloudFront distribution uses default_root_object without custom_error_response HTML interception or SCP-blocked CloudFront Functions', () => {
+  const tfMain = fs.readFileSync(path.resolve(process.cwd(), 'infra/terraform/main.tf'), 'utf8');
+  assert.ok(
+    tfMain.includes('default_root_object = "index.html"'),
+    'main.tf must configure default_root_object = "index.html"'
+  );
+  assert.ok(
+    !tfMain.includes('aws_cloudfront_function'),
+    'main.tf must NOT provision aws_cloudfront_function when SCPs deny cloudfront:PublishFunction'
+  );
+  assert.ok(
+    !tfMain.includes('custom_error_response'),
+    'main.tf must NOT use distribution-wide custom_error_response that turns /api/* 404s into 200 HTML'
+  );
+
+  const blueprintTf = generateTerraformBundle(DEFAULT_TEMPLATE_CONFIG);
+  assert.ok(
+    blueprintTf.mainTf.includes('default_root_object = "index.html"') &&
+      !blueprintTf.mainTf.includes('aws_cloudfront_function') &&
+      !blueprintTf.mainTf.includes('custom_error_response'),
+    'awsBlueprint must also avoid CloudFront Functions and custom_error_response'
+  );
+});
+
+test('AWS Lambda control-plane never re-uploads stale S3 screenshots over themselves and exposes honest provenance & canary status', () => {
+  const lambdaCode = fs.readFileSync(
+    path.resolve(process.cwd(), 'aws-lambda/control-plane-handler.js'),
+    'utf8'
+  );
+  assert.ok(
+    lambdaCode.includes("rawPath === '/api/v1/canary/status'"),
+    'Control plane must expose GET /api/v1/canary/status'
+  );
+  assert.ok(
+    lambdaCode.includes('CHROMIUM_RUNNER_LAMBDA_NAME'),
+    'Control plane must support optional synchronous CHROMIUM_RUNNER_LAMBDA_NAME'
+  );
+  assert.ok(
+    lambdaCode.includes('no-store, no-cache, must-revalidate'),
+    'Screenshot responses must set Cache-Control no-store, no-cache, must-revalidate'
+  );
+  assert.ok(
+    lambdaCode.includes('cachedScreenshotUrl'),
+    'Control plane must expose cachedScreenshotUrl distinctly from fresh live capture'
+  );
+  assert.ok(
+    lambdaCode.includes('screenshotSource'),
+    'Control plane must report screenshotSource provenance'
+  );
+  assert.ok(
+    !lambdaCode.includes('Non-fatal re-stamp write'),
+    'Control plane must NOT copy stale S3 screenshots back onto portal-ui/screenshots/*'
+  );
+});
+
+test('AWS Chromium Screenshot Lambda container handler, Terraform config, and app Dockerfile support real browser captures', () => {
+  const runnerPath = path.resolve(process.cwd(), 'aws-lambda/chromium-screenshot-runner.js');
+  const dockerfileLambdaPath = path.resolve(process.cwd(), 'aws-lambda/Dockerfile.chromium');
+  assert.ok(fs.existsSync(runnerPath), 'aws-lambda/chromium-screenshot-runner.js must exist');
+  assert.ok(fs.existsSync(dockerfileLambdaPath), 'aws-lambda/Dockerfile.chromium must exist');
+
+  const runnerCode = fs.readFileSync(runnerPath, 'utf8');
+  assert.ok(runnerCode.includes('playwright-core'), 'Chromium Lambda must use playwright-core');
+  assert.ok(runnerCode.includes('--host-resolver-rules=MAP'), 'Chromium Lambda must support Akamai edge IP pinning');
+  assert.ok(runnerCode.includes('const isCaptured = screenshotBytes > 0;'), 'Chromium Lambda must compute captured from real bytes');
+
+  const tfVars = fs.readFileSync(path.resolve(process.cwd(), 'infra/terraform/variables.tf'), 'utf8');
+  const tfMain = fs.readFileSync(path.resolve(process.cwd(), 'infra/terraform/main.tf'), 'utf8');
+  assert.ok(tfVars.includes('enable_chromium_screenshot_lambda'), 'variables.tf must expose enable_chromium_screenshot_lambda');
+  assert.ok(tfMain.includes('aws_lambda_function" "chromium_screenshot_runner"'), 'main.tf must define chromium_screenshot_runner Lambda');
+
+  const appDockerfile = fs.readFileSync(path.resolve(process.cwd(), 'Dockerfile'), 'utf8');
+  assert.ok(appDockerfile.includes('playwright install chromium'), 'Dockerfile must install Chromium for container deployments');
+});
+
+test('Zero-Docker Sparticuz Chromium ZIP Lambda bundles cleanly, avoids CloudWatch Synthetics, and auto-wires CHROMIUM_RUNNER_LAMBDA_NAME', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+
+  const runnerPath = path.resolve(process.cwd(), 'aws-lambda/sparticuz-screenshot-runner.mjs');
+  assert.ok(fs.existsSync(runnerPath), 'aws-lambda/sparticuz-screenshot-runner.mjs must exist');
+
+  const runnerCode = fs.readFileSync(runnerPath, 'utf8');
+  assert.ok(runnerCode.includes('@sparticuz/chromium-min'), 'Must use @sparticuz/chromium-min');
+  assert.ok(runnerCode.includes('puppeteer-core'), 'Must use puppeteer-core');
+  assert.ok(
+    runnerCode.includes('await puppeteer.defaultArgs('),
+    'Must await puppeteer.defaultArgs() for puppeteer-core v25+ Promise return'
+  );
+  assert.ok(runnerCode.includes('CHROMIUM_PACK_S3_PREFIX'), 'Must read Brotli pack from private S3 bucket');
+  assert.ok(runnerCode.includes('--host-resolver-rules=MAP'), 'Must support Akamai Edge IP pinning');
+  assert.ok(runnerCode.includes('const isCaptured = screenshotBytes > 0;'), 'Must never fabricate captured: true');
+
+  const tfMain = fs.readFileSync(path.resolve(process.cwd(), 'infra/terraform/main.tf'), 'utf8');
+  assert.ok(
+    tfMain.includes('resource "aws_lambda_function" "sparticuz_chromium_runner"'),
+    'main.tf must define aws_lambda_function.sparticuz_chromium_runner'
+  );
+  assert.ok(
+    tfMain.includes('runtime          = "nodejs22.x"') && tfMain.includes('architectures    = ["x86_64"]'),
+    'sparticuz_chromium_runner must target nodejs22.x on x86_64'
+  );
+  assert.ok(
+    tfMain.includes('aws_lambda_function.sparticuz_chromium_runner[0].function_name'),
+    'control_plane_api must auto-wire CHROMIUM_RUNNER_LAMBDA_NAME to sparticuz_chromium_runner'
+  );
+
+  const controlPlaneCode = fs.readFileSync(
+    path.resolve(process.cwd(), 'aws-lambda/control-plane-handler.js'),
+    'utf8'
+  );
+  assert.ok(
+    controlPlaneCode.includes('Promise.all([chromiumPromise, adhocPromise])'),
+    'control-plane-handler must invoke Chromium Lambda and Ad-Hoc HTTP Lambda in parallel'
+  );
+
+  const tfVars = fs.readFileSync(path.resolve(process.cwd(), 'infra/terraform/variables.tf'), 'utf8');
+  assert.ok(
+    tfVars.includes('enable_sparticuz_chromium_lambda'),
+    'variables.tf must expose enable_sparticuz_chromium_lambda'
+  );
+
+  const blueprintTf = generateTerraformBundle(DEFAULT_TEMPLATE_CONFIG);
+  assert.ok(
+    blueprintTf.mainTf.includes('resource "aws_lambda_function" "sparticuz_chromium_runner"'),
+    'awsBlueprint must include sparticuz_chromium_runner'
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 20. Google SRE Core Web Vitals, Apdex, SLO & Root-Cause Diagnosis Engine
+// ---------------------------------------------------------------------------
+import {
+  computeCheckWebVitals,
+  computeSuiteSreSummary,
+  diagnoseCheckRootCause,
+  evaluateCwvRating,
+} from './sreIntelligence';
+
+test('evaluateCwvRating classifies Core Web Vitals according to Google Web Vitals thresholds', () => {
+  assert.equal(evaluateCwvRating(1800, 90, 0.04), 'GOOD');
+  assert.equal(evaluateCwvRating(2900, 120, 0.05), 'NEEDS_IMPROVEMENT');
+  assert.equal(evaluateCwvRating(1900, 260, 0.05), 'NEEDS_IMPROVEMENT');
+  assert.equal(evaluateCwvRating(1900, 110, 0.15), 'NEEDS_IMPROVEMENT');
+  assert.equal(evaluateCwvRating(4300, 110, 0.05), 'POOR');
+  assert.equal(evaluateCwvRating(2100, 560, 0.05), 'POOR');
+  assert.equal(evaluateCwvRating(2100, 110, 0.31), 'POOR');
+});
+
+test('diagnoseCheckRootCause pinpoints cache regression, cookie drift, status failure, and healthy states with remediation snippets', () => {
+  const runs = seedRunsFromConfig();
+  const stgRun = runs.find((r) => r.key === 'run-www-prod-staging-1')!;
+  const prdRun = runs.find((r) => r.key === 'run-www-prod-prod-1')!;
+  const comp = buildInitialComparison(stgRun, prdRun, 'network', []);
+
+  const summary = computeSuiteSreSummary(comp.items);
+  assert.equal(summary.diagnoses.length, comp.items.length);
+  assert.ok(summary.blockerDiagnoses.length >= 1, 'staging_fail vs normal_prod must produce P0 blocker diagnoses');
+  assert.equal(summary.releaseRiskTier, 'CRITICAL');
+  assert.ok(summary.sloBurnRateMultiplier > 1.0);
+  assert.ok(summary.p95CandidateMs > 0);
+  assert.ok(summary.apdexCandidate >= 0 && summary.apdexCandidate <= 1);
+
+  const cacheDiag = summary.diagnoses.find((d) => d.category === 'CACHE_REGRESSION');
+  assert.ok(cacheDiag, 'Must identify CACHE_REGRESSION on T01');
+  assert.equal(cacheDiag.severity, 'P0_BLOCKER');
+  assert.ok(cacheDiag.remediationSnippet.includes('"caching"'));
+
+  const cookieDiag = summary.diagnoses.find((d) => d.category === 'COOKIE_DRIFT');
+  assert.ok(cookieDiag, 'Must identify COOKIE_DRIFT when Set-Cookie differs');
+  assert.equal(cookieDiag.severity, 'P0_BLOCKER');
+
+  const cleanComp = buildInitialComparison(prdRun, prdRun, 'network', []);
+  const healthyDiag = diagnoseCheckRootCause(cleanComp.items[0]);
+  assert.equal(healthyDiag.category, 'HEALTHY');
+  assert.equal(healthyDiag.severity, 'NONE');
+
+  const vitalsT01 = computeCheckWebVitals(comp.items[0]);
+  assert.ok(vitalsT01.candidate.lcpMs > vitalsT01.baseline.lcpMs, 'Uncached candidate must show higher LCP than cached baseline');
+
+  // Verify STATUS_FAILURE diagnosis when actualStatus differs
+  const statusFailDiag = diagnoseCheckRootCause({
+    ...comp.items[0],
+    functionalDiffs: [
+      {
+        kind: 'status',
+        field: 'status',
+        candidateValue: '503',
+        baselineValue: '200',
+        severity: 'critical',
+      },
+    ],
+  });
+  assert.equal(statusFailDiag.category, 'STATUS_FAILURE');
+  assert.equal(statusFailDiag.severity, 'P0_BLOCKER');
+});
+
+import { classifyVisualVerdictFromPixelDiff } from './pixelDiff';
+
+test('visual comparison preserves AI judge and browser pixel diff overrides without resetting verdict to same', () => {
+  assert.equal(classifyVisualVerdictFromPixelDiff(0), 'same');
+  assert.equal(classifyVisualVerdictFromPixelDiff(0.1), 'same');
+  assert.equal(classifyVisualVerdictFromPixelDiff(2.4), 'minor');
+  assert.equal(classifyVisualVerdictFromPixelDiff(28.6), 'different');
+
+  const runs = seedRunsFromConfig();
+  const stgRun = runs.find((r) => r.key === 'run-www-prod-staging-1')!;
+  const prdRun = runs.find((r) => r.key === 'run-www-prod-prod-1')!;
+
+  const compWithVisualDiff = buildInitialComparison(stgRun, prdRun, 'network', [], {
+    aiJudgeOverrides: {
+      'www-T01': {
+        verdict: 'different',
+        pixelDiffPercent: 34.8,
+        changedBox: { x: 4.5, y: 12.0, w: 91.0, h: 72.5 },
+        summary:
+          'Side A shows blue #1 AI CRM hero banner while Side B shows dark Agentic Enterprise hero with Pandora and Anthropic cards.',
+      },
+    },
+  });
+
+  const t01 = compWithVisualDiff.items.find((i) => i.testId === 'T01')!;
+  assert.equal(t01.visualResult?.verdict, 'different');
+  assert.equal(t01.visualResult?.pixelDiffPercent, 34.8);
+  assert.equal(t01.visualResult?.differences.length, 1);
+  assert.equal(t01.visualResult?.differences[0].severity, 'major');
+  assert.deepEqual(t01.visualResult?.differences[0].box, {
+    x: 4.5,
+    y: 12.0,
+    w: 91.0,
+    h: 72.5,
+  });
+
+  // Also verify that accepting the visual test and enabling ignoreAcceptedDiffs marks it accepted
+  const compAccepted = buildInitialComparison(stgRun, prdRun, 'network', [], {
+    acceptedVisualTests: ['T01'],
+    ignoreAcceptedDiffs: true,
+    aiJudgeOverrides: {
+      'www-T01': {
+        verdict: 'different',
+        pixelDiffPercent: 34.8,
+        summary: 'Hero banner differs between staging and prod',
+      },
+    },
+  });
+  const t01Accepted = compAccepted.items.find((i) => i.testId === 'T01')!;
+  assert.equal(t01Accepted.visualResult?.verdict, 'same');
+
+  // Verify control-plane-handler.js never forces {"verdict":"same"} and checks hasDistinctS3Screenshots
+  const controlPlaneCode = fs.readFileSync(
+    path.resolve(process.cwd(), 'aws-lambda/control-plane-handler.js'),
+    'utf8'
+  );
+  assert.ok(
+    controlPlaneCode.includes('hasDistinctS3Screenshots'),
+    'control-plane-handler must detect distinct S3 screenshot SHA-256 hashes'
+  );
+  assert.ok(
+    !controlPlaneCode.includes('Return ONLY valid JSON: {"verdict":"same","summary":'),
+    'control-plane-handler must never force Bedrock Nova Lite to return only verdict:same'
+  );
+  assert.ok(
+    controlPlaneCode.includes('{"verdict":"same"|"minor"|"different"'),
+    'control-plane-handler must allow same, minor, or different in Bedrock Nova Lite prompt'
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 21. Zero Cached Screenshots on AWS (Live-Only Chromium Pipeline Invariants)
+// ---------------------------------------------------------------------------
+test('AWS side enforces zero cached screenshots across Lambda, CloudFront, Terraform, S3 sync, and UI', () => {
+  const controlPlane = fs.readFileSync(
+    path.resolve(process.cwd(), 'aws-lambda/control-plane-handler.js'),
+    'utf8'
+  );
+  assert.ok(
+    !controlPlane.includes('__s3ScreenshotMemCache'),
+    'control-plane-handler must NOT keep warm-Lambda RAM caches for screenshots'
+  );
+  assert.ok(
+    !controlPlane.includes('?cached=1'),
+    'control-plane-handler must NOT emit ?cached=1 screenshot URLs'
+  );
+  assert.ok(
+    !controlPlane.includes('s3-cached-baseline'),
+    'control-plane-handler must NOT fall back to s3-cached-baseline'
+  );
+  assert.ok(
+    controlPlane.includes("rawPath.startsWith('/screenshots/')"),
+    'control-plane-handler must proxy /screenshots/* requests live'
+  );
+  assert.ok(
+    controlPlane.includes('isVerifiedLiveS3Metadata'),
+    'control-plane-handler must verify live-capture S3 metadata before serving portal-ui/screenshots/*'
+  );
+  assert.ok(
+    controlPlane.includes("'no-store, no-cache, must-revalidate, max-age=0'"),
+    'control-plane-handler must return strict no-store Cache-Control headers on screenshots'
+  );
+
+  for (const runnerRel of [
+    'aws-lambda/sparticuz-screenshot-runner.mjs',
+    'aws-lambda/chromium-screenshot-runner.js',
+    'aws-synthetics/canary-har-runner.js',
+  ]) {
+    const code = fs.readFileSync(path.resolve(process.cwd(), runnerRel), 'utf8');
+    assert.ok(
+      code.includes('live-screenshots/'),
+      `${runnerRel} must upload live captures to live-screenshots/ S3 prefix`
+    );
+    assert.ok(
+      code.includes("'live-capture': 'true'"),
+      `${runnerRel} must tag S3 uploads with live-capture=true metadata`
+    );
+    assert.ok(
+      code.includes('no-store, no-cache, must-revalidate, max-age=0'),
+      `${runnerRel} must set no-store CacheControl on uploaded screenshots`
+    );
+  }
+
+  const tfMain = fs.readFileSync(path.resolve(process.cwd(), 'infra/terraform/main.tf'), 'utf8');
+  assert.ok(
+    tfMain.includes('!startswith(f, "screenshots/")'),
+    'infra/terraform/main.tf must exclude static screenshots/ from S3 portal-ui sync'
+  );
+  assert.ok(
+    /path_pattern\s*=\s*"\/screenshots\/\*"/.test(tfMain) &&
+      /max_ttl\s*=\s*0/.test(tfMain),
+    'infra/terraform/main.tf must route /screenshots/* to ControlPlaneApiOrigin with max_ttl = 0'
+  );
+
+  const blueprintTf = generateTerraformBundle(DEFAULT_TEMPLATE_CONFIG);
+  assert.ok(
+    blueprintTf.mainTf.includes('!startswith(f, "screenshots/")') &&
+      /path_pattern\s*=\s*"\/screenshots\/\*"/.test(blueprintTf.mainTf),
+    'generateTerraformBundle must also exclude screenshots/ from S3 static files and route /screenshots/* live'
+  );
+
+  // Verify verifyCompiledSpaBundle omits screenshots/* files from SPA bundle uploads
+  const tmpDist = fs.mkdtempSync(path.join(os.tmpdir(), 'sfdc-spa-test-'));
+  try {
+    fs.writeFileSync(
+      path.join(tmpDist, 'index.html'),
+      '<html><body><div id="root"></div><script src="/assets/index-test123.js"></script></body></html>'
+    );
+    fs.mkdirSync(path.join(tmpDist, 'assets'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDist, 'assets', 'index-test123.js'), 'console.log(1);');
+    fs.mkdirSync(path.join(tmpDist, 'screenshots'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDist, 'screenshots', 'www-T01-sideA.jpg'), 'fake-cached-jpeg');
+    const verified = verifyCompiledSpaBundle(tmpDist, 'portal-ui');
+    assert.equal(verified.valid, true);
+    assert.ok(
+      !verified.files.some((f) => f.relativePath.startsWith('screenshots/')),
+      'verifyCompiledSpaBundle must never upload baked screenshots/ directory to S3'
+    );
+  } finally {
+    fs.rmSync(tmpDist, { recursive: true, force: true });
+  }
+
+  // Verify server.ts, App.tsx, and TestInspector.tsx contain zero cached baseline fallbacks
+  for (const appFile of ['server.ts', 'src/App.tsx', 'src/components/TestInspector.tsx']) {
+    const content = fs.readFileSync(path.resolve(process.cwd(), appFile), 'utf8');
+    assert.ok(!content.includes('?cached=1'), `${appFile} must not use ?cached=1`);
+    assert.ok(!content.includes('s3-cached-baseline'), `${appFile} must not reference s3-cached-baseline`);
+    assert.ok(!content.includes('disk-cached-baseline'), `${appFile} must not reference disk-cached-baseline`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 22. Human-Understandable Logical Visual Diff Explanations (No Pixel Jargon)
+// ---------------------------------------------------------------------------
+test('Visual diff engine produces human-understandable logical explanations across page zones with zero pixel-delta jargon', async () => {
+  const {
+    compareRgbaFrames,
+    describeVisualDiffLogically,
+    humanizeVisualSummary,
+    isTechnicalPixelSummary,
+  } = await import('./pixelDiff');
+  const { cleanHumanVisualSummary } = await import('../components/TestInspector');
+  const { diagnoseCheckRootCause } = await import('./sreIntelligence');
+
+  // 1. Real RGBA buffer with right-sidebar drawer on Side B + collapsed header links on Side B
+  const width = 100;
+  const height = 100;
+  const frameA = new Uint8Array(width * height * 4).fill(240);
+  const frameB = new Uint8Array(width * height * 4).fill(240);
+
+  // Add high-contrast nav items in header (y: 2..8, x: 10..65) on Side A, and shift hero left on Side B
+  for (let y = 14; y < 88; y++) {
+    for (let x = 74; x < 98; x++) {
+      // Side B draws a textured right-hand assistant drawer with card stripes
+      const idx = (y * width + x) * 4;
+      const shade = (x + y) % 3 === 0 ? 45 : 210;
+      frameB[idx] = shade;
+      frameB[idx + 1] = shade;
+      frameB[idx + 2] = shade;
+    }
+  }
+  for (let y = 2; y < 10; y++) {
+    for (let x = 20; x < 68; x++) {
+      const idx = (y * width + x) * 4;
+      frameA[idx] = 40;
+      frameA[idx + 1] = 80;
+      frameA[idx + 2] = 160;
+    }
+  }
+
+  const measured = compareRgbaFrames(frameA, frameB, width, height);
+  assert.ok(measured.zones, 'compareRgbaFrames must compute page-zone metrics');
+  assert.ok((measured.zones?.rightPanelPct ?? 0) > 40);
+  assert.ok((measured.zones?.headerPct ?? 0) > 15);
+  assert.ok(
+    (measured.zones?.rightEdgeContrastB ?? 0) > (measured.zones?.rightEdgeContrastA ?? 0) * 1.5
+  );
+
+  const sidebarExplanation = describeVisualDiffLogically({
+    pixelDiffPercent: measured.pixelDiffPercent,
+    changedBox: measured.changedBox,
+    zones: measured.zones,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    pageName: 'APAC Corporate Overview & Our Story',
+  });
+  assert.equal(sidebarExplanation.shortCallout, 'Right sidebar & header layout shift');
+  assert.ok(/right-hand assistant\/sidebar panel/i.test(sidebarExplanation.summary));
+  assert.ok(/Production opens a right-hand/i.test(sidebarExplanation.summary));
+  assert.ok(!isTechnicalPixelSummary(sidebarExplanation.summary));
+
+  // 2. Footer / cookie banner change only
+  const footerLogical = describeVisualDiffLogically({
+    pixelDiffPercent: 3.4,
+    zones: {
+      headerPct: 0.2,
+      heroCenterPct: 0.4,
+      rightPanelPct: 0.3,
+      lowerBodyPct: 0.5,
+      footerPct: 38.0,
+    },
+    candidateLabel: 'www.prod.staging',
+    baselineLabel: 'www.prod.prod',
+  });
+  assert.equal(footerLogical.shortCallout, 'Cookie banner or footer differs');
+  assert.ok(/cookie consent|footer/i.test(footerLogical.summary));
+  assert.ok(!isTechnicalPixelSummary(footerLogical.summary));
+
+  // 3. Top header nav change only
+  const headerLogical = describeVisualDiffLogically({
+    pixelDiffPercent: 2.1,
+    zones: {
+      headerPct: 24.0,
+      heroCenterPct: 0.5,
+      rightPanelPct: 0.4,
+      lowerBodyPct: 0.2,
+      footerPct: 0.1,
+    },
+  });
+  assert.equal(headerLogical.shortCallout, 'Top navigation or header differs');
+  assert.ok(/Top navigation menu/i.test(headerLogical.summary));
+
+  // 4. Legacy technical pixel-delta string gets translated cleanly into plain English
+  const legacyRaw =
+    'Measured 27.21% pixel delta between Side A (staging) and Side B (prod) Chromium screenshots in viewport region (0%, 1.6%, 98.8%×98.4%).';
+  const translated = humanizeVisualSummary(legacyRaw, {
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+  });
+  assert.ok(!/pixel delta/i.test(translated));
+  assert.ok(!/viewport region/i.test(translated));
+  assert.ok(!/98\.8%/.test(translated));
+  assert.ok(translated.length > 20);
+
+  const uiCleaned = cleanHumanVisualSummary(legacyRaw, 27.21, {
+    x: 0,
+    y: 1.6,
+    w: 98.8,
+    h: 98.4,
+  });
+  assert.ok(!/pixel delta|viewport region/i.test(uiCleaned));
+
+  // 5. Genuine AI semantic explanation passes through cleanly without distortion
+  const realAiRaw =
+    'AWS Bedrock Nova Lite (amazon.nova-lite-v1:0) [abc123]: Production opens an Agentforce chat drawer on the right while Staging displays full-width navigation.';
+  const preservedAi = humanizeVisualSummary(realAiRaw, { pixelDiffPercent: 27.2 });
+  assert.equal(
+    preservedAi,
+    'Production opens an Agentforce chat drawer on the right while Staging displays full-width navigation.'
+  );
+
+  const unparenthesizedModelRaw =
+    'AWS Bedrock amazon.nova-lite-v1:0: Lower content cards, product modules, or promotional blocks differ between Staging and Production.';
+  assert.equal(
+    humanizeVisualSummary(unparenthesizedModelRaw, { pixelDiffPercent: 8.4 }),
+    'Lower content cards, product modules, or promotional blocks differ between Staging and Production.'
+  );
+
+  // 6. SRE diagnosis avoids Pixel Delta jargon for pure visual divergence
+  const runs = seedRunsFromConfig();
+  const stgRun = runs.find((r) => r.key === 'run-www-prod-staging-1')!;
+  const prdRun = runs.find((r) => r.key === 'run-www-prod-prod-1')!;
+  const comp = buildInitialComparison(stgRun, prdRun, 'network', [], {
+    aiJudgeOverrides: {
+      'www-T08': {
+        verdict: 'different',
+        pixelDiffPercent: 27.21,
+        zones: measured.zones,
+        affectedArea: sidebarExplanation.affectedArea,
+        shortCallout: sidebarExplanation.shortCallout,
+        summary: sidebarExplanation.summary,
+      },
+    },
+  });
+  const t08 = comp.items.find((i) => i.testId === 'T08')!;
+  const t08CleanForSre = {
+    ...t08,
+    functionalDiffs: [],
+    cookieDiffs: [],
+  };
+  const sreDiag = diagnoseCheckRootCause(t08CleanForSre);
+  assert.ok(!/Pixel Delta/i.test(sreDiag.title));
+  assert.ok(!/pixel delta/i.test(sreDiag.rootCauseSummary));
+  assert.equal(t08.visualResult?.shortCallout, 'Right sidebar & header layout shift');
+});
+
+
+
+
 

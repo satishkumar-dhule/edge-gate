@@ -192,6 +192,7 @@ function executeSingleHttpHop(params: {
   fallbackIp: string;
   edgeHostname: string;
   appId?: string;
+  popOverrideId?: string;
   pinRegionalEdgeIp?: boolean;
   timeoutMs?: number;
 }): Promise<RedirectHop> {
@@ -203,6 +204,7 @@ function executeSingleHttpHop(params: {
     fallbackIp,
     edgeHostname,
     appId,
+    popOverrideId,
     pinRegionalEdgeIp = false,
     timeoutMs = 3500,
   } = params;
@@ -216,7 +218,7 @@ function executeSingleHttpHop(params: {
       return;
     }
 
-    const regionalNode = resolveRegionalEdgeNode(appId, urlStr);
+    const regionalNode = resolveRegionalEdgeNode(appId, urlStr, popOverrideId);
     const popCode = isStaging
       ? regionalNode.stagingPopCode
       : regionalNode.prodPopCode;
@@ -437,6 +439,7 @@ export async function probeLiveUrlHttpFlow(params: {
   fallbackIp: string;
   edgeHostname: string;
   appId?: string;
+  popOverrideId?: string;
   expectedStatus?: string | number;
   maxHops?: number;
 }): Promise<{
@@ -452,17 +455,19 @@ export async function probeLiveUrlHttpFlow(params: {
     fallbackIp,
     edgeHostname,
     appId,
+    popOverrideId,
     expectedStatus,
     maxHops = 4,
   } = params;
 
   const inferredPropId = inferPropertyIdFromUrl(url, appId);
-  const regionalNode = resolveRegionalEdgeNode(inferredPropId, url);
+  const regionalNode = resolveRegionalEdgeNode(inferredPropId, url, popOverrideId);
   const isRegionalProperty = Boolean(
-    inferredPropId &&
-      ['japan', 'germany', 'uk', 'apac', 'emea', 'americas'].includes(
-        inferredPropId
-      )
+    (popOverrideId && popOverrideId !== 'auto') ||
+      (inferredPropId &&
+        ['japan', 'germany', 'uk', 'apac', 'emea', 'americas'].includes(
+          inferredPropId
+        ))
   );
   const effectiveEdgeIp = isRegionalProperty
     ? isStaging
@@ -504,6 +509,7 @@ export async function probeLiveUrlHttpFlow(params: {
       fallbackIp: dnsInfo.ip,
       edgeHostname,
       appId: inferredPropId,
+      popOverrideId,
       pinRegionalEdgeIp: isRegionalProperty,
       timeoutMs: 3200,
     });
@@ -581,6 +587,8 @@ export async function probeLiveUrlHttpFlow(params: {
     resolvedEdgeCname: resolvedCnameChain,
     liveCaptured: true,
     capturedAt: new Date().toISOString(),
+    executionPopId: regionalNode.popId,
+    executionPopCode: regionalNode.popCode,
   };
 
   // Preserve initial 301/302 status & location ONLY if test explicitly expects a 3xx redirect (e.g. /crm -> /crm/);
@@ -623,6 +631,8 @@ export async function executeLiveSalesforceRun(params: {
   label: string;
   operatorEmail: string;
   suite?: TestCaseDefinition[];
+  suiteAppId?: string;
+  popId?: string;
   config?: TemplateConfig;
 }): Promise<RunRecord> {
   const {
@@ -630,10 +640,17 @@ export async function executeLiveSalesforceRun(params: {
     runNumber,
     label,
     operatorEmail,
+    suiteAppId,
+    popId,
     config = DEFAULT_TEMPLATE_CONFIG,
   } = params;
   const [appId = 'www', envId = 'prod', net = 'staging'] = targetId.split('.');
-  const suite = params.suite || getPropertyTestSuite(appId, config) || config.testSuite;
+  const resolvedSuiteId = suiteAppId || appId;
+  const suite =
+    params.suite ||
+    getPropertyTestSuite(resolvedSuiteId, config) ||
+    getPropertyTestSuite(appId, config) ||
+    config.testSuite;
   const network = (net === 'staging' ? 'staging' : 'prod') as 'staging' | 'prod';
   const isStaging = network === 'staging';
 
@@ -641,13 +658,15 @@ export async function executeLiveSalesforceRun(params: {
   const envHost = resolvePropertyHostname(appId, envId, config);
   const netCfg = isStaging ? config.networks.staging : config.networks.prod;
   const edgeHostname = `${envHost}${netCfg.edgeSuffix}`;
+  const runRegionalNode = resolveRegionalEdgeNode(appId, `https://${canonicalHost}/`, popId);
 
   const startedAt = new Date();
   const baseResults = generateTestResults(
     targetId,
     isStaging ? 'normal_staging' : 'normal_prod',
     suite,
-    config
+    config,
+    popId
   );
 
   // Probe real canonical salesforce.com host in parallel so every test has real live HTTP flow telemetry
@@ -655,7 +674,7 @@ export async function executeLiveSalesforceRun(params: {
     baseResults.map(async (baseRes) => {
       const testPath = suite.find((t) => t.id === baseRes.id)?.path || '/';
       const liveProbeUrl = `https://${canonicalHost}${testPath}`;
-      const regionalNode = resolveRegionalEdgeNode(appId, liveProbeUrl);
+      const regionalNode = resolveRegionalEdgeNode(appId, liveProbeUrl, popId);
       const regionalEdgeIp = isStaging
         ? regionalNode.stagingEdgeIp
         : regionalNode.prodEdgeIp;
@@ -669,6 +688,7 @@ export async function executeLiveSalesforceRun(params: {
           fallbackIp: regionalEdgeIp,
           edgeHostname,
           appId,
+          popOverrideId: popId,
           expectedStatus: baseRes.expectedStatus,
           maxHops: 4,
         });
@@ -763,9 +783,10 @@ export async function executeLiveSalesforceRun(params: {
     key,
     target: targetId,
     appId,
+    suiteAppId: resolvedSuiteId,
     envId,
     network,
-    suiteKey: `config/suites/${appId}.csv`,
+    suiteKey: `config/suites/${resolvedSuiteId}.csv`,
     suiteSha256: 'a8e9104f92b1',
     suiteRowCount: enrichedResults.length,
     startTime: startedAt.toISOString(),
@@ -776,6 +797,16 @@ export async function executeLiveSalesforceRun(params: {
     by: operatorEmail,
     label,
     pinnedAsBaseline: network === 'prod' && runNumber === 1,
+    executionPop: {
+      id: runRegionalNode.popId || popId || 'iad',
+      popCode: runRegionalNode.popCode || 'IAD',
+      regionLabel: runRegionalNode.regionLabel,
+      awsRegion: runRegionalNode.awsRegion || config.infrastructure.awsRegion,
+      stagingPopCode: runRegionalNode.stagingPopCode,
+      prodPopCode: runRegionalNode.prodPopCode,
+      stagingEdgeIp: runRegionalNode.stagingEdgeIp,
+      prodEdgeIp: runRegionalNode.prodEdgeIp,
+    },
     results: enrichedResults,
   };
 }

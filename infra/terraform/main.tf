@@ -527,6 +527,17 @@ resource "aws_iam_role_policy" "synthetics_bedrock_s3_policy" {
         Resource = [
           "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/*"
         ]
+      },
+      {
+        Sid    = "CloudWatchSyntheticsOnDemandTrigger"
+        Effect = "Allow"
+        Action = [
+          "synthetics:StartCanary",
+          "synthetics:GetCanary",
+          "synthetics:GetCanaryRuns",
+          "synthetics:DescribeCanaries"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -710,10 +721,98 @@ resource "aws_cloudwatch_metric_alarm" "adhoc_runner_lambda_alarm" {
   ok_actions    = [aws_sns_topic.release_gate_alerts.arn]
 }
 
+locals {
+  use_ecr_chromium_runner       = var.deploy_serverless_lambda && var.enable_chromium_screenshot_lambda && length(trimspace(var.chromium_runner_image_uri)) > 0
+  sparticuz_runner_bundle_path  = "${path.module}/../../aws-lambda/.dist/sparticuz-screenshot-runner.js"
+  use_sparticuz_chromium_runner = var.deploy_serverless_lambda && var.enable_sparticuz_chromium_lambda && !local.use_ecr_chromium_runner && fileexists(local.sparticuz_runner_bundle_path)
+}
+
+data "archive_file" "sparticuz_chromium_lambda_zip" {
+  count       = local.use_sparticuz_chromium_runner ? 1 : 0
+  type        = "zip"
+  output_path = "${path.module}/.terraform/tmp/sparticuz-screenshot-runner.zip"
+
+  source {
+    content  = file(local.sparticuz_runner_bundle_path)
+    filename = "sparticuz-screenshot-runner.js"
+  }
+}
+
+resource "aws_cloudwatch_log_group" "sparticuz_chromium_logs" {
+  count             = local.use_sparticuz_chromium_runner ? 1 : 0
+  name              = "/aws/lambda/${var.project_name}-chromium-zip-runner-${var.environment}"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_lambda_function" "sparticuz_chromium_runner" {
+  count            = local.use_sparticuz_chromium_runner ? 1 : 0
+  function_name    = "${var.project_name}-chromium-zip-runner-${var.environment}"
+  description      = "Zero-Docker scale-to-zero ($0/idle) headless Chromium ZIP Lambda (@sparticuz/chromium-min + puppeteer-core) for synchronous 1280x760 screenshots"
+  role             = aws_iam_role.synthetics_canary_role.arn
+  handler          = "sparticuz-screenshot-runner.handler"
+  runtime          = "nodejs22.x"
+  architectures    = ["x86_64"]
+  filename         = data.archive_file.sparticuz_chromium_lambda_zip[0].output_path
+  source_code_hash = data.archive_file.sparticuz_chromium_lambda_zip[0].output_base64sha256
+  memory_size      = var.chromium_runner_lambda_memory_mb
+  timeout          = var.chromium_runner_lambda_timeout_seconds
+
+  ephemeral_storage {
+    size = 1024
+  }
+
+  environment {
+    variables = {
+      NODE_ENV                   = "production"
+      ENVIRONMENT                = var.environment
+      SYNTHETICS_S3_BUCKET       = aws_s3_bucket.synthetics_artifacts.id
+      CHROMIUM_PACK_S3_PREFIX    = var.sparticuz_chromium_s3_prefix
+      AKAMAI_PRAGMA_HEADERS      = join(",", var.akamai_pragma_headers)
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.synthetics_bedrock_s3_policy,
+    aws_cloudwatch_log_group.sparticuz_chromium_logs
+  ]
+}
+
 resource "aws_cloudwatch_log_group" "control_plane_logs" {
   count             = var.deploy_serverless_lambda ? 1 : 0
   name              = "/aws/lambda/${var.project_name}-control-plane-${var.environment}"
   retention_in_days = var.log_retention_days
+}
+
+resource "aws_cloudwatch_log_group" "chromium_runner_logs" {
+  count             = local.use_ecr_chromium_runner ? 1 : 0
+  name              = "/aws/lambda/${var.project_name}-chromium-runner-${var.environment}"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_lambda_function" "chromium_screenshot_runner" {
+  count         = local.use_ecr_chromium_runner ? 1 : 0
+  function_name = "${var.project_name}-chromium-runner-${var.environment}"
+  description   = "Optional container AWS Lambda running headless Playwright Chromium for synchronous 1280x760 screenshots"
+  role          = aws_iam_role.synthetics_canary_role.arn
+  package_type  = "Image"
+  image_uri     = trimspace(var.chromium_runner_image_uri)
+  architectures = [var.lambda_architecture]
+  memory_size   = var.chromium_runner_lambda_memory_mb
+  timeout       = var.chromium_runner_lambda_timeout_seconds
+
+  environment {
+    variables = {
+      NODE_ENV              = "production"
+      ENVIRONMENT           = var.environment
+      SYNTHETICS_S3_BUCKET  = aws_s3_bucket.synthetics_artifacts.id
+      AKAMAI_PRAGMA_HEADERS = join(",", var.akamai_pragma_headers)
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.synthetics_bedrock_s3_policy,
+    aws_cloudwatch_log_group.chromium_runner_logs
+  ]
 }
 
 resource "aws_lambda_function" "control_plane_api" {
@@ -733,12 +832,16 @@ resource "aws_lambda_function" "control_plane_api" {
     variables = {
       NODE_ENV                         = "production"
       ENVIRONMENT                      = var.environment
+      PROJECT_NAME                     = var.project_name
+      SYNTHETICS_CANARY_PREFIX         = "ak"
+      DEPLOY_SYNTHETICS_CANARIES       = tostring(var.deploy_synthetics_canaries)
       COMPUTE_ARCHITECTURE             = "aws-lambda-scale-to-zero"
       SYNTHETICS_S3_BUCKET             = aws_s3_bucket.synthetics_artifacts.id
       SYNTHETICS_DYNAMODB_TABLE        = aws_dynamodb_table.release_gate_runs.name
       PORTAL_CONFIG_S3_KEY             = aws_s3_object.portal_runtime_config.key
       SSM_CONFIG_PARAMETER             = aws_ssm_parameter.portal_runtime_config.name
       ADHOC_RUNNER_LAMBDA_NAME         = aws_lambda_function.adhoc_edge_runner[0].function_name
+      CHROMIUM_RUNNER_LAMBDA_NAME      = local.use_ecr_chromium_runner ? aws_lambda_function.chromium_screenshot_runner[0].function_name : (local.use_sparticuz_chromium_runner ? aws_lambda_function.sparticuz_chromium_runner[0].function_name : "")
       BEDROCK_VISUAL_JUDGE_MODEL_ID    = var.bedrock_nova_lite_model_id
       BEDROCK_VISUAL_JUDGE_MODEL_ARN   = local.bedrock_model_arn
       VISUAL_JUDGE_COST_GATE_PCT       = tostring(var.visual_judge_pixel_cost_gate_pct)
@@ -845,7 +948,7 @@ locals {
   spa_dist_dir   = "${path.module}/../../dist"
   spa_dist_files = toset([
     for f in fileset(local.spa_dist_dir, "**/*") : f
-    if !startswith(f, "assets/aistudio/")
+    if !startswith(f, "assets/aistudio/") && !startswith(f, "screenshots/")
   ])
   spa_mime_types = {
     ".html" = "text/html; charset=utf-8"
@@ -867,7 +970,7 @@ resource "aws_s3_object" "portal_spa_bundle" {
   source        = "${local.spa_dist_dir}/${each.value}"
   etag          = filemd5("${local.spa_dist_dir}/${each.value}")
   content_type  = try(lookup(local.spa_mime_types, regex("\\.[^.]+$", each.value), "application/octet-stream"), "application/octet-stream")
-  cache_control = (each.value == "index.html" || startswith(each.value, "screenshots/")) ? "no-cache, max-age=0, must-revalidate" : "public, max-age=31536000, immutable"
+  cache_control = each.value == "index.html" ? "no-cache, max-age=0, must-revalidate" : "public, max-age=31536000, immutable"
 
   depends_on = [aws_s3_bucket_versioning.synthetics_versioning]
 }
@@ -880,6 +983,7 @@ resource "aws_cloudfront_origin_access_control" "portal_oac" {
   signing_behavior                  = "always"
   signing_protocol                  = "sigv4"
 }
+
 
 resource "aws_cloudfront_distribution" "portal_cdn" {
   count               = var.deploy_cloudfront_distribution && var.deploy_serverless_lambda && var.enable_apigateway_http_api ? 1 : 0
@@ -911,7 +1015,7 @@ resource "aws_cloudfront_distribution" "portal_cdn" {
     }
   }
 
-  # Default Behavior: Serve React SPA & screenshots from S3 with OAC (honors S3 Cache-Control + query string revision)
+  # Default Behavior: Serve React SPA from S3 with OAC (static screenshots are excluded; live screenshots route to Lambda)
   default_cache_behavior {
     allowed_methods        = ["GET", "HEAD", "OPTIONS"]
     cached_methods         = ["GET", "HEAD"]
@@ -924,6 +1028,27 @@ resource "aws_cloudfront_distribution" "portal_cdn" {
 
     forwarded_values {
       query_string = true
+      cookies {
+        forward = "none"
+      }
+    }
+  }
+
+  # Ordered Behavior: Route all /screenshots/* requests directly to Control Plane Lambda (zero CloudFront caching, always live Chromium / verified live S3)
+  ordered_cache_behavior {
+    path_pattern           = "/screenshots/*"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "ControlPlaneApiOrigin"
+    viewer_protocol_policy = "redirect-to-https"
+    compress               = true
+    min_ttl                = 0
+    default_ttl            = 0
+    max_ttl                = 0
+
+    forwarded_values {
+      query_string = true
+      headers      = ["Accept", "Authorization", "Origin"]
       cookies {
         forward = "none"
       }
@@ -949,21 +1074,6 @@ resource "aws_cloudfront_distribution" "portal_cdn" {
         forward = "all"
       }
     }
-  }
-
-  # SPA Client-Side Routing Fallback (403/404 -> /index.html)
-  custom_error_response {
-    error_code            = 403
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 0
-  }
-
-  custom_error_response {
-    error_code            = 404
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 0
   }
 
   restrictions {
@@ -1159,6 +1269,8 @@ resource "local_file" "dotenv_terraform" {
     DATA_SOURCE_MODE=remote-api
     CONTROL_PLANE_LAMBDA_NAME=${var.deploy_serverless_lambda ? aws_lambda_function.control_plane_api[0].function_name : "disabled"}
     ADHOC_RUNNER_LAMBDA_NAME=${var.deploy_serverless_lambda ? aws_lambda_function.adhoc_edge_runner[0].function_name : "disabled"}
+    CHROMIUM_RUNNER_LAMBDA_NAME=${local.use_ecr_chromium_runner ? aws_lambda_function.chromium_screenshot_runner[0].function_name : (local.use_sparticuz_chromium_runner ? aws_lambda_function.sparticuz_chromium_runner[0].function_name : "disabled")}
+    CHROMIUM_PACK_S3_PREFIX=${var.sparticuz_chromium_s3_prefix}
     SYNTHETICS_RUNNER_ENGINE=AWS Lambda Ad-Hoc + CloudWatch Synthetics (Run-Once)
     SYNTHETICS_RUNTIME_VERSION=${var.synthetics_runtime_version}
     CANARY_SCHEDULE_EXPRESSION=${var.canary_schedule_expression}
