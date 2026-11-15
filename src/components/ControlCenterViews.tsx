@@ -1,6 +1,16 @@
 import React, { useState } from 'react';
-import { AcceptedRule, AppConfig, RunRecord } from '../engine/types';
+import { AcceptedRule, AppConfig, RunRecord, TestFolder } from '../engine/types';
 import {
+  CatchpointEnvironmentStudio,
+  CatchpointTestStudio,
+} from './CatchpointConfigStudio';
+import {
+  CATCHPOINT_TEST_TYPES,
+  DEFAULT_TEST_FOLDERS,
+  getCatchpointTypeMeta,
+} from '../engine/catchpointCatalog';
+import {
+  renderLiveDomScreenshotDataUri,
   resolveApiScreenshotUrl,
   resolveLiveScreenshotUrl,
 } from '../engine/domScreenshotRenderer';
@@ -177,7 +187,10 @@ export const PropertyCommandSwitcher: React.FC<{
     if (verdictFilter !== 'ALL' && v !== verdictFilter) return false;
     if (!query.trim()) return true;
     const q = query.toLowerCase();
-    const host = resolvePropertyHostname(app.id, 'prod').toLowerCase();
+    const host = resolvePropertyHostname(app.id, 'prod', {
+      ...DEFAULT_TEMPLATE_CONFIG,
+      properties: apps,
+    }).toLowerCase();
     return (
       app.id.toLowerCase().includes(q) ||
       app.name.toLowerCase().includes(q) ||
@@ -288,7 +301,10 @@ export const PropertyCommandSwitcher: React.FC<{
             <div className="max-h-80 overflow-y-auto divide-y divide-border">
               {filteredApps.map((app) => {
                 const isSelected = app.id === activeAppId;
-                const prodHost = resolvePropertyHostname(app.id, 'prod');
+                const prodHost = resolvePropertyHostname(app.id, 'prod', {
+                  ...DEFAULT_TEMPLATE_CONFIG,
+                  properties: apps,
+                });
                 const meta = classifyPropertyRegion(app.id);
                 const v = verdictByAppId[app.id] || 'GO';
                 return (
@@ -675,14 +691,14 @@ export const ScalableFleetContextBar: React.FC<{
           type="button"
           data-testid="scale-suite-toggle-btn"
           onClick={onToggleSuiteScale}
-          title="Stress-test Suite scalability: toggle between 8 core checks and 64 global canary checks"
+          title="Stress-test Suite scalability: toggle between core checks and 64 global canary checks"
           className={`px-2 py-0.5 rounded border cursor-pointer transition-colors ${
-            suiteCheckCount > 8
+            suiteCheckCount >= 64
               ? 'bg-primary/15 border-primary/40 text-primary font-semibold'
               : 'bg-background border-border text-muted-foreground hover:text-foreground hover:bg-accent'
           }`}
         >
-          {suiteCheckCount > 8 ? '64 Checks: ON' : '64 Checks'}
+          {suiteCheckCount >= 64 ? '64 Checks: ON' : '64 Checks'}
         </button>
       </div>
     </div>
@@ -727,7 +743,19 @@ export const PageMiniThumb: React.FC<{
     highlightDiff: hasVisualDiff,
     revision: screenshotRevision,
   });
-  const liveThumbUrl = useApiFallback ? apiThumbUrl : staticThumbUrl;
+  const domFallbackThumbUrl = renderLiveDomScreenshotDataUri({
+    testId,
+    testName,
+    url,
+    side: 'A',
+    highlightDiff: hasVisualDiff,
+    revision: screenshotRevision,
+  });
+  const liveThumbUrl = thumbMissing
+    ? domFallbackThumbUrl
+    : useApiFallback
+    ? apiThumbUrl
+    : staticThumbUrl;
   React.useEffect(() => {
     setThumbMissing(false);
     setUseApiFallback(false);
@@ -746,28 +774,19 @@ export const PageMiniThumb: React.FC<{
           : 'border-border'
       }`}
     >
-      {thumbMissing ? (
-        <div
-          data-testid={`page-mini-thumb-missing-${testId}`}
-          className="w-full h-full bg-muted flex items-center justify-center font-mono text-[8px] text-muted-foreground"
-        >
-          {testId}
-        </div>
-      ) : (
-        <img
-          src={liveThumbUrl}
-          onError={() => {
-            if (!useApiFallback) {
-              setUseApiFallback(true);
-            } else {
-              setThumbMissing(true);
-            }
-          }}
-          alt={`${testId} ${testName} thumbnail`}
-          data-testid={`page-mini-thumb-img-${testId}`}
-          className="w-full h-full object-cover object-top block"
-        />
-      )}
+      <img
+        src={liveThumbUrl}
+        onError={() => {
+          if (!useApiFallback && liveThumbUrl !== apiThumbUrl) {
+            setUseApiFallback(true);
+          } else if (!thumbMissing) {
+            setThumbMissing(true);
+          }
+        }}
+        alt={`${testId} ${testName} thumbnail`}
+        data-testid={`page-mini-thumb-img-${testId}`}
+        className="w-full h-full object-cover object-top block"
+      />
       {hasVisualDiff && (
         <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-amber-500 ring-1 ring-background" />
       )}
@@ -1246,6 +1265,7 @@ export const BackgroundJobsPopover: React.FC<{
           )}
           <button
             type="button"
+            aria-label="Close background jobs"
             onClick={onClose}
             className="text-xs text-muted-foreground hover:text-foreground font-mono px-1 cursor-pointer"
           >
@@ -1990,27 +2010,27 @@ export const McpAndAwsBackendView: React.FC<{
           <TabsList className="h-8 flex-wrap">
             <TabsTrigger value="swagger" className="text-xs gap-1.5">
               <Globe className="w-3.5 h-3.5 text-emerald-500" />
-              <span>OpenAPI 3.1 / Swagger UI</span>
+              <span>OpenAPI 3.1</span>
               <Badge variant="secondary" className="font-mono text-[9px] px-1 py-0">
                 {endpoints.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="terraform" className="text-xs gap-1.5">
               <Code2 className="w-3.5 h-3.5 text-sky-500" />
-              <span>Terraform IaC & AWS Synthetics</span>
+              <span>Terraform IaC</span>
               <Badge variant="secondary" className="font-mono text-[9px] px-1 py-0">
-                {iacFiles.length} files
+                {iacFiles.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="mcp" className="text-xs gap-1.5">
               <Terminal className="w-3.5 h-3.5 text-indigo-500" />
-              <span>MCP Server & Nova Lite Judge</span>
+              <span>MCP Tools</span>
             </TabsTrigger>
             <TabsTrigger value="plugins_skills" className="text-xs gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              <span>AI Skills, Plugins & Clone-Adapt</span>
+              <span>AI Skills & Plugins</span>
               <Badge variant="secondary" className="font-mono text-[9px] px-1 py-0">
-                {BUILTIN_GATE_PLUGINS.length} plugins · {aiSkillBundle.length} skills
+                {BUILTIN_GATE_PLUGINS.length}
               </Badge>
             </TabsTrigger>
           </TabsList>
@@ -2034,14 +2054,13 @@ export const McpAndAwsBackendView: React.FC<{
             <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row items-center justify-between space-y-0">
               <div>
                 <CardTitle className="text-sm flex items-center gap-2">
-                  <span>Swagger UI — Endpoint Catalog</span>
+                  <span>API Endpoints</span>
                   <Badge variant="success" className="font-mono text-[10px]">
                     OAS 3.1.0
                   </Badge>
                 </CardTitle>
                 <CardDescription>
-                  Select an endpoint to inspect schema and execute live requests against{' '}
-                  <code className="font-mono">server.ts</code>.
+                  Select an endpoint to inspect schema and run live requests.
                 </CardDescription>
               </div>
               <Button
@@ -2050,7 +2069,7 @@ export const McpAndAwsBackendView: React.FC<{
                 onClick={() => setShowRawOpenApiSpec((prev) => !prev)}
               >
                 <Code2 className="!size-3" />
-                {showRawOpenApiSpec ? 'Hide OAS JSON' : 'openapi.json'}
+                {showRawOpenApiSpec ? 'Hide Spec' : 'openapi.json'}
               </Button>
             </CardHeader>
 
@@ -2158,7 +2177,7 @@ export const McpAndAwsBackendView: React.FC<{
                 disabled={isExecutingSwagger}
               >
                 <Play className="fill-current !size-2.5" />
-                {isExecutingSwagger ? 'Executing…' : 'Execute (Try it out)'}
+                {isExecutingSwagger ? 'Running…' : 'Run Request'}
               </Button>
             </CardHeader>
 
@@ -2237,11 +2256,10 @@ export const McpAndAwsBackendView: React.FC<{
           <Card className="lg:col-span-4">
             <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4">
               <CardTitle className="text-sm">
-                AWS Terraform & Synthetics Bundle
+                Terraform & Synthetics Files
               </CardTitle>
               <CardDescription>
-                Dynamically synced with your {apps.length} configured properties
-                and {testSuite.length} canary checks.
+                Synced with {apps.length} properties and {testSuite.length} checks.
               </CardDescription>
             </CardHeader>
             <CardContent className="p-3 space-y-2">
@@ -2360,16 +2378,15 @@ terraform apply -auto-approve`}
             <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row items-center justify-between space-y-0">
               <div>
                 <CardTitle className="text-sm">
-                  MCP Server Tool Inspector (JSON-RPC 2.0)
+                  MCP Tool Inspector (JSON-RPC 2.0)
                 </CardTitle>
                 <CardDescription>
-                  Test MCP tool calls against <code className="font-mono">POST /api/v1/mcp/rpc</code>{' '}
-                  and AWS Bedrock Nova Lite (<code className="font-mono">{effectiveConfig.infrastructure.visualJudgeModel}</code>).
+                  Invoke live tools via <code className="font-mono">POST /api/v1/mcp/rpc</code>.
                 </CardDescription>
               </div>
               <Button size="xs" onClick={handleExecuteMcpTool}>
                 <Play className="fill-current !size-2.5" />
-                Invoke MCP Tool
+                Run Tool
               </Button>
             </CardHeader>
 
@@ -2479,10 +2496,10 @@ terraform apply -auto-approve`}
                 <div>
                   <CardTitle className="text-sm flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-amber-500" />
-                    <span>One-Shot AI "Clone & Adapt" Prompt Builder</span>
+                    <span>Clone & Adapt Prompt Builder</span>
                   </CardTitle>
                   <CardDescription>
-                    Configure your target organization below and copy the generated prompt into Claude Code, Cursor, Copilot, or Gemini CLI right after <code className="font-mono">git clone</code>.
+                    Generate a one-shot adaptation prompt for Cursor, Claude Code, or Gemini CLI.
                   </CardDescription>
                 </div>
                 <Button
@@ -2498,7 +2515,7 @@ terraform apply -auto-approve`}
                   ) : (
                     <Copy className="!size-3" />
                   )}
-                  {copiedOneShotPrompt ? 'Copied AI Prompt' : 'Copy AI Prompt'}
+                  {copiedOneShotPrompt ? 'Copied' : 'Copy Prompt'}
                 </Button>
               </CardHeader>
 
@@ -3048,9 +3065,18 @@ export const SettingsView: React.FC<{
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
   apps: AppConfig[];
+  activeAppId: string;
   testSuite: TestCaseDefinition[];
-  onAddProperty: (id: string, name: string, envList: string[]) => void;
-  onAddTestCase: (tc: TestCaseDefinition) => void;
+  suitesByAppId?: Record<string, TestCaseDefinition[]>;
+  folders?: TestFolder[];
+  onSelectProperty: (appId: string) => void;
+  onSaveProperty: (updatedProp: AppConfig) => void;
+  onCreateProperty: (newProp: AppConfig) => void;
+  onDeleteProperty: (appId: string) => void;
+  onSaveSuiteForApp: (appId: string, nextSuite: TestCaseDefinition[]) => void;
+  onSaveFolders: (nextFolders: TestFolder[]) => void;
+  onRunEnvironment?: (appId: string, envId: string, network: 'staging' | 'prod') => void;
+  onRunSingleTest?: (testId: string, suiteAppId?: string) => void;
   acceptedRules: AcceptedRule[];
   onRemoveRule: (id: string) => void;
   onAddRule: (field: string) => void;
@@ -3070,9 +3096,18 @@ export const SettingsView: React.FC<{
   theme,
   onToggleTheme,
   apps,
+  activeAppId,
   testSuite,
-  onAddProperty,
-  onAddTestCase,
+  suitesByAppId = {},
+  folders = DEFAULT_TEST_FOLDERS,
+  onSelectProperty,
+  onSaveProperty,
+  onCreateProperty,
+  onDeleteProperty,
+  onSaveSuiteForApp,
+  onSaveFolders,
+  onRunEnvironment,
+  onRunSingleTest,
   acceptedRules,
   onRemoveRule,
   onAddRule,
@@ -3098,23 +3133,19 @@ export const SettingsView: React.FC<{
   const [injectPragma, setInjectPragma] = useState(true);
   const [autoAiJudge, setAutoAiJudge] = useState(true);
   const [newRuleField, setNewRuleField] = useState('');
-
-  // Live Template Property Builder state
-  const [newAppId, setNewAppId] = useState('');
-  const [newAppName, setNewAppName] = useState('');
-  const [newAppEnvs, setNewAppEnvs] = useState('prod, uat');
-
-  // Live Template Test Suite Builder state
-  const [newTestName, setNewTestName] = useState('');
-  const [newTestPath, setNewTestPath] = useState('/api/health');
-  const [newTestStatus, setNewTestStatus] = useState('200');
+  const [studioTab, setStudioTab] = useState<'environments' | 'tests' | 'adapter'>('environments');
   const [copiedTemplateJson, setCopiedTemplateJson] = useState(false);
+
+  const activeApp = apps.find((a) => a.id === activeAppId) || apps[0];
+  const activeStudioSuite = suitesByAppId[activeApp.id] || testSuite;
 
   const handleCopyTemplateConfig = () => {
     const exportedConfig = {
       ...DEFAULT_TEMPLATE_CONFIG,
       properties: apps,
-      testSuite,
+      testSuite: activeStudioSuite,
+      suitesByAppId,
+      folders,
     };
     navigator.clipboard.writeText(JSON.stringify(exportedConfig, null, 2));
     setCopiedTemplateJson(true);
@@ -3123,215 +3154,132 @@ export const SettingsView: React.FC<{
 
   return (
     <main className="px-4 py-3 space-y-3 w-full">
-      {/* Row 1: Template Adaptation Builder (Add Properties & Test Cases Live or Export Config) */}
+      {/* Row 1: Catchpoint & Environment Studio */}
       <Card>
         <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
-          <div>
+          <div className="space-y-1">
             <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
               <Code2 className="w-4 h-4 text-sky-500" />
               <span>
-                Template Adaptation & Live Topology Builder (
-                <code className="font-mono text-xs">
-                  src/config/template.config.ts
-                </code>
-                )
+                Environment &amp; Catchpoint Studio
               </span>
-              <Badge
-                variant="success"
-                className="font-mono text-[10px]"
-                title="All changes, accepted rules, and triggered runs are automatically persisted in browser storage across reloads"
-              >
-                State Auto-Persisted
+              <Badge variant="success" className="font-mono text-[10px]">
+                {CATCHPOINT_TEST_TYPES.length} Monitor Types · Auto-Persisted
               </Badge>
             </CardTitle>
             <CardDescription>
-              Adapt this template to your organization by adding Properties, Environments, or Canary Check URLs below, or edit{' '}
-              <code className="font-mono">src/config/template.config.ts</code> and{' '}
-              <code className="font-mono">src/adapters/syntheticsAdapter.ts</code>.
+              Edit properties, environments, host mappings, folders, and all Catchpoint test types live.
             </CardDescription>
           </div>
+
           <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="inline-flex items-center rounded border border-border bg-background p-0.5 text-xs">
+              <button
+                type="button"
+                data-testid="settings-tab-environments"
+                onClick={() => setStudioTab('environments')}
+                className={`px-2.5 py-1 rounded-xs cursor-pointer whitespace-nowrap ${
+                  studioTab === 'environments'
+                    ? 'bg-sky-500 text-zinc-950 font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Environments ({activeApp.envs.length})
+              </button>
+              <button
+                type="button"
+                data-testid="settings-tab-tests"
+                onClick={() => setStudioTab('tests')}
+                className={`px-2.5 py-1 rounded-xs cursor-pointer whitespace-nowrap ${
+                  studioTab === 'tests'
+                    ? 'bg-sky-500 text-zinc-950 font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Tests &amp; Folders ({activeStudioSuite.length})
+              </button>
+              <button
+                type="button"
+                data-testid="settings-tab-adapter"
+                onClick={() => setStudioTab('adapter')}
+                className={`px-2.5 py-1 rounded-xs cursor-pointer whitespace-nowrap ${
+                  studioTab === 'adapter'
+                    ? 'bg-sky-500 text-zinc-950 font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Adapter &amp; Export
+              </button>
+            </div>
+
             {onToggleScalePreset && (
               <Button
                 variant="outline"
                 size="xs"
                 onClick={onToggleScalePreset}
-                title="Toggle between 8 default properties and 50 enterprise properties to test high-scale UI/UX"
+                className="whitespace-nowrap shrink-0"
               >
                 <Layers className="!size-3 text-amber-500" />
-                {apps.length >= 50
-                  ? 'Restore 8 Default Properties'
-                  : 'Simulate 50 Properties'}
+                {apps.length >= 50 ? 'Restore 8 Default Props' : 'Simulate 50 Props'}
               </Button>
             )}
-            <Button variant="outline" size="xs" onClick={handleCopyTemplateConfig}>
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={handleCopyTemplateConfig}
+              className="whitespace-nowrap shrink-0"
+            >
               {copiedTemplateJson ? (
                 <Check className="text-emerald-600 dark:text-emerald-400 !size-3" />
               ) : (
                 <Copy className="!size-3" />
               )}
-              {copiedTemplateJson
-                ? 'Copied Config JSON'
-                : 'Export template.config.json'}
+              {copiedTemplateJson ? 'Copied JSON' : 'Export JSON'}
             </Button>
             {onResetPortalState && (
               <Button
                 variant="outline"
                 size="xs"
                 onClick={onResetPortalState}
-                title="Clear browser storage and reset properties, runs, and accepted rules back to clean template defaults"
+                className="whitespace-nowrap shrink-0"
               >
                 <RotateCw className="!size-3 text-rose-500" />
-                Reset Portal State
+                Reset
               </Button>
             )}
           </div>
         </CardHeader>
 
-        <CardContent className="p-4 grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs">
-          {/* 1. Add Property Form */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const cleanId = newAppId
-                .trim()
-                .toLowerCase()
-                .replace(/[^a-z0-9-]/g, '');
-              if (!cleanId || !newAppName.trim()) return;
-              const envList = newAppEnvs
-                .split(',')
-                .map((s) => s.trim().toLowerCase())
-                .filter(Boolean);
-              onAddProperty(
-                cleanId,
-                newAppName.trim(),
-                envList.length > 0 ? envList : ['prod']
-              );
-              setNewAppId('');
-              setNewAppName('');
-            }}
-            className="p-3 rounded-md border border-border bg-muted/10 space-y-2.5 flex flex-col justify-between"
-          >
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-foreground">
-                  1. Register New Property & Envs
-                </span>
-                <Badge variant="secondary" className="font-mono text-[10px]">
-                  {apps.length} properties
-                </Badge>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <input
-                  type="text"
-                  placeholder="ID (e.g. billing)"
-                  value={newAppId}
-                  onChange={(e) => setNewAppId(e.target.value)}
-                  className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
-                />
-                <input
-                  type="text"
-                  placeholder="Name (e.g. Billing Hub)"
-                  value={newAppName}
-                  onChange={(e) => setNewAppName(e.target.value)}
-                  className="h-7 rounded border border-input bg-background px-2 text-xs"
-                />
-                <input
-                  type="text"
-                  placeholder="Envs (prod, uat)"
-                  value={newAppEnvs}
-                  onChange={(e) => setNewAppEnvs(e.target.value)}
-                  className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
-                />
-              </div>
-            </div>
-            <div className="flex items-center justify-between pt-2 border-t border-border">
-              <span className="text-[11px] font-mono text-muted-foreground truncate max-w-[180px]">
-                {apps.slice(0, 4).map((a) => a.id).join(', ')}
-                {apps.length > 4 ? ` +${apps.length - 4} more` : ''}
-              </span>
-              <Button type="submit" size="xs">
-                <Plus className="!size-3" />
-                Add Property
-              </Button>
-            </div>
-          </form>
+        <CardContent className="p-4">
+          {studioTab === 'environments' && (
+            <CatchpointEnvironmentStudio
+              apps={apps}
+              activeAppId={activeApp.id}
+              onSelectProperty={onSelectProperty}
+              onSaveProperty={onSaveProperty}
+              onCreateProperty={onCreateProperty}
+              onDeleteProperty={onDeleteProperty}
+              onRunEnvironment={onRunEnvironment}
+            />
+          )}
 
-          {/* 2. Add Canary Check URL Form */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!newTestName.trim() || !newTestPath.trim()) return;
-              const nextNum = testSuite.length + 1;
-              const nextId = `T${String(nextNum).padStart(2, '0')}`;
-              const cleanPath = newTestPath.trim().startsWith('/')
-                ? newTestPath.trim()
-                : `/${newTestPath.trim()}`;
-              onAddTestCase({
-                id: nextId,
-                name: newTestName.trim(),
-                path: cleanPath,
-                expectedStatus: newTestStatus,
-                category: 'Edge Cache',
-                visualGate: 'standard',
-                enabled: true,
-              });
-              setNewTestName('');
-              setNewTestPath('/api/health');
-            }}
-            className="p-3 rounded-md border border-border bg-muted/10 space-y-2.5 flex flex-col justify-between"
-          >
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-foreground">
-                  2. Add Canary Journey Check URL
-                </span>
-                <Badge variant="secondary" className="font-mono text-[10px]">
-                  {testSuite.length} checks
-                </Badge>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <input
-                  type="text"
-                  placeholder="Check Name (e.g. Cart API)"
-                  value={newTestName}
-                  onChange={(e) => setNewTestName(e.target.value)}
-                  className="h-7 rounded border border-input bg-background px-2 text-xs"
-                />
-                <input
-                  type="text"
-                  placeholder="/path (e.g. /cart)"
-                  value={newTestPath}
-                  onChange={(e) => setNewTestPath(e.target.value)}
-                  className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
-                />
-                <select
-                  value={newTestStatus}
-                  onChange={(e) => setNewTestStatus(e.target.value)}
-                  className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
-                >
-                  <option value="200">HTTP 200</option>
-                  <option value="301">HTTP 301</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex items-center justify-between pt-2 border-t border-border">
-              <span className="text-[11px] font-mono text-muted-foreground truncate max-w-[180px]">
-                {testSuite.map((t) => t.id).join(', ')}
-              </span>
-              <Button type="submit" size="xs">
-                <Plus className="!size-3" />
-                Add Check
-              </Button>
-            </div>
-          </form>
+          {studioTab === 'tests' && (
+            <CatchpointTestStudio
+              appId={activeApp.id}
+              apps={apps}
+              suite={activeStudioSuite}
+              folders={folders}
+              onSaveSuite={(nextSuite) => onSaveSuiteForApp(activeApp.id, nextSuite)}
+              onSaveFolders={onSaveFolders}
+              onRunSingleTest={(testId) => onRunSingleTest?.(testId, activeApp.id)}
+            />
+          )}
 
-          {/* 3. Pluggable Execution Adapter Config */}
-          <div className="p-3 rounded-md border border-border bg-muted/10 space-y-2 flex flex-col justify-between">
-            <div className="space-y-2">
+          {studioTab === 'adapter' && (
+            <div className="p-3 rounded-md border border-border bg-muted/10 space-y-2 text-xs max-w-2xl">
               <div className="flex items-center justify-between">
                 <span className="font-semibold text-foreground">
-                  3. Pluggable Synthetics Adapter
+                  Execution Data Source Adapter
                 </span>
                 <Badge
                   variant={dataSourceMode === 'remote-api' ? 'warning' : 'success'}
@@ -3349,32 +3297,28 @@ export const SettingsView: React.FC<{
                       e.target.value as 'template-seed' | 'remote-api'
                     )
                   }
-                  className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                  className="h-8 rounded border border-input bg-background px-2 font-mono text-xs"
                 >
-                  <option value="template-seed">
-                    Mode: Local Template Seed
-                  </option>
-                  <option value="remote-api">
-                    Mode: Remote AWS / MCP API
-                  </option>
+                  <option value="template-seed">Mode: Local Template Seed</option>
+                  <option value="remote-api">Mode: Remote AWS / MCP API</option>
                 </select>
                 <input
                   type="text"
                   aria-label="Remote API Base URL"
                   value={remoteApiBaseUrl}
                   onChange={(e) => onChangeRemoteApiBaseUrl?.(e.target.value)}
-                  placeholder="/api/synthetics"
-                  className="h-7 rounded border border-input bg-background px-2 font-mono text-xs"
+                  placeholder="/api/v1"
+                  className="h-8 rounded border border-input bg-background px-2 font-mono text-xs"
                 />
               </div>
+              <div className="flex items-center justify-between pt-2 border-t border-border font-mono text-[10px] text-muted-foreground">
+                <span>Adapter: src/adapters/syntheticsAdapter.ts</span>
+                <span className="text-sky-600 dark:text-sky-400">
+                  {DEFAULT_TEMPLATE_CONFIG.infrastructure.runtimeVersion}
+                </span>
+              </div>
             </div>
-            <div className="flex items-center justify-between pt-2 border-t border-border font-mono text-[10px] text-muted-foreground">
-              <span>Adapter: src/adapters/syntheticsAdapter.ts</span>
-              <span className="text-sky-600 dark:text-sky-400">
-                {DEFAULT_TEMPLATE_CONFIG.infrastructure.runtimeVersion}
-              </span>
-            </div>
-          </div>
+          )}
         </CardContent>
       </Card>
 
@@ -3383,20 +3327,20 @@ export const SettingsView: React.FC<{
         <Card>
           <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4">
             <CardTitle className="text-sm">
-              Appearance, AWS Synthetics & Diff Evaluation Policy
+              Runner & Theme Policy
             </CardTitle>
             <CardDescription>
-              Interface theme, headless Chromium canary parameters, and baseline diff filtering.
+              Theme, headless Chromium canary defaults, and diff filtering.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-4 space-y-3.5 text-xs">
             <div className="flex items-center justify-between pb-3 border-b border-border">
               <div>
                 <div className="font-semibold text-foreground">
-                  Control Center Color Theme
+                  Color Theme
                 </div>
                 <div className="text-muted-foreground text-[11px]">
-                  Switch between sober Light and high-contrast Dark theme.
+                  Toggle Light or Dark workspace mode.
                 </div>
               </div>
               <Button variant="outline" size="xs" onClick={onToggleTheme}>
@@ -3417,13 +3361,14 @@ export const SettingsView: React.FC<{
             <div className="flex items-center justify-between pb-3 border-b border-border">
               <div>
                 <div className="font-semibold text-foreground">
-                  Ignore Accepted Diffs During Comparison
+                  Ignore Accepted Diffs
                 </div>
                 <div className="text-muted-foreground text-[11px]">
-                  Automatically exclude accepted header, cookie, and AI visual diffs from active diff counts.
+                  Exclude accepted headers, cookies, and visual diffs from active counts.
                 </div>
               </div>
               <Switch
+                aria-label="Ignore accepted diffs"
                 checked={ignoreAcceptedDiffs}
                 onCheckedChange={onChangeIgnoreAcceptedDiffs}
               />
@@ -3465,19 +3410,23 @@ export const SettingsView: React.FC<{
             <div className="flex items-center justify-between pt-1">
               <div>
                 <div className="font-semibold text-foreground">
-                  Inject Edge Debug Pragma Headers
+                  Edge Debug Pragma Headers
                 </div>
                 <div className="text-muted-foreground text-[11px]">
                   Send <code className="font-mono">akamai-x-cache-on, akamai-x-check-cacheable</code>
                 </div>
               </div>
-              <Switch checked={injectPragma} onCheckedChange={setInjectPragma} />
+              <Switch
+                aria-label="Send Akamai Pragma headers"
+                checked={injectPragma}
+                onCheckedChange={setInjectPragma}
+              />
             </div>
 
             <div className="flex items-center justify-between pt-2 border-t border-border">
               <div>
                 <div className="font-semibold text-foreground">
-                  Auto-Run AI Visual Judge on Screenshot Delta
+                  Auto-Run AI Visual Judge
                 </div>
                 <div className="text-muted-foreground text-[11px]">
                   Invoke{' '}
@@ -3487,7 +3436,11 @@ export const SettingsView: React.FC<{
                   when pixel diff &gt; 0.1%
                 </div>
               </div>
-              <Switch checked={autoAiJudge} onCheckedChange={setAutoAiJudge} />
+              <Switch
+                aria-label="Auto-run AI Visual Judge"
+                checked={autoAiJudge}
+                onCheckedChange={setAutoAiJudge}
+              />
             </div>
           </CardContent>
         </Card>
@@ -3495,10 +3448,10 @@ export const SettingsView: React.FC<{
         <Card>
           <CardHeader className="border-b border-border bg-muted/20 py-2.5 px-4">
             <CardTitle className="text-sm">
-              Accepted Diff Baselines (Headers, Cookies & Visual AI)
+              Accepted Diff Rules
             </CardTitle>
             <CardDescription>
-              Manage rules that mark known header, cookie, or visual differences as expected.
+              Rules marking known header, cookie, or visual differences as expected.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-4 space-y-3">
@@ -3543,6 +3496,7 @@ export const SettingsView: React.FC<{
                         <Button
                           variant="ghost"
                           size="xs"
+                          aria-label={`Remove header rule ${rule.kind}`}
                           onClick={() => onRemoveRule(rule.id)}
                         >
                           <Trash2 className="text-rose-600 dark:text-rose-400 !size-3" />
@@ -3561,6 +3515,7 @@ export const SettingsView: React.FC<{
                         <Button
                           variant="ghost"
                           size="xs"
+                          aria-label={`Remove cookie rule ${cookie}`}
                           onClick={() => onToggleAcceptCookie(cookie)}
                         >
                           <Trash2 className="text-rose-600 dark:text-rose-400 !size-3" />
@@ -3579,6 +3534,7 @@ export const SettingsView: React.FC<{
                         <Button
                           variant="ghost"
                           size="xs"
+                          aria-label={`Remove visual rule ${testId}`}
                           onClick={() => onToggleAcceptVisual(testId)}
                         >
                           <Trash2 className="text-rose-600 dark:text-rose-400 !size-3" />
@@ -3717,6 +3673,16 @@ interface TestSuitesViewProps {
   onSelectProperty: (appId: string) => void;
   runs: RunRecord[];
   testSuite: TestCaseDefinition[];
+  suitesByAppId?: Record<string, TestCaseDefinition[]>;
+  folders?: TestFolder[];
+  onSaveProperty: (updatedProp: AppConfig) => void;
+  onCreateProperty: (newProp: AppConfig) => void;
+  onDeleteProperty: (appId: string) => void;
+  onSaveSuiteForApp: (appId: string, nextSuite: TestCaseDefinition[]) => void;
+  onSaveFolders: (nextFolders: TestFolder[]) => void;
+  onRunSingleTest?: (testId: string, suiteAppId?: string) => void;
+  studioTab?: 'telemetry' | 'configure-tests' | 'configure-envs';
+  onChangeStudioTab?: (tab: 'telemetry' | 'configure-tests' | 'configure-envs') => void;
   onRunSuiteOnTarget: (targetId: string, options?: SuiteExecutionOptions) => void;
   onRunAndCompareTargets: (
     targetA: string,
@@ -3752,8 +3718,19 @@ interface TestSuitesViewProps {
 export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
   apps,
   activeAppId,
+  onSelectProperty,
   runs,
   testSuite,
+  suitesByAppId = {},
+  folders = DEFAULT_TEST_FOLDERS,
+  onSaveProperty,
+  onCreateProperty,
+  onDeleteProperty,
+  onSaveSuiteForApp,
+  onSaveFolders,
+  onRunSingleTest,
+  studioTab: controlledStudioTab,
+  onChangeStudioTab,
   onRunSuiteOnTarget,
   onRunAndCompareTargets,
   onOpenTestInDiff,
@@ -3768,6 +3745,12 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
   const currentApp = apps.find((a) => a.id === activeAppId) || apps[0];
   const [selectedSuiteAppId, setSelectedSuiteAppId] = useState<string>(currentApp.id);
   const [localPopId, setLocalPopId] = useState<string>('auto');
+  const [localStudioTab, setLocalStudioTab] = useState<'telemetry' | 'configure-tests' | 'configure-envs'>('telemetry');
+  const activeStudioTab = controlledStudioTab ?? localStudioTab;
+  const setActiveStudioTab = (next: 'telemetry' | 'configure-tests' | 'configure-envs') => {
+    setLocalStudioTab(next);
+    onChangeStudioTab?.(next);
+  };
   const effectivePopId = controlledPopId ?? localPopId;
   const setEffectivePopId = (next: string) => {
     setLocalPopId(next);
@@ -3779,9 +3762,13 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
   }, [currentApp.id]);
 
   const effectiveSuite = React.useMemo(() => {
+    if (suitesByAppId[selectedSuiteAppId]) return suitesByAppId[selectedSuiteAppId];
     if (selectedSuiteAppId === currentApp.id) return testSuite;
-    return getPropertyTestSuite(selectedSuiteAppId);
-  }, [selectedSuiteAppId, currentApp.id, testSuite]);
+    return getPropertyTestSuite(selectedSuiteAppId, {
+      ...DEFAULT_TEMPLATE_CONFIG,
+      properties: apps,
+    });
+  }, [suitesByAppId, selectedSuiteAppId, currentApp.id, testSuite, apps]);
 
   const execOptions: SuiteExecutionOptions = {
     suiteAppId: selectedSuiteAppId,
@@ -3930,11 +3917,14 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
         hopSummary: hopSummary || `GET ${tc.expectedStatus} (${avgStg}ms)`,
         canonicalUrl:
           latestStg?.canonicalUrl ||
-          `https://${resolvePropertyHostname(currentApp.id, firstEnv)}${tc.path}`,
+          `https://${resolvePropertyHostname(currentApp.id, firstEnv, {
+            ...DEFAULT_TEMPLATE_CONFIG,
+            properties: apps,
+          })}${tc.path}`,
         diffInfo,
       };
     });
-  }, [effectiveSuite, allExecutions, stagingExecutions, prodExecutions, liveDiffSummaryByTestId, currentApp.id, firstEnv]);
+  }, [effectiveSuite, allExecutions, stagingExecutions, prodExecutions, liveDiffSummaryByTestId, currentApp.id, firstEnv, apps]);
 
   const facetCounts = React.useMemo(() => {
     const counts: Record<SuiteFacetFilter, number> = {
@@ -4015,64 +4005,99 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
 
   return (
     <div className="flex flex-col w-full">
-      {/* SUB-BAR: ACTIVE PROPERTY + CROSS-SUITE SOURCE + ORIGIN POP + CANARY TRIGGERS */}
+      {/* SUB-BAR: STUDIO MODE + ACTIVE PROPERTY + CROSS-SUITE SOURCE + ORIGIN POP + CANARY TRIGGERS */}
       <div className="bg-background border-b border-border px-4 py-2 flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex items-center gap-1.5">
-            <Badge variant="secondary" className="font-mono text-xs px-2 py-0.5">
-              {currentApp.id}
-            </Badge>
-            <span className="text-xs font-semibold text-foreground">
-              {currentApp.name}
-            </span>
-          </div>
-
-          <div className="inline-flex items-center rounded border border-border bg-muted/30 p-0.5 text-[11px] font-mono">
+          {/* Studio Mode Switcher */}
+          <div className="inline-flex items-center rounded border border-border bg-muted/30 p-0.5 text-[11px]">
             <button
               type="button"
-              onClick={() => setSelectedEnvFilter('ALL')}
-              className={`px-2 py-0.5 rounded-xs cursor-pointer ${
-                selectedEnvFilter === 'ALL'
-                  ? 'bg-foreground text-background font-semibold'
+              data-testid="suites-tab-telemetry"
+              onClick={() => setActiveStudioTab('telemetry')}
+              className={`px-2.5 py-0.5 rounded-xs cursor-pointer whitespace-nowrap ${
+                activeStudioTab === 'telemetry'
+                  ? 'bg-sky-500 text-zinc-950 font-semibold'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              ALL ({runs.filter((r) => r.appId === currentApp.id).length})
+              Execution Matrix
             </button>
-            {currentApp.envs.map((env) => (
-              <button
-                key={env.id}
-                type="button"
-                onClick={() => setSelectedEnvFilter(env.id)}
-                className={`px-2 py-0.5 rounded-xs uppercase cursor-pointer ${
-                  selectedEnvFilter === env.id
-                    ? 'bg-foreground text-background font-semibold'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {env.id}
-              </button>
-            ))}
-          </div>
-
-          {onToggleSuiteScale && (
             <button
               type="button"
-              data-testid="suites-view-scale-btn"
-              onClick={() => {
-                onToggleSuiteScale();
-                setPage(1);
-              }}
-              className={`px-2 py-0.5 rounded border font-mono text-[11px] cursor-pointer transition-colors ${
-                suiteScaleCount > 8
-                  ? 'bg-sky-500/15 border-sky-500/40 text-sky-600 dark:text-sky-400 font-semibold'
-                  : 'bg-muted/40 border-border text-muted-foreground hover:text-foreground'
+              data-testid="suites-tab-configure-tests"
+              onClick={() => setActiveStudioTab('configure-tests')}
+              className={`px-2.5 py-0.5 rounded-xs cursor-pointer whitespace-nowrap ${
+                activeStudioTab === 'configure-tests'
+                  ? 'bg-sky-500 text-zinc-950 font-semibold'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              {suiteScaleCount > 8
-                ? `64 Enterprise Checks Active (Reset to 8)`
-                : `Simulate 64 Enterprise Suite Checks`}
+              Configure &amp; Organize Tests ({effectiveSuite.length})
             </button>
+            <button
+              type="button"
+              data-testid="suites-tab-configure-envs"
+              onClick={() => setActiveStudioTab('configure-envs')}
+              className={`px-2.5 py-0.5 rounded-xs cursor-pointer whitespace-nowrap ${
+                activeStudioTab === 'configure-envs'
+                  ? 'bg-sky-500 text-zinc-950 font-semibold'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Environments &amp; HostMap ({currentApp.envs.length})
+            </button>
+          </div>
+
+          {activeStudioTab === 'telemetry' && (
+            <>
+              <div className="inline-flex items-center rounded border border-border bg-muted/30 p-0.5 text-[11px] font-mono">
+                <button
+                  type="button"
+                  onClick={() => setSelectedEnvFilter('ALL')}
+                  className={`px-2 py-0.5 rounded-xs cursor-pointer ${
+                    selectedEnvFilter === 'ALL'
+                      ? 'bg-foreground text-background font-semibold'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  ALL ({runs.filter((r) => r.appId === currentApp.id).length})
+                </button>
+                {currentApp.envs.map((env) => (
+                  <button
+                    key={env.id}
+                    type="button"
+                    onClick={() => setSelectedEnvFilter(env.id)}
+                    className={`px-2 py-0.5 rounded-xs uppercase cursor-pointer ${
+                      selectedEnvFilter === env.id
+                        ? 'bg-foreground text-background font-semibold'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {env.id}
+                  </button>
+                ))}
+              </div>
+
+              {onToggleSuiteScale && (
+                <button
+                  type="button"
+                  data-testid="suites-view-scale-btn"
+                  onClick={() => {
+                    onToggleSuiteScale();
+                    setPage(1);
+                  }}
+                  className={`px-2 py-0.5 rounded border font-mono text-[11px] cursor-pointer transition-colors whitespace-nowrap ${
+                    suiteScaleCount >= 64
+                      ? 'bg-sky-500/15 border-sky-500/40 text-sky-600 dark:text-sky-400 font-semibold'
+                      : 'bg-muted/40 border-border text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {suiteScaleCount >= 64
+                    ? `64 Checks: ON`
+                    : `Scale: 64 Checks`}
+                </button>
+              )}
+            </>
           )}
         </div>
 
@@ -4080,7 +4105,7 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
           {/* Any Suite Source */}
           <div
             className="inline-flex items-center gap-1 rounded border border-input bg-muted/30 px-2 h-7 text-[11px] font-mono"
-            title="Choose ANY Canary Test Suite to run against this property's Staging & Prod targets"
+            title="Choose ANY Canary Test Suite to inspect, edit, or run against this property"
           >
             <span className="text-muted-foreground">Suite:</span>
             <select
@@ -4093,7 +4118,7 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
               }}
               className="bg-transparent text-foreground font-semibold focus:outline-none cursor-pointer max-w-[300px] xl:max-w-[360px] truncate"
             >
-              {apps.slice(0, 20).map((a) => (
+              {apps.map((a) => (
                 <option key={a.id} value={a.id} className="bg-background text-foreground">
                   {a.id}.csv ({a.name})
                 </option>
@@ -4134,7 +4159,7 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
             variant="outline"
             size="xs"
             onClick={() => onRunSuiteOnTarget(stagingTarget, execOptions)}
-            title={`Run ${selectedSuiteAppId}.csv suite on ${stagingTarget}${effectivePopId !== 'auto' ? ` from ${effectivePopId.toUpperCase()} PoP` : ''}`}
+            className="whitespace-nowrap shrink-0"
           >
             <Play className="fill-current !size-2.5 text-sky-500" />
             Run Staging
@@ -4143,7 +4168,7 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
             variant="outline"
             size="xs"
             onClick={() => onRunSuiteOnTarget(prodTarget, execOptions)}
-            title={`Run ${selectedSuiteAppId}.csv suite on ${prodTarget}${effectivePopId !== 'auto' ? ` from ${effectivePopId.toUpperCase()} PoP` : ''}`}
+            className="whitespace-nowrap shrink-0"
           >
             <Play className="fill-current !size-2.5 text-emerald-500" />
             Run Prod
@@ -4151,7 +4176,7 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
           <Button
             size="xs"
             onClick={() => onRunAndCompareTargets(stagingTarget, prodTarget, execOptions)}
-            title={`Run & Compare ${selectedSuiteAppId}.csv on ${stagingTarget} vs ${prodTarget}${effectivePopId !== 'auto' ? ` from ${effectivePopId.toUpperCase()} PoP` : ''}`}
+            className="whitespace-nowrap shrink-0"
           >
             <GitCompare className="!size-3" />
             Run & Compare
@@ -4160,6 +4185,34 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
       </div>
 
       <main className="px-4 py-3 space-y-3 w-full">
+        {activeStudioTab === 'configure-tests' && (
+          <CatchpointTestStudio
+            appId={selectedSuiteAppId}
+            apps={apps}
+            suite={effectiveSuite}
+            folders={folders}
+            onSaveSuite={(nextSuite) => onSaveSuiteForApp(selectedSuiteAppId, nextSuite)}
+            onSaveFolders={onSaveFolders}
+            onRunSingleTest={(testId) => onRunSingleTest?.(testId, selectedSuiteAppId)}
+          />
+        )}
+
+        {activeStudioTab === 'configure-envs' && (
+          <CatchpointEnvironmentStudio
+            apps={apps}
+            activeAppId={activeAppId}
+            onSelectProperty={onSelectProperty}
+            onSaveProperty={onSaveProperty}
+            onCreateProperty={onCreateProperty}
+            onDeleteProperty={onDeleteProperty}
+            onRunEnvironment={(appId, envId, net) =>
+              onRunSuiteOnTarget(`${appId}.${envId}.${net}`, execOptions)
+            }
+          />
+        )}
+
+        {activeStudioTab === 'telemetry' && (
+          <>
         {/* ROW 1: COMPACT SINGLE-ROW TELEMETRY RIBBON */}
         <div className="rounded-lg border border-border bg-card px-4 py-2.5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 divide-y sm:divide-y-0 sm:divide-x divide-border text-xs">
           <div className="flex items-center justify-between gap-2 pr-2">
@@ -4231,11 +4284,11 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <CardTitle className="text-sm">
-                  Canary Check & HTTP Flow Telemetry ({selectedSuiteAppId}.csv → {currentApp.id} · {filteredAndSortedRows.length} of {effectiveSuite.length} Checks)
+                  Suite Checks ({selectedSuiteAppId}.csv → {currentApp.id} · {filteredAndSortedRows.length}/{effectiveSuite.length})
                 </CardTitle>
                 {effectivePopId !== 'auto' && (
                   <Badge variant="outline" className="font-mono text-[10px] border-sky-500/40 text-sky-600 dark:text-sky-400">
-                    Origin PoP: {effectivePopId.toUpperCase()}
+                    PoP: {effectivePopId.toUpperCase()}
                   </Badge>
                 )}
               </div>
@@ -4347,12 +4400,12 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
             <TableHeader>
               <TableRow>
                 <TableHead className="w-16 py-2">Preview</TableHead>
-                <TableHead className="py-2">Canary Journey</TableHead>
-                <TableHead className="w-36 py-2">HTTP Flow & Status</TableHead>
+                <TableHead className="py-2">Check</TableHead>
+                <TableHead className="w-36 py-2">Flow</TableHead>
                 <TableHead className="w-48 py-2">Latency (STG / PRD)</TableHead>
-                <TableHead className="w-44 py-2">Edge Cache (STG / PRD)</TableHead>
-                <TableHead className="w-36 py-2">Gate Drift</TableHead>
-                <TableHead className="text-right w-24 py-2">Actions</TableHead>
+                <TableHead className="w-44 py-2">Cache (STG / PRD)</TableHead>
+                <TableHead className="w-36 py-2">Drift</TableHead>
+                <TableHead className="text-right w-24 py-2">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -4395,10 +4448,18 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
                         </span>
                         <Badge
                           variant="secondary"
-                          className="text-[9px] px-1 py-0 hidden sm:inline-flex"
+                          className="text-[9px] font-mono px-1 py-0 hidden sm:inline-flex"
                         >
-                          {tc.category || 'Edge'}
+                          {getCatchpointTypeMeta(tc.testType).shortLabel}
                         </Badge>
+                        {tc.category && (
+                          <Badge
+                            variant="outline"
+                            className="text-[9px] px-1 py-0 hidden md:inline-flex"
+                          >
+                            {tc.category}
+                          </Badge>
+                        )}
                       </div>
                       <div className="font-mono text-[10px] text-sky-600 dark:text-sky-400 truncate max-w-[280px]">
                         {tc.path}
@@ -4421,7 +4482,13 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
                           {row.hopCount} {row.hopCount === 1 ? 'Hop' : 'Hops'}
                         </Badge>
                         <Badge
-                          variant="success"
+                          variant={
+                            row.actualStatus >= 400
+                              ? 'destructive'
+                              : row.actualStatus >= 300
+                              ? 'warning'
+                              : 'success'
+                          }
                           className="font-mono text-[10px] px-1.5 py-0"
                         >
                           {row.actualStatus}
@@ -4580,10 +4647,10 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
           >
             <CardTitle className="text-sm flex items-center gap-2">
               <span>
-                Ingested AWS Synthetics Run History ({currentApp.id} · {propertyRuns.length} Runs)
+                Run History ({currentApp.id} · {propertyRuns.length} Runs)
               </span>
               <span className="text-[11px] font-mono text-muted-foreground">
-                {runsCollapsed ? '(Click to expand)' : '(Click to collapse)'}
+                {runsCollapsed ? 'Expand ▾' : 'Collapse ▴'}
               </span>
             </CardTitle>
             <Badge
@@ -4733,6 +4800,8 @@ export const TestSuitesView: React.FC<TestSuitesViewProps> = ({
             </Table>
           )}
         </Card>
+          </>
+        )}
       </main>
     </div>
   );

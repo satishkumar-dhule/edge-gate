@@ -1297,7 +1297,32 @@ resource "local_file" "dotenv_terraform" {
     VIEWPORT_WIDTH=${var.viewport_width}
     VIEWPORT_HEIGHT=${var.viewport_height}
     NAVIGATION_TIMEOUT_MS=${var.navigation_timeout_ms}
+    SQS_PROBE_CONSUMER_QUEUE_URL=${aws_sqs_queue.probe_consumer_queue.id}
+    SQS_PROBE_DLQ_URL=${aws_sqs_queue.probe_dlq.id}
     MCP_SERVER_URI=${var.mcp_endpoint_uri}
     MCP_NPM_PACKAGE=${var.mcp_npm_package}
   EOT
 }
+
+# ============================================================================
+# 12. AWS SQS DISTRIBUTED PROBE CONSUMER QUEUE & DEAD-LETTER QUEUE (DLQ)
+# ============================================================================
+resource "aws_sqs_queue" "probe_dlq" {
+  name                      = "${var.project_name}-probe-dlq-${var.environment}"
+  message_retention_seconds = 1209600 # 14 days
+  sqs_managed_sse_enabled   = true
+}
+
+resource "aws_sqs_queue" "probe_consumer_queue" {
+  name                       = "${var.project_name}-probe-consumer-queue-${var.environment}"
+  visibility_timeout_seconds = 90
+  message_retention_seconds  = 345600 # 4 days
+  receive_wait_time_seconds  = 10     # Long polling for parallel consumer workers
+  sqs_managed_sse_enabled    = true
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.probe_dlq.arn
+    maxReceiveCount     = 3
+  })
+}
+

@@ -21,6 +21,7 @@ import {
 } from './types';
 import { generateTestResults } from '../data/mockStore';
 import { QUALIFIED_COHORT_COOKIE_HEADER } from './qualifiedCohort';
+import { getCatchpointTypeMeta } from './catchpointCatalog';
 
 export interface LoadedAwsEnvStatus {
   loaded: boolean;
@@ -195,6 +196,9 @@ function executeSingleHttpHop(params: {
   popOverrideId?: string;
   pinRegionalEdgeIp?: boolean;
   timeoutMs?: number;
+  method?: string;
+  customHeaders?: Record<string, string>;
+  requestBody?: string;
 }): Promise<RedirectHop> {
   const {
     hopNumber,
@@ -207,12 +211,18 @@ function executeSingleHttpHop(params: {
     popOverrideId,
     pinRegionalEdgeIp = false,
     timeoutMs = 3500,
+    method = 'GET',
+    customHeaders,
+    requestBody,
   } = params;
 
   return new Promise((resolve, reject) => {
     let parsedUrl: URL;
     try {
-      parsedUrl = new URL(urlStr);
+      const normalizedUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(urlStr)
+        ? urlStr
+        : `https://${urlStr}`;
+      parsedUrl = new URL(normalizedUrl);
     } catch (err) {
       reject(err);
       return;
@@ -226,8 +236,9 @@ function executeSingleHttpHop(params: {
       ? regionalNode.stagingEdgeHost
       : regionalNode.prodEdgeHost;
 
-    const isHttps = parsedUrl.protocol === 'https:';
+    const isHttps = parsedUrl.protocol !== 'http:';
     const isSalesforceHost = parsedUrl.hostname.endsWith('salesforce.com');
+    const httpMethod = String(method || 'GET').toUpperCase();
     const requestHeaders: Record<string, string> = {
       Host: parsedUrl.hostname,
       'User-Agent':
@@ -246,6 +257,7 @@ function executeSingleHttpHop(params: {
               'sfdc_agent_cohort=qualified; sfdcConsent=1,2,3,4 (OneTrust Functional C0003:1)',
           }
         : {}),
+      ...(customHeaders || {}),
     };
 
     const outboundCookieHeader = [
@@ -257,8 +269,19 @@ function executeSingleHttpHop(params: {
 
     const outboundHeaders: Record<string, string> = {
       ...requestHeaders,
-      ...(isSalesforceHost ? { Cookie: outboundCookieHeader } : {}),
+      ...(isSalesforceHost && !requestHeaders.Cookie
+        ? { Cookie: outboundCookieHeader }
+        : {}),
     };
+    const sendBody =
+      requestBody &&
+      httpMethod !== 'GET' &&
+      httpMethod !== 'HEAD'
+        ? requestBody
+        : undefined;
+    if (sendBody && !outboundHeaders['Content-Length'] && !outboundHeaders['content-length']) {
+      outboundHeaders['Content-Length'] = String(Buffer.byteLength(sendBody, 'utf8'));
+    }
 
     const tStart = performance.now();
     let tDnsDone = tStart;
@@ -277,7 +300,7 @@ function executeSingleHttpHop(params: {
     const req = reqModule.request(
       wireUrl,
       {
-        method: 'GET',
+        method: httpMethod === 'QUERY' ? 'GET' : httpMethod,
         headers: outboundHeaders,
         timeout: timeoutMs,
         rejectUnauthorized: false,
@@ -365,7 +388,7 @@ function executeSingleHttpHop(params: {
 
           resolve({
             hopNumber,
-            method: 'GET',
+            method: httpMethod,
             url: urlStr,
             protocol: `HTTP/${res.httpVersion || '2.0'}`,
             status,
@@ -426,6 +449,9 @@ function executeSingleHttpHop(params: {
       reject(err);
     });
 
+    if (sendBody) {
+      req.write(sendBody);
+    }
     req.end();
   });
 }
@@ -442,6 +468,9 @@ export async function probeLiveUrlHttpFlow(params: {
   popOverrideId?: string;
   expectedStatus?: string | number;
   maxHops?: number;
+  httpMethod?: string;
+  customHeaders?: Record<string, string>;
+  requestBody?: string;
 }): Promise<{
   hops: RedirectHop[];
   summary: HttpFlowSummary;
@@ -458,6 +487,9 @@ export async function probeLiveUrlHttpFlow(params: {
     popOverrideId,
     expectedStatus,
     maxHops = 4,
+    httpMethod,
+    customHeaders,
+    requestBody,
   } = params;
 
   const inferredPropId = inferPropertyIdFromUrl(url, appId);
@@ -512,6 +544,9 @@ export async function probeLiveUrlHttpFlow(params: {
       popOverrideId,
       pinRegionalEdgeIp: isRegionalProperty,
       timeoutMs: 3200,
+      method: hopNum === 1 ? httpMethod : 'GET',
+      customHeaders: hopNum === 1 ? customHeaders : undefined,
+      requestBody: hopNum === 1 ? requestBody : undefined,
     });
 
     hop.edgeCname = resolvedCnameChain;
@@ -669,11 +704,31 @@ export async function executeLiveSalesforceRun(params: {
     popId
   );
 
-  // Probe real canonical salesforce.com host in parallel so every test has real live HTTP flow telemetry
-  const enrichedResults: TestResult[] = await Promise.all(
-    baseResults.map(async (baseRes) => {
-      const testPath = suite.find((t) => t.id === baseRes.id)?.path || '/';
-      const liveProbeUrl = `https://${canonicalHost}${testPath}`;
+  // Probe real canonical salesforce.com host via priority WorkStealingConsumerQueue (4 parallel consumer workers)
+  const { executeParallelConsumerBatch } = await import('./concurrencyEngine');
+  const { results: enrichedResults } = await executeParallelConsumerBatch({
+    items: baseResults,
+    concurrency: 4,
+    queueName: `suite-probe-${targetId}`,
+    getJobId: (baseRes) => `${targetId}:${baseRes.id}`,
+    getLabel: (baseRes) => `${baseRes.id} ${baseRes.name}`,
+    getPriority: (baseRes) => {
+      const def = suite.find((t) => t.id === baseRes.id);
+      return def?.critical ? 'critical' : 'normal';
+    },
+    worker: async (baseRes, ctx) => {
+      const testDef = suite.find((t) => t.id === baseRes.id);
+      const testPath = testDef?.path || '/';
+      const explicitTargetHost = testDef?.targetHost?.trim();
+      const probeHost = explicitTargetHost || canonicalHost;
+      const probeScheme = testDef?.port === 80 ? 'http' : 'https';
+      const normalizedPath = testPath.startsWith('/') ? testPath : `/${testPath}`;
+      const liveProbeUrl = /^https?:\/\//i.test(testPath)
+        ? testPath
+        : `${probeScheme}://${probeHost}${normalizedPath}`;
+      const rewriteDisplayHost = (raw: string) =>
+        explicitTargetHost ? raw : raw.replace(canonicalHost, envHost);
+      const typeMeta = getCatchpointTypeMeta(testDef?.testType);
       const regionalNode = resolveRegionalEdgeNode(appId, liveProbeUrl, popId);
       const regionalEdgeIp = isStaging
         ? regionalNode.stagingEdgeIp
@@ -681,6 +736,13 @@ export async function executeLiveSalesforceRun(params: {
       const popCode = isStaging
         ? regionalNode.stagingPopCode
         : regionalNode.prodPopCode;
+      const appCfg = config.properties.find((p) => p.id === appId);
+      const envCfg = appCfg?.envs.find((e) => e.id === envId);
+      const customReqHeaders = {
+        ...(appCfg?.headers || {}),
+        ...(envCfg?.headers || {}),
+        ...(testDef?.requestHeaders || {}),
+      };
       try {
         const liveFlow = await probeLiveUrlHttpFlow({
           url: liveProbeUrl,
@@ -691,20 +753,25 @@ export async function executeLiveSalesforceRun(params: {
           popOverrideId: popId,
           expectedStatus: baseRes.expectedStatus,
           maxHops: 4,
+          httpMethod: testDef?.httpMethod || typeMeta.defaultMethod,
+          customHeaders:
+            Object.keys(customReqHeaders).length > 0 ? customReqHeaders : undefined,
+          requestBody: testDef?.requestBody,
         });
 
         // Map canonical URLs to envHost when running UAT so hostMap normalization works seamlessly
         const mappedHops: RedirectHop[] = liveFlow.hops.map((h) => ({
           ...h,
-          url: h.url.replace(canonicalHost, envHost),
+          method: testDef?.httpMethod || h.method,
+          url: rewriteDisplayHost(h.url),
           redirectLocation: h.redirectLocation
-            ? h.redirectLocation.replace(canonicalHost, envHost)
+            ? rewriteDisplayHost(h.redirectLocation)
             : undefined,
           responseHeaders: {
             ...baseRes.capturedHeaders,
             ...h.responseHeaders,
             ...(h.redirectLocation
-              ? { location: h.redirectLocation.replace(canonicalHost, envHost) }
+              ? { location: rewriteDisplayHost(h.redirectLocation) }
               : {}),
           } as Record<string, string>,
         }));
@@ -715,6 +782,9 @@ export async function executeLiveSalesforceRun(params: {
           'x-sfdc-edge-pop': popCode,
           'content-language': regionalNode.contentLanguage,
           'x-akamai-edgescape': regionalNode.edgescapeHeader,
+          'x-catchpoint-test-type': typeMeta.type,
+          'x-catchpoint-monitor': testDef?.monitorEngine || typeMeta.defaultMonitor,
+          'x-catchpoint-protocol': typeMeta.defaultProtocol,
         };
 
         // Keep deterministic release-gate header/cookie signals on T01/T02/T04 so 3-dim comparison rules remain verifiable alongside real salesforce.com headers
@@ -726,12 +796,15 @@ export async function executeLiveSalesforceRun(params: {
           mergedHeaders['x-check-cacheable'] = 'YES';
         }
 
-        const expectsRedirect301 =
-          baseRes.expectedStatus === '301' ||
+        const expectedCodeNum = Number(baseRes.expectedStatus || '200');
+        const expectsRedirect3xx =
+          (expectedCodeNum >= 300 && expectedCodeNum < 400) ||
           (baseRes.id === 'T04' && appId === 'www');
 
-        if (expectsRedirect301) {
-          mergedHeaders.location = `https://${envHost}/crm/`;
+        const observedStatus = liveFlow.finalStatus || baseRes.actualStatus;
+        if (expectsRedirect3xx && observedStatus >= 300 && observedStatus < 400) {
+          mergedHeaders.location =
+            liveFlow.finalHeaders.location || `https://${envHost}/crm/`;
         } else {
           delete mergedHeaders.location;
         }
@@ -741,38 +814,53 @@ export async function executeLiveSalesforceRun(params: {
           ...baseRes.capturedCookies,
         };
 
-        const observedStatus = expectsRedirect301
-          ? 301
-          : liveFlow.finalStatus || baseRes.actualStatus;
-
         const finalResolvedEdgeIp =
           liveFlow.summary.resolvedEdgeIp || regionalEdgeIp;
 
+        const totalMs = liveFlow.summary.totalDurationMs || baseRes.durationMs;
+        const maxLatencyMs = testDef?.assertions?.maxLatencyMs;
+        const latencyFailed = Boolean(maxLatencyMs && totalMs > maxLatencyMs);
+        const statusMatches =
+          String(observedStatus) === String(baseRes.expectedStatus || '200');
+        const pass = !latencyFailed && statusMatches;
+        const errors: string[] = [...baseRes.errors];
+        if (!statusMatches) {
+          const mismatchMsg = `Expected HTTP ${baseRes.expectedStatus || '200'}, received HTTP ${observedStatus}`;
+          if (!errors.includes(mismatchMsg)) errors.push(mismatchMsg);
+        }
+        if (latencyFailed) {
+          errors.push(
+            `Observed ${totalMs}ms exceeded maxLatencyMs assertion (${maxLatencyMs}ms)`
+          );
+        }
+
         return {
           ...baseRes,
+          pass,
+          errors,
           actualStatus: observedStatus,
-          durationMs: liveFlow.summary.totalDurationMs || baseRes.durationMs,
+          durationMs: totalMs,
           capturedHeaders: mergedHeaders,
           capturedCookies: mergedCookies,
           redirectChain: mappedHops,
           httpFlowSummary: {
             ...liveFlow.summary,
             resolvedEdgeIp: finalResolvedEdgeIp,
-            finalUrl: liveFlow.summary.finalUrl.replace(canonicalHost, envHost),
+            finalUrl: rewriteDisplayHost(liveFlow.summary.finalUrl),
           },
           stagingEdgeIp: finalResolvedEdgeIp,
           edgeHostname,
-          note: `Live HTTP Flow (${liveFlow.summary.totalHops} ${
+          note: `[${ctx.workerLabel}] ${typeMeta.shortLabel} (${liveFlow.summary.totalHops} ${
             liveFlow.summary.totalHops === 1 ? 'hop' : 'hops'
-          } · ${liveFlow.summary.protocol} · ${
+          } · ${typeMeta.defaultProtocol} · ${
             liveFlow.summary.tlsVersion
           }) via ${popCode} (${finalResolvedEdgeIp})`,
         };
       } catch {
         return baseRes;
       }
-    })
-  );
+    },
+  });
 
   const finishedAt = new Date();
   const key = `run-${appId}-${envId}-${network}-${runNumber}-${Date.now()

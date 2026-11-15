@@ -8,14 +8,19 @@
  * ============================================================================
  */
 
-import { AcceptedRule, AppConfig, RunRecord } from '../engine/types';
+import { AcceptedRule, AppConfig, RunRecord, TestFolder } from '../engine/types';
 import {
   DEFAULT_TEMPLATE_CONFIG,
+  PROPERTY_TEST_SUITES,
   ReadyReportDefinition,
   TemplateConfig,
   TestCaseDefinition,
   resolvePropertyHostname,
 } from '../config/template.config';
+import {
+  DEFAULT_TEST_FOLDERS,
+  normalizeSuiteWithCatchpointDefaults,
+} from '../engine/catchpointCatalog';
 import {
   INITIAL_RULES,
   INITIAL_RUNS,
@@ -30,7 +35,10 @@ export interface PersistedPortalState {
   dataSourceMode: DataSourceMode;
   remoteApiBaseUrl: string;
   apps: AppConfig[];
+  customTopologyEdited?: boolean;
   testSuite: TestCaseDefinition[];
+  suitesByAppId?: Record<string, TestCaseDefinition[]>;
+  folders?: TestFolder[];
   runs: RunRecord[];
   readyReports: ReadyReportDefinition[];
   acceptedRules: AcceptedRule[];
@@ -90,12 +98,21 @@ export function getInitialPortalState(): PersistedPortalState {
   const defaultBaseKey =
     INITIAL_RUNS.find((r) => r.target === 'www.prod.prod')?.key || '';
 
+  const defaultSuitesByAppId: Record<string, TestCaseDefinition[]> = {};
+  for (const prop of DEFAULT_TEMPLATE_CONFIG.properties) {
+    defaultSuitesByAppId[prop.id] = normalizeSuiteWithCatchpointDefaults(
+      PROPERTY_TEST_SUITES[prop.id] || DEFAULT_TEMPLATE_CONFIG.testSuite
+    );
+  }
+
   return {
     version: CURRENT_VERSION,
     dataSourceMode: 'remote-api',
     remoteApiBaseUrl: '/api/v1',
     apps: DEFAULT_TEMPLATE_CONFIG.properties,
-    testSuite: DEFAULT_TEMPLATE_CONFIG.testSuite,
+    testSuite: defaultSuitesByAppId.www || normalizeSuiteWithCatchpointDefaults(DEFAULT_TEMPLATE_CONFIG.testSuite),
+    suitesByAppId: defaultSuitesByAppId,
+    folders: DEFAULT_TEST_FOLDERS,
     runs: INITIAL_RUNS,
     readyReports: [],
     acceptedRules: INITIAL_RULES,
@@ -149,23 +166,34 @@ export function loadPersistedPortalState(): PersistedPortalState {
     if (
       parsed.version !== CURRENT_VERSION ||
       !Array.isArray(parsed.apps) ||
-      parsed.apps.length === 0 ||
-      liveOnlyRuns.length === 0
+      parsed.apps.length === 0
     ) {
       return fallback;
     }
-    // Ensure new template properties (apac, emea, americas, japan, uk, germany) are always merged
     const existingAppIds = new Set((parsed.apps || []).map((a) => a.id));
-    const mergedApps = [
-      ...(parsed.apps || []),
-      ...DEFAULT_TEMPLATE_CONFIG.properties.filter((p) => !existingAppIds.has(p.id)),
-    ];
+    const mergedApps = parsed.customTopologyEdited
+      ? parsed.apps
+      : [
+          ...(parsed.apps || []),
+          ...DEFAULT_TEMPLATE_CONFIG.properties.filter((p) => !existingAppIds.has(p.id)),
+        ];
+
+    const mergedSuitesByAppId: Record<string, TestCaseDefinition[]> = {
+      ...(fallback.suitesByAppId || {}),
+      ...(parsed.suitesByAppId || {}),
+    };
+    const mergedFolders: TestFolder[] =
+      Array.isArray(parsed.folders) && parsed.folders.length > 0
+        ? parsed.folders
+        : fallback.folders || DEFAULT_TEST_FOLDERS;
 
     return {
       ...fallback,
       ...parsed,
       apps: mergedApps,
-      runs: liveOnlyRuns,
+      suitesByAppId: mergedSuitesByAppId,
+      folders: mergedFolders,
+      runs: liveOnlyRuns.length > 0 ? liveOnlyRuns : fallback.runs,
     };
   } catch {
     return fallback;
@@ -176,7 +204,6 @@ export function savePersistedPortalState(state: PersistedPortalState): void {
   if (typeof window === 'undefined' || !window.localStorage) return;
   try {
     const liveRuns = state.runs.filter((r) => !isDummySeededRun(r));
-    if (liveRuns.length === 0) return;
     window.localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({

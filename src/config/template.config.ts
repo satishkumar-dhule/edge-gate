@@ -8,7 +8,12 @@
  * ============================================================================
  */
 
-import { AppConfig } from '../engine/types';
+import {
+  AppConfig,
+  CatchpointTestType,
+  TestAssertions,
+  TransactionStep,
+} from '../engine/types';
 
 export interface TestCaseDefinition {
   id: string;
@@ -19,6 +24,28 @@ export interface TestCaseDefinition {
   enabled?: boolean;
   visualGate?: boolean | string;
   critical?: boolean;
+  // Catchpoint-compatible configuration & organization fields
+  testType?: CatchpointTestType;
+  monitorEngine?: string;
+  folderId?: string;
+  description?: string;
+  targetHost?: string;
+  httpMethod?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'QUERY';
+  requestHeaders?: Record<string, string>;
+  requestBody?: string;
+  port?: number;
+  dnsRecordType?: 'A' | 'AAAA' | 'CNAME' | 'MX' | 'TXT' | 'NS' | 'SRV' | 'CAA';
+  dnsServer?: string;
+  sslMinExpiryDays?: number;
+  bgpPrefix?: string;
+  bgpOriginAsn?: string;
+  transactionSteps?: TransactionStep[];
+  assertions?: TestAssertions;
+  scheduleIntervalMin?: number;
+  slaWarningMs?: number;
+  slaCriticalMs?: number;
+  tags?: string[];
+  order?: number;
 }
 
 export interface ReadyReportDefinition {
@@ -92,12 +119,12 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
       'Live HTTP Flow, Header, Set-Cookie & AWS Bedrock Nova Lite Visual Verification for salesforce.com',
     defaultDomain: 'salesforce.com',
     defaultOperator: {
-      email: 'user-nvaupcuppghi@salesforce.com',
+      email: 'user-tcchhlxprfng@salesforce.com',
       role: 'Lead Edge Release Engineer',
-      account: 'SFDC-EDGE-030771555103 (AWS 030771555103 · Akamai Prod + Staging)',
+      account: 'SFDC-EDGE-735234585484 (AWS 735234585484 · Akamai Prod + Staging)',
     },
     accountOptions: [
-      'SFDC-EDGE-030771555103 (AWS 030771555103 · Akamai Prod + Staging)',
+      'SFDC-EDGE-735234585484 (AWS 735234585484 · Akamai Prod + Staging)',
       'SFDC-TRAILHEAD-030771555103 (Trailhead & Developer Edge)',
       'SFDC-TRUST-GOV (Salesforce Trust & GovCloud Edge)',
     ],
@@ -130,7 +157,7 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
       { id: 'eu-west-1', label: 'eu-west-1 (Ireland)' },
       { id: 'ap-northeast-1', label: 'ap-northeast-1 (Tokyo)' },
     ],
-    s3Bucket: 's3://salesforce-akamai-synthetics-030771555103-us-east-1',
+    s3Bucket: 's3://salesforce-akamai-synthetics-735234585484-us-east-1',
     dynamodbTable: 'salesforce-synthetics-gate-state',
     mcpServerEndpoint: '/api/v1/mcp/rpc',
     mcpEndpoint: '/api/v1/mcp/rpc',

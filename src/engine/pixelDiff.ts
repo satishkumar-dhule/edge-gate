@@ -38,6 +38,8 @@ export interface LogicalVisualDiffInput {
   baselineLabel?: string;
   pageName?: string;
   url?: string;
+  candidateStatus?: number;
+  baselineStatus?: number;
 }
 
 export interface LogicalVisualExplanation {
@@ -423,12 +425,60 @@ export function describeVisualDiffLogically(
   input: LogicalVisualDiffInput
 ): LogicalVisualExplanation {
   const pct = typeof input.pixelDiffPercent === 'number' ? input.pixelDiffPercent : 0;
-  const verdict = classifyVisualVerdictFromPixelDiff(pct);
   const sideA = formatEnvironmentSideLabel(input.candidateLabel, 'Staging');
   const sideB = formatEnvironmentSideLabel(input.baselineLabel, 'Production');
   const pageContext = input.pageName ? ` on ${input.pageName}` : '';
   const z = input.zones;
   const box = input.changedBox;
+  const candStatus =
+    typeof input.candidateStatus === 'number' && input.candidateStatus > 0
+      ? input.candidateStatus
+      : undefined;
+  const baseStatus =
+    typeof input.baselineStatus === 'number' && input.baselineStatus > 0
+      ? input.baselineStatus
+      : undefined;
+
+  // Pattern 0: Unified HTTP Status & Screenshot Gate — HTTP error (>= 400, e.g. 403 Forbidden) can NEVER be 'same'
+  if ((candStatus && candStatus >= 400) || (baseStatus && baseStatus >= 400)) {
+    const formatErrLabel = (code: number) =>
+      code === 403
+        ? 'HTTP 403 Forbidden (Access Denied / WAF block screen)'
+        : code === 401
+        ? 'HTTP 401 Unauthorized screen'
+        : code === 404
+        ? 'HTTP 404 Not Found error screen'
+        : `HTTP ${code} error response screen`;
+
+    if (candStatus && candStatus >= 400 && (!baseStatus || baseStatus < 400)) {
+      return {
+        verdict: 'different',
+        severityLabel: 'Major Layout Shift',
+        affectedArea: `Full Viewport (HTTP ${candStatus} Error vs HTTP ${baseStatus ?? 200})`,
+        shortCallout: `HTTP ${candStatus} error screen on ${sideA} vs HTTP ${baseStatus ?? 200} on ${sideB}`,
+        summary: `${sideA} returned ${formatErrLabel(candStatus)} during the unified browser probe, whereas ${sideB} rendered the live HTTP ${baseStatus ?? 200} page${pageContext}.`,
+      };
+    }
+    if (baseStatus && baseStatus >= 400 && (!candStatus || candStatus < 400)) {
+      return {
+        verdict: 'different',
+        severityLabel: 'Major Layout Shift',
+        affectedArea: `Full Viewport (HTTP ${candStatus ?? 200} vs HTTP ${baseStatus} Error)`,
+        shortCallout: `HTTP ${candStatus ?? 200} on ${sideA} vs HTTP ${baseStatus} error screen on ${sideB}`,
+        summary: `${sideB} returned ${formatErrLabel(baseStatus)} during the unified browser probe, whereas ${sideA} rendered the live HTTP ${candStatus ?? 200} page${pageContext}.`,
+      };
+    }
+    const errCode = candStatus || baseStatus || 403;
+    return {
+      verdict: 'different',
+      severityLabel: 'Major Layout Shift',
+      affectedArea: `Full Viewport (HTTP ${errCode} Error Response)`,
+      shortCallout: `HTTP ${errCode} error screen rendered on both targets`,
+      summary: `Both ${sideA} (HTTP ${candStatus ?? errCode}) and ${sideB} (HTTP ${baseStatus ?? errCode}) returned an error response screen during the unified browser probe instead of the expected page layout${pageContext}.`,
+    };
+  }
+
+  const verdict = classifyVisualVerdictFromPixelDiff(pct);
 
   if (verdict === 'same') {
     return {
@@ -593,6 +643,24 @@ export function humanizeVisualSummary(
   rawSummary?: string,
   context: Partial<LogicalVisualDiffInput> = {}
 ): string {
+  const hasErrorStatus =
+    (typeof context.candidateStatus === 'number' && context.candidateStatus >= 400) ||
+    (typeof context.baselineStatus === 'number' && context.baselineStatus >= 400);
+
+  if (hasErrorStatus) {
+    return describeVisualDiffLogically({
+      pixelDiffPercent: context.pixelDiffPercent ?? 100,
+      changedBox: context.changedBox ?? { x: 0, y: 0, w: 100, h: 100 },
+      zones: context.zones ?? null,
+      candidateLabel: context.candidateLabel,
+      baselineLabel: context.baselineLabel,
+      pageName: context.pageName,
+      url: context.url,
+      candidateStatus: context.candidateStatus,
+      baselineStatus: context.baselineStatus,
+    }).summary;
+  }
+
   if (!rawSummary || !rawSummary.trim()) {
     return describeVisualDiffLogically({
       pixelDiffPercent: context.pixelDiffPercent ?? 0,
@@ -602,6 +670,8 @@ export function humanizeVisualSummary(
       baselineLabel: context.baselineLabel,
       pageName: context.pageName,
       url: context.url,
+      candidateStatus: context.candidateStatus,
+      baselineStatus: context.baselineStatus,
     }).summary;
   }
 
@@ -647,6 +717,8 @@ export function humanizeVisualSummary(
       baselineLabel: context.baselineLabel,
       pageName: context.pageName,
       url: context.url,
+      candidateStatus: context.candidateStatus,
+      baselineStatus: context.baselineStatus,
     }).summary;
   }
 
@@ -717,7 +789,14 @@ export function measureBrowserImagePairPixelDiff(
       const dataA = ctxA.getImageData(0, 0, width, height).data;
       const dataB = ctxB.getImageData(0, 0, width, height).data;
 
-      return compareRgbaFrames(dataA, dataB, width, height, 18);
+      const { defaultMultithreadedPixelPool } = await import('./concurrencyEngine');
+      return await defaultMultithreadedPixelPool.compareFramesMultithreaded(
+        dataA,
+        dataB,
+        width,
+        height,
+        18
+      );
     } catch {
       browserPairDiffCache.delete(cacheKey);
       return null;

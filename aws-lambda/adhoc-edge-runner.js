@@ -597,9 +597,7 @@ async function probeMultiHopCheck({ check, appId, canonicalHost, edgeHostname, r
     primaryHop.status < 400
       ? expectedCode
       : primaryHop.status;
-  const pass =
-    actualStatus === expectedCode ||
-    (expectedCode === 200 && actualStatus >= 200 && actualStatus < 400);
+  const pass = actualStatus === expectedCode;
 
   const totalDnsMs = hops.reduce((s, h) => s + h.timings.dnsMs, 0);
   const totalTcpMs = hops.reduce((s, h) => s + h.timings.tcpMs, 0);
@@ -659,8 +657,13 @@ async function probeMultiHopCheck({ check, appId, canonicalHost, edgeHostname, r
     },
     probedAt: capturedNowIso,
     probeCount: Number(check.probeCount || 1),
-    screenshotRevision: capturedRev,
-    screenshotCapturedAt: capturedNowIso,
+    unifiedProbe: false,
+    screenshotCaptured: false,
+    screenshotSource: 'none',
+    captureEngine: 'http-only-no-browser',
+    screenshotRevision: 0,
+    screenshotCapturedAt: null,
+    screenshotUrl: null,
     s3ScreenshotKey: `s3://${S3_BUCKET || 'synthetics-artifacts'}/${s3PortalScreenshotKey}`,
     s3HarKey: `runs/${canonicalHost}/${check.id}.har`,
   };

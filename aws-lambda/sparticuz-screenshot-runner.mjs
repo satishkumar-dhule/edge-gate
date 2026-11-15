@@ -177,12 +177,16 @@ export const handler = async (event = {}) => {
     }
 
     const navTimeoutMs = Math.min(Number(event.timeoutMs || 16000), 18000);
-    await page
+    const navResp = await page
       .goto(rawUrl, {
         waitUntil: 'domcontentloaded',
         timeout: navTimeoutMs,
       })
       .catch(() => null);
+    const actualStatus =
+      navResp && typeof navResp.status === 'function' ? Number(navResp.status() || 200) : 200;
+    const capturedHeaders =
+      navResp && typeof navResp.headers === 'function' ? navResp.headers() || {} : {};
 
     await page.waitForNetworkIdle({ idleTime: 450, timeout: 3000 }).catch(() => null);
     await page.evaluate(() => document.fonts?.ready).catch(() => null);
@@ -203,6 +207,10 @@ export const handler = async (event = {}) => {
         captured: false,
         bytes: 0,
         sha256: '',
+        actualStatus,
+        capturedHeaders,
+        unifiedProbe: true,
+        unifiedSessionId: `usp-${revision}`,
         captureEngine: 'aws-lambda-sparticuz-chromium',
         error: 'Chromium produced an empty screenshot buffer',
       };
@@ -221,6 +229,7 @@ export const handler = async (event = {}) => {
       sha256: sha256Short,
       targetid: targetId,
       testid: testId,
+      httpstatus: String(actualStatus),
       engine: 'aws-lambda-sparticuz-chromium',
     };
 
@@ -264,6 +273,10 @@ export const handler = async (event = {}) => {
       captured: isCaptured,
       bytes: screenshotBytes,
       sha256: sha256Short,
+      actualStatus,
+      capturedHeaders,
+      unifiedProbe: true,
+      unifiedSessionId: `usp-${revision}`,
       s3Key: S3_BUCKET ? `s3://${S3_BUCKET}/${liveKey}` : liveKey,
       liveKey,
       portalKey,

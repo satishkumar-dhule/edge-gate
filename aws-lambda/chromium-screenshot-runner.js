@@ -126,12 +126,16 @@ exports.handler = async (event = {}) => {
     }
 
     const page = await ctx.newPage();
-    await page
+    const navResp = await page
       .goto(rawUrl, {
         waitUntil: 'load',
         timeout: Number(event.timeoutMs || 18000),
       })
       .catch(() => null);
+    const actualStatus =
+      navResp && typeof navResp.status === 'function' ? Number(navResp.status() || 200) : 200;
+    const capturedHeaders =
+      navResp && typeof navResp.headers === 'function' ? navResp.headers() || {} : {};
     await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => null);
     await page.evaluate(() => document.fonts?.ready).catch(() => null);
     await dismissCookieOverlayIfPresent(page);
@@ -153,6 +157,10 @@ exports.handler = async (event = {}) => {
         captured: false,
         bytes: 0,
         sha256: '',
+        actualStatus,
+        capturedHeaders,
+        unifiedProbe: true,
+        unifiedSessionId: `usp-${revision}`,
         captureEngine: 'aws-lambda-chromium',
         error: 'Chromium produced an empty screenshot buffer',
       };
@@ -171,6 +179,7 @@ exports.handler = async (event = {}) => {
       sha256: sha256Short,
       targetid: targetId,
       testid: testId,
+      httpstatus: String(actualStatus),
       engine: 'aws-lambda-chromium',
     };
 
@@ -214,6 +223,10 @@ exports.handler = async (event = {}) => {
       captured: isCaptured,
       bytes: screenshotBytes,
       sha256: sha256Short,
+      actualStatus,
+      capturedHeaders,
+      unifiedProbe: true,
+      unifiedSessionId: `usp-${revision}`,
       s3Key: S3_BUCKET ? `s3://${S3_BUCKET}/${liveKey}` : liveKey,
       liveKey,
       portalKey,

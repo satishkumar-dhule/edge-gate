@@ -408,6 +408,8 @@ export const SuitePopLauncherModal: React.FC<{
   initialTargetAppId: string;
   initialPopId: string;
   suiteScaleCount: number;
+  suitesByAppId?: Record<string, import('../config/template.config').TestCaseDefinition[]>;
+  activeTestSuite?: import('../config/template.config').TestCaseDefinition[];
   onLaunch: (params: {
     suiteAppId: string;
     targetAppId: string;
@@ -423,6 +425,8 @@ export const SuitePopLauncherModal: React.FC<{
   initialTargetAppId,
   initialPopId,
   suiteScaleCount,
+  suitesByAppId = {},
+  activeTestSuite,
   onLaunch,
 }) => {
   const [suiteAppId, setSuiteAppId] = useState(initialSuiteAppId);
@@ -451,9 +455,15 @@ export const SuitePopLauncherModal: React.FC<{
   const selectedPop =
     GLOBAL_EXECUTION_POPS.find((p) => p.id === popId) ||
     GLOBAL_EXECUTION_POPS[0];
-  const previewSuite = getPropertyTestSuite(suiteAppId, DEFAULT_TEMPLATE_CONFIG);
+  const previewSuite =
+    suitesByAppId[suiteAppId] ||
+    (suiteAppId === initialTargetAppId && activeTestSuite ? activeTestSuite : undefined) ||
+    getPropertyTestSuite(suiteAppId, {
+      ...DEFAULT_TEMPLATE_CONFIG,
+      properties: apps,
+    });
   const effectiveChecksCount =
-    suiteScaleCount > 8 ? suiteScaleCount : previewSuite.length;
+    suiteScaleCount >= 64 ? suiteScaleCount : previewSuite.length;
 
   return (
     <div

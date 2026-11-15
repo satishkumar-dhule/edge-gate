@@ -30,6 +30,7 @@ import {
   humanizeVisualSummary,
   type VisualZoneMetrics,
 } from '../engine/pixelDiff';
+import { getCatchpointTypeMeta } from '../engine/catchpointCatalog';
 import liveScreenshotManifest from './liveScreenshotManifest.json';
 
 export const APPS: AppConfig[] = DEFAULT_TEMPLATE_CONFIG.properties;
@@ -369,20 +370,29 @@ export function generateTestResults(
     (tc) => tc.enabled !== false
   );
 
+  const appObj = config.properties.find((p) => p.id === appId);
+  const envObj = appObj?.envs.find((e) => e.id === envId);
+  const effectivePopOverride = popOverrideId || envObj?.defaultPopId;
+
   return activeSuite.map((tc, idx) => {
     const id = tc.id;
-    let actualStatus = parseInt(tc.expectedStatus, 10) || 200;
+    const typeMeta = getCatchpointTypeMeta(tc.testType);
+    const targetPath = tc.path || '/';
+    const resolvedHostForEnv = tc.targetHost?.trim() || envHost;
+    const resolvedCanonicalHost = tc.targetHost?.trim() || canonicalHost;
+    let actualStatus =
+      parseInt(tc.expectedStatus || typeMeta.defaultExpectedStatus, 10) || 200;
     let pass = true;
     const errors: string[] = [];
 
     const regionalNode = resolveRegionalEdgeNode(
       appId,
-      `https://${envHost}${tc.path}`,
-      popOverrideId
+      `https://${resolvedHostForEnv}${targetPath}`,
+      effectivePopOverride
     );
-    const edgeIp = isStaging
-      ? regionalNode.stagingEdgeIp
-      : regionalNode.prodEdgeIp;
+    const edgeIp =
+      (isStaging ? envObj?.edgeIps?.staging : envObj?.edgeIps?.prod) ||
+      (isStaging ? regionalNode.stagingEdgeIp : regionalNode.prodEdgeIp);
     const popCode = isStaging
       ? regionalNode.stagingPopCode
       : regionalNode.prodPopCode;
@@ -392,7 +402,10 @@ export function generateTestResults(
     const popPrefix = popCode.split('-')[0] || 'IAD';
 
     const capturedHeaders: TestResult['capturedHeaders'] = {
-      'content-type': 'text/html; charset=utf-8',
+      'content-type':
+        tc.testType === 'api' || tc.testType === 'grpc'
+          ? 'application/json; charset=utf-8'
+          : 'text/html; charset=utf-8',
       'content-language': regionalNode.contentLanguage,
       'cache-control': 'public, max-age=3600',
       'x-check-cacheable': 'YES',
@@ -407,11 +420,47 @@ export function generateTestResults(
       'x-cache': isStaging
         ? `TCP_MISS from ${deployEdgeHost}`
         : `TCP_HIT from ${deployEdgeHost}`,
-      'x-cache-key': `/L/12844/542100/1d/${envHost}${tc.path}`,
-      'x-true-cache-key': `/L/12844/542100/1d/${canonicalHost}${tc.path}`,
+      'x-cache-key': `/L/12844/542100/1d/${resolvedHostForEnv}${targetPath}`,
+      'x-true-cache-key': `/L/12844/542100/1d/${resolvedCanonicalHost}${targetPath}`,
       'x-akamai-request-id': `${isStaging ? 'stg' : 'prd'}-${popPrefix.toLowerCase()}-${
         isNewRun ? '99f' : '41a'
       }0${idx + 1}`,
+      'x-catchpoint-test-type': typeMeta.type,
+      'x-catchpoint-monitor': tc.monitorEngine || typeMeta.defaultMonitor,
+      'x-catchpoint-protocol': typeMeta.defaultProtocol,
+      ...(tc.port ? { 'x-catchpoint-port': String(tc.port) } : {}),
+      ...(tc.testType === 'dns-direct' || tc.testType === 'dns-experience'
+        ? {
+            'x-catchpoint-dns-record': `${tc.dnsRecordType || 'A'} ${resolvedHostForEnv} -> ${edgeIp}`,
+            'x-catchpoint-dns-ttl': '300s',
+            'x-catchpoint-dnssec': 'VALIDATED',
+          }
+        : {}),
+      ...(tc.testType === 'ssl'
+        ? {
+            'x-catchpoint-tls-protocol': 'TLSv1.3 (TLS_AES_256_GCM_SHA384)',
+            'x-catchpoint-ssl-expiry-days': String(Math.max(tc.sslMinExpiryDays || 90, 92)),
+          }
+        : {}),
+      ...(tc.testType === 'bgp'
+        ? {
+            'x-catchpoint-bgp-prefix': tc.bgpPrefix || `${edgeIp}/24`,
+            'x-catchpoint-bgp-asn': tc.bgpOriginAsn || 'AS20940 (Akamai)',
+          }
+        : {}),
+      ...(tc.testType === 'ping' || tc.testType === 'traceroute' || tc.testType === 'transport-tcp'
+        ? {
+            'x-catchpoint-packet-loss': '0%',
+            'x-catchpoint-rtt-ms': `${isStaging ? 24 : 18}ms`,
+          }
+        : {}),
+      ...(tc.transactionSteps && tc.transactionSteps.length > 0
+        ? {
+            'x-catchpoint-tx-steps': `${tc.transactionSteps.length} steps verified`,
+          }
+        : {}),
+      ...(envObj?.headers || {}),
+      ...(tc.requestHeaders || {}),
     };
 
     const capturedCookies: Record<string, string> = {
@@ -450,7 +499,7 @@ export function generateTestResults(
 
     if (tc.expectedStatus === '301' || (id === 'T04' && appId === 'www')) {
       actualStatus = 301;
-      capturedHeaders['location'] = `https://${envHost}/crm/`;
+      capturedHeaders['location'] = `https://${resolvedHostForEnv}/crm/`;
     }
 
     if (id === 'T05' && isNewRun && isStaging) {
@@ -458,12 +507,19 @@ export function generateTestResults(
     }
 
     const durationMs = isStaging ? 82 + idx * 9 : 56 + idx * 6;
+    if (tc.assertions?.maxLatencyMs && durationMs > tc.assertions.maxLatencyMs) {
+      pass = false;
+      errors.push(
+        `Latency ${durationMs}ms exceeded configured assertion threshold (${tc.assertions.maxLatencyMs}ms)`
+      );
+    }
+
     const { redirectChain, httpFlowSummary } = buildHttpFlowForTest({
       appId,
       testId: id,
-      canonicalHost,
-      envHost,
-      path: tc.path,
+      canonicalHost: resolvedCanonicalHost,
+      envHost: resolvedHostForEnv,
+      path: targetPath,
       isStaging,
       edgeHostname,
       edgeIp,
@@ -471,17 +527,24 @@ export function generateTestResults(
       durationMs,
       capturedHeaders,
       capturedCookies,
-      popOverrideId,
+      popOverrideId: effectivePopOverride,
     });
+
+    const protocolUrl =
+      tc.testType === 'websocket'
+        ? `wss://${resolvedHostForEnv}${targetPath}`
+        : tc.testType === 'ftp'
+        ? `sftp://${resolvedHostForEnv}${targetPath}`
+        : `https://${resolvedHostForEnv}${targetPath}`;
 
     return {
       id,
       name: tc.name,
-      url: `https://${envHost}${tc.path}`,
-      canonicalUrl: `https://${canonicalHost}${tc.path}`,
+      url: protocolUrl,
+      canonicalUrl: `https://${resolvedCanonicalHost}${targetPath}`,
       pass,
       errors,
-      expectedStatus: tc.expectedStatus,
+      expectedStatus: tc.expectedStatus || typeMeta.defaultExpectedStatus,
       actualStatus,
       durationMs,
       capturedHeaders,
@@ -490,7 +553,7 @@ export function generateTestResults(
       httpFlowSummary,
       stagingEdgeIp: edgeIp,
       edgeHostname,
-      note: `HTTP/2 (${httpFlowSummary.totalHops} ${
+      note: `${typeMeta.shortLabel} · ${typeMeta.defaultProtocol} (${httpFlowSummary.totalHops} ${
         httpFlowSummary.totalHops === 1 ? 'hop' : 'hops'
       }) via ${popCode} (${edgeIp})`,
     };
@@ -610,6 +673,7 @@ export const INITIAL_RULES: AcceptedRule[] = [
 ];
 
 export interface BuildComparisonOptions extends ApplyRulesOptions {
+  apps?: AppConfig[];
   aiJudgeOverrides?: Record<
     string,
     {
@@ -633,9 +697,13 @@ export function buildInitialComparison(
   options: BuildComparisonOptions = {}
 ): ComparisonRecord {
   const comparisonId = `${candidateRun.target}-vs-${baselineRun.target}`;
-  const appConfig = APPS.find((a) => a.id === candidateRun.appId);
+  const resolvedApps =
+    options.apps && options.apps.length > 0 ? options.apps : APPS;
+  const appConfig = resolvedApps.find((a) => a.id === candidateRun.appId);
+  const baseAppConfig =
+    resolvedApps.find((a) => a.id === baselineRun.appId) || appConfig;
   const candEnv = appConfig?.envs.find((e) => e.id === candidateRun.envId);
-  const baseEnv = appConfig?.envs.find((e) => e.id === baselineRun.envId);
+  const baseEnv = baseAppConfig?.envs.find((e) => e.id === baselineRun.envId);
 
   const items: ComparisonItem[] = candidateRun.results.map((candRes) => {
     const baseRes = baselineRun.results.find((b) => b.id === candRes.id);
@@ -655,7 +723,9 @@ export function buildInitialComparison(
       }
     >;
     const manifestEntry = manifestMap[`${candidateRun.appId}-${candRes.id}`];
-    const measuredDiff =
+    const hasHttpErrorStatus =
+      candRes.actualStatus >= 400 || Boolean(baseRes && baseRes.actualStatus >= 400);
+    const rawMeasuredDiff =
       candidateRun.key === baselineRun.key
         ? 0
         : typeof candRes.pixelDiffPercent === 'number'
@@ -663,14 +733,22 @@ export function buildInitialComparison(
         : typeof manifestEntry?.pixelDiffPercent === 'number'
         ? manifestEntry.pixelDiffPercent
         : 0;
+    const measuredDiff =
+      hasHttpErrorStatus && candidateRun.key !== baselineRun.key
+        ? Math.max(rawMeasuredDiff, 94.8)
+        : rawMeasuredDiff;
 
     const baseLogical = describeVisualDiffLogically({
       pixelDiffPercent: measuredDiff,
-      changedBox: manifestEntry?.changedBox ?? null,
+      changedBox:
+        manifestEntry?.changedBox ??
+        (hasHttpErrorStatus ? { x: 0, y: 0, w: 100, h: 100 } : null),
       candidateLabel: candidateRun.network,
       baselineLabel: baselineRun.network,
       pageName: candRes.name,
       url: candRes.canonicalUrl,
+      candidateStatus: candRes.actualStatus,
+      baselineStatus: baseRes?.actualStatus,
     });
 
     let visualResult: NonNullable<ComparisonItem['visualResult']> = {
@@ -685,9 +763,9 @@ export function buildInitialComparison(
       primaryModel: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
     };
 
-    if (measuredDiff > 0.1 && candidateRun.key !== baselineRun.key) {
+    if ((measuredDiff > 0.1 || hasHttpErrorStatus) && candidateRun.key !== baselineRun.key) {
       visualResult = {
-        verdict: measuredDiff > 5.0 ? 'different' : 'minor',
+        verdict: hasHttpErrorStatus || measuredDiff > 5.0 ? 'different' : 'minor',
         costGate: 'ai-judged',
         costGateSkippedAi: false,
         pixelDiffPercent: measuredDiff,
@@ -697,8 +775,12 @@ export function buildInitialComparison(
         differences: [
           {
             description: baseLogical.shortCallout,
-            severity: measuredDiff > 5.0 ? 'major' : 'minor',
-            ...(manifestEntry?.changedBox ? { box: manifestEntry.changedBox } : {}),
+            severity: hasHttpErrorStatus || measuredDiff > 5.0 ? 'major' : 'minor',
+            ...(manifestEntry?.changedBox
+              ? { box: manifestEntry.changedBox }
+              : hasHttpErrorStatus
+              ? { box: { x: 2, y: 2, w: 96, h: 96 } }
+              : {}),
           },
         ],
         primaryModel: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
@@ -709,11 +791,20 @@ export function buildInitialComparison(
       options.aiJudgeOverrides?.[`${candidateRun.appId}-${candRes.id}`] ??
       options.aiJudgeOverrides?.[candRes.id];
     if (aiOverride && candidateRun.key !== baselineRun.key) {
-      const effectivePixelDiff =
-        typeof aiOverride.pixelDiffPercent === 'number'
-          ? aiOverride.pixelDiffPercent
-          : visualResult.pixelDiffPercent ?? 0;
-      const effectiveBox = aiOverride.changedBox ?? manifestEntry?.changedBox ?? undefined;
+      const effectivePixelDiff = hasHttpErrorStatus
+        ? Math.max(
+            94.8,
+            typeof aiOverride.pixelDiffPercent === 'number'
+              ? aiOverride.pixelDiffPercent
+              : visualResult.pixelDiffPercent ?? 0
+          )
+        : typeof aiOverride.pixelDiffPercent === 'number'
+        ? aiOverride.pixelDiffPercent
+        : visualResult.pixelDiffPercent ?? 0;
+      const effectiveBox =
+        aiOverride.changedBox ??
+        manifestEntry?.changedBox ??
+        (hasHttpErrorStatus ? { x: 2, y: 2, w: 96, h: 96 } : undefined);
       const overrideLogical = describeVisualDiffLogically({
         pixelDiffPercent: effectivePixelDiff,
         changedBox: effectiveBox ?? null,
@@ -722,6 +813,8 @@ export function buildInitialComparison(
         baselineLabel: baselineRun.network,
         pageName: candRes.name,
         url: candRes.canonicalUrl,
+        candidateStatus: candRes.actualStatus,
+        baselineStatus: baseRes?.actualStatus,
       });
       const resolvedSummary = humanizeVisualSummary(aiOverride.summary, {
         pixelDiffPercent: effectivePixelDiff,
@@ -731,19 +824,25 @@ export function buildInitialComparison(
         baselineLabel: baselineRun.network,
         pageName: candRes.name,
         url: candRes.canonicalUrl,
+        candidateStatus: candRes.actualStatus,
+        baselineStatus: baseRes?.actualStatus,
       });
-      const resolvedShortCallout =
-        aiOverride.shortCallout || overrideLogical.shortCallout;
-      const resolvedArea =
-        aiOverride.affectedArea || overrideLogical.affectedArea;
-      const diffBadgeDescription =
-        aiOverride.shortCallout ||
-        (aiOverride.summary && aiOverride.summary.length <= 80 && !/pixel/i.test(aiOverride.summary)
-          ? aiOverride.summary
-          : resolvedShortCallout);
+      const effectiveVerdict = hasHttpErrorStatus ? 'different' : aiOverride.verdict;
+      const resolvedShortCallout = hasHttpErrorStatus
+        ? overrideLogical.shortCallout
+        : aiOverride.shortCallout || overrideLogical.shortCallout;
+      const resolvedArea = hasHttpErrorStatus
+        ? overrideLogical.affectedArea
+        : aiOverride.affectedArea || overrideLogical.affectedArea;
+      const diffBadgeDescription = hasHttpErrorStatus
+        ? overrideLogical.shortCallout
+        : aiOverride.shortCallout ||
+          (aiOverride.summary && aiOverride.summary.length <= 80 && !/pixel/i.test(aiOverride.summary)
+            ? aiOverride.summary
+            : resolvedShortCallout);
 
       const overrideDifferences =
-        aiOverride.verdict === 'same'
+        effectiveVerdict === 'same'
           ? []
           : visualResult.differences && visualResult.differences.length > 0
           ? visualResult.differences.map((d, idx) =>
@@ -751,7 +850,7 @@ export function buildInitialComparison(
                 ? {
                     ...d,
                     description: diffBadgeDescription || d.description,
-                    severity: aiOverride.verdict === 'different' ? ('major' as const) : ('minor' as const),
+                    severity: effectiveVerdict === 'different' ? ('major' as const) : ('minor' as const),
                     ...(effectiveBox ? { box: effectiveBox } : {}),
                   }
                 : d
@@ -763,14 +862,14 @@ export function buildInitialComparison(
                   (aiOverride.summary && !/pixel/i.test(aiOverride.summary)
                     ? aiOverride.summary
                     : resolvedShortCallout),
-                severity: aiOverride.verdict === 'different' ? ('major' as const) : ('minor' as const),
+                severity: effectiveVerdict === 'different' ? ('major' as const) : ('minor' as const),
                 ...(effectiveBox ? { box: effectiveBox } : {}),
               },
             ];
 
       visualResult = {
         ...visualResult,
-        verdict: aiOverride.verdict,
+        verdict: effectiveVerdict,
         summary: resolvedSummary,
         affectedArea: resolvedArea,
         shortCallout: resolvedShortCallout,
@@ -778,10 +877,10 @@ export function buildInitialComparison(
         differences: overrideDifferences,
         costGate:
           aiOverride.costGate ??
-          (aiOverride.verdict === 'same' && effectivePixelDiff <= 0.1
+          (effectiveVerdict === 'same' && effectivePixelDiff <= 0.1
             ? 'identical-bytes'
             : 'ai-judged'),
-        costGateSkippedAi: aiOverride.verdict === 'same' && effectivePixelDiff <= 0.1,
+        costGateSkippedAi: effectiveVerdict === 'same' && effectivePixelDiff <= 0.1,
       };
     }
 

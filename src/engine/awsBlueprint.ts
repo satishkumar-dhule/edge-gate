@@ -45,6 +45,8 @@ export interface NovaLiteJudgeRequest {
   url?: string;
   candidateTarget: string;
   baselineTarget: string;
+  candidateStatus?: number;
+  baselineStatus?: number;
   s3CandidateUri?: string;
   s3BaselineUri?: string;
   pixelDiffPercent?: number;
@@ -81,24 +83,36 @@ export function evaluateNovaLiteVisualDiff(
   req: NovaLiteJudgeRequest,
   config: TemplateConfig = DEFAULT_TEMPLATE_CONFIG
 ): NovaLiteJudgeResponse {
-  const deltaPct = req.pixelDiffPercent !== undefined ? req.pixelDiffPercent : 0.0;
+  const hasHttpError =
+    (typeof req.candidateStatus === 'number' && req.candidateStatus >= 400) ||
+    (typeof req.baselineStatus === 'number' && req.baselineStatus >= 400);
+  const deltaPct =
+    req.pixelDiffPercent !== undefined
+      ? hasHttpError
+        ? Math.max(req.pixelDiffPercent, 94.8)
+        : req.pixelDiffPercent
+      : hasHttpError
+      ? 94.8
+      : 0.0;
   const logical = describeVisualDiffLogically({
     pixelDiffPercent: deltaPct,
-    changedBox: req.changedBox ?? null,
+    changedBox: req.changedBox ?? (hasHttpError ? { x: 0, y: 0, w: 100, h: 100 } : null),
     zones: req.zones ?? null,
     candidateLabel: req.candidateTarget,
     baselineLabel: req.baselineTarget,
     pageName: req.testName,
     url: req.url,
+    candidateStatus: req.candidateStatus,
+    baselineStatus: req.baselineStatus,
   });
 
-  if (deltaPct > 0.1) {
+  if (deltaPct > 0.1 || hasHttpError) {
     return {
       modelId: config.infrastructure.visualJudgeModel,
       provider: config.infrastructure.visualJudgeProvider,
       executionMode: 'deterministic-fallback',
       testId: req.testId,
-      verdict: logical.verdict === 'same' ? 'minor' : logical.verdict,
+      verdict: hasHttpError ? 'different' : logical.verdict === 'same' ? 'minor' : logical.verdict,
       pixelDiffPercent: deltaPct,
       confidence: 0.97,
       summary: `AWS Bedrock ${config.infrastructure.visualJudgeModel}: ${logical.summary}`,
@@ -108,7 +122,7 @@ export function evaluateNovaLiteVisualDiff(
         {
           region: logical.affectedArea,
           description: logical.shortCallout,
-          severity: deltaPct > 5.0 ? 'different' : 'minor',
+          severity: deltaPct > 5.0 || hasHttpError ? 'different' : 'minor',
         },
       ],
       evaluatedAt: new Date().toISOString(),
@@ -753,6 +767,25 @@ resource "aws_cloudwatch_metric_alarm" "canary_failed_alarm" {
   threshold           = 100
   dimensions          = { CanaryName = aws_synthetics_canary.property_gate[each.key].name }
   alarm_actions       = [aws_sns_topic.release_gate_alerts.arn]
+}
+
+# 8B. AWS SQS Distributed Probe Consumer Queue & Dead-Letter Queue (DLQ)
+resource "aws_sqs_queue" "probe_dlq" {
+  name                      = "akamai-gate-probe-dlq-\${var.environment}"
+  message_retention_seconds = 1209600
+  sqs_managed_sse_enabled   = true
+}
+
+resource "aws_sqs_queue" "probe_consumer_queue" {
+  name                       = "akamai-gate-probe-consumer-queue-\${var.environment}"
+  visibility_timeout_seconds = 90
+  message_retention_seconds  = 345600
+  receive_wait_time_seconds  = 10
+  sqs_managed_sse_enabled    = true
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.probe_dlq.arn
+    maxReceiveCount     = 3
+  })
 }
 
 # 9. Scale-to-Zero AWS Lambda Functions & API Gateway v2 ($0/idle Ad-Hoc Mode)

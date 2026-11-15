@@ -6,6 +6,7 @@ import {
   diagnoseCheckRootCause,
 } from '../engine/sreIntelligence';
 import {
+  renderLiveDomScreenshotDataUri,
   resolveApiScreenshotUrl,
   resolveLiveScreenshotUrl,
 } from '../engine/domScreenshotRenderer';
@@ -14,6 +15,8 @@ import {
   humanizeVisualSummary,
   measureBrowserImagePairPixelDiff,
 } from '../engine/pixelDiff';
+import { defaultMultithreadedPixelPool } from '../engine/concurrencyEngine';
+import type { TestCheckStreamStatus } from '../engine/runStreamEngine';
 import {
   Card,
   CardHeader,
@@ -72,7 +75,101 @@ export interface LiveProbeFeedback {
   canaryName?: string;
   canaryError?: string;
   persistedToRunKey?: string;
+  aiJudged?: boolean;
+  aiVerdict?: 'same' | 'minor' | 'different';
+  aiAffectedArea?: string;
+  aiShortCallout?: string;
+  aiSummary?: string;
 }
+
+export const LiveCheckExecutionStepper: React.FC<{
+  streamStatus?: TestCheckStreamStatus;
+  isRerunning?: boolean;
+  isRunningAi?: boolean;
+}> = ({ streamStatus, isRerunning, isRunningAi }) => {
+  const phase =
+    streamStatus?.phase && streamStatus.phase !== 'completed'
+      ? streamStatus.phase
+      : isRunningAi
+      ? 'judging-ai'
+      : isRerunning
+      ? 'capturing-screenshot'
+      : null;
+
+  if (!phase) return null;
+
+  const step1Done =
+    phase === 'capturing-screenshot' || phase === 'judging-ai';
+  const step1Active = phase === 'probing-http';
+  const step2Done = phase === 'judging-ai';
+  const step2Active = phase === 'capturing-screenshot';
+  const step3Active = phase === 'judging-ai';
+
+  return (
+    <div
+      data-testid="inspector-live-stream-status"
+      className="mx-3.5 mt-3 px-3 py-2 rounded-lg border border-sky-500/40 bg-sky-500/10 flex flex-wrap items-center justify-between gap-2 text-xs"
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <RotateCw className="w-3.5 h-3.5 text-sky-500 animate-spin shrink-0" />
+        <span className="font-mono text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-sky-500 text-zinc-950 shrink-0">
+          LIVE STREAM
+        </span>
+        {streamStatus?.workerLabel && (
+          <span className="font-mono text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border border-sky-500/40 bg-sky-500/15 text-sky-800 dark:text-sky-200 shrink-0">
+            WORKER {streamStatus.workerLabel}
+          </span>
+        )}
+        <span className="font-medium text-foreground truncate">
+          {streamStatus?.stepLabel ||
+            (step3Active
+              ? 'Step 3/3 · Evaluating AI Visual Judge opinion…'
+              : 'Step 2/3 · Capturing 1280×760 DOM screenshots…')}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-1 font-mono text-[10px] shrink-0">
+        <span
+          className={`px-2 py-0.5 rounded border ${
+            step1Done
+              ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-semibold'
+              : step1Active
+              ? 'border-sky-500 bg-sky-500/20 text-sky-700 dark:text-sky-200 font-bold'
+              : 'border-border bg-background/60 text-muted-foreground'
+          }`}
+        >
+          {step1Done ? '✓ 1. HTTP' : step1Active ? '● 1. HTTP…' : '1. HTTP'}
+        </span>
+        <span className="text-muted-foreground">→</span>
+        <span
+          className={`px-2 py-0.5 rounded border ${
+            step2Done
+              ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-semibold'
+              : step2Active
+              ? 'border-sky-500 bg-sky-500/20 text-sky-700 dark:text-sky-200 font-bold'
+              : 'border-border bg-background/60 text-muted-foreground'
+          }`}
+        >
+          {step2Done
+            ? '✓ 2. Capture'
+            : step2Active
+            ? '● 2. Capture…'
+            : '2. Capture'}
+        </span>
+        <span className="text-muted-foreground">→</span>
+        <span
+          className={`px-2 py-0.5 rounded border ${
+            step3Active
+              ? 'border-sky-500 bg-sky-500/20 text-sky-700 dark:text-sky-200 font-bold'
+              : 'border-border bg-background/60 text-muted-foreground'
+          }`}
+        >
+          {step3Active ? '● 3. AI Judge…' : '3. AI Judge'}
+        </span>
+      </div>
+    </div>
+  );
+};
 
 export const InspectorActionHeader: React.FC<{
   testId: string;
@@ -145,14 +242,14 @@ export const InspectorActionHeader: React.FC<{
             return (
               <span
                 data-testid="live-probe-badge"
-                className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-mono text-[11px] font-medium tabular-nums shrink-0 truncate max-w-[260px]"
+                className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-mono text-[11px] font-medium tabular-nums shrink-0 truncate max-w-[230px]"
                 title={`Live edge HTTP flow & screenshot checked at ${safeAt}${
                   lastProbedInfo.sha256 ? ` · SHA-256: ${lastProbedInfo.sha256}` : ''
                 }${lastProbedInfo.s3Key ? ` · S3: ${lastProbedInfo.s3Key}` : ''}`}
               >
                 <CheckCircle2 className="w-3 h-3 shrink-0" />
                 <span className="truncate">
-                  Probed #{lastProbedInfo.count} · {safeAt} · HTTP {lastProbedInfo.status} (
+                  Probed #{lastProbedInfo.count} · {lastProbedInfo.status} (
                   {lastProbedInfo.candMs}ms
                   {typeof lastProbedInfo.baseMs === 'number' ? ` / ${lastProbedInfo.baseMs}ms` : ''})
                 </span>
@@ -220,10 +317,10 @@ export const InspectorActionHeader: React.FC<{
           data-testid="rerun-probe-btn"
           onClick={onRerun}
           disabled={isRerunning}
-          title="Probe live HTTP flow & screenshot · Shortcut: R"
+          title="Run single unified check (live HTTP flow, headers, cookies, 1280×760 screenshot & AI opinion) · Shortcut: R"
         >
           <RotateCw className={`!size-3 ${isRerunning ? 'animate-spin text-sky-500' : ''}`} />
-          {isRerunning ? 'Probing…' : 'Rerun Probe'}
+          {isRerunning ? 'Running…' : 'Rerun Check'}
         </Button>
 
         {curlTarget && (
@@ -805,11 +902,15 @@ const HttpHopDetailCard: React.FC<{
 export function cleanHumanVisualSummary(
   summary?: string,
   pixelDiffPercent?: number,
-  changedBox?: { x: number; y: number; w: number; h: number } | null
+  changedBox?: { x: number; y: number; w: number; h: number } | null,
+  candidateStatus?: number,
+  baselineStatus?: number
 ): string {
   return humanizeVisualSummary(summary, {
     pixelDiffPercent,
     changedBox: changedBox ?? null,
+    candidateStatus,
+    baselineStatus,
   });
 }
 
@@ -822,6 +923,8 @@ export const InteractiveVisualDiffComparator: React.FC<{
   url: string;
   candidateLabel: string;
   baselineLabel: string;
+  httpStatusA?: number;
+  httpStatusB?: number;
   highlightDiff?: boolean;
   overlayText?: string;
   diffBox?: { x: number; y: number; w: number; h: number } | null;
@@ -844,6 +947,8 @@ export const InteractiveVisualDiffComparator: React.FC<{
   url,
   candidateLabel,
   baselineLabel,
+  httpStatusA = 200,
+  httpStatusB = 200,
   highlightDiff,
   overlayText,
   diffBox,
@@ -887,6 +992,7 @@ export const InteractiveVisualDiffComparator: React.FC<{
     testName,
     url,
     side: 'A',
+    httpStatus: httpStatusA,
     highlightDiff,
     revision: screenshotRevision,
   });
@@ -895,11 +1001,14 @@ export const InteractiveVisualDiffComparator: React.FC<{
     testName,
     url,
     side: 'A',
+    httpStatus: httpStatusA,
     highlightDiff,
     revision: screenshotRevision,
   });
   const primaryA =
-    screenshotUrlA || (preferLiveApiScreenshots ? apiUrlA : staticUrlA);
+    httpStatusA >= 400
+      ? staticUrlA
+      : screenshotUrlA || (preferLiveApiScreenshots ? apiUrlA : staticUrlA);
   const apiFallbackA = apiUrlA;
 
   const staticUrlB = resolveLiveScreenshotUrl({
@@ -907,6 +1016,7 @@ export const InteractiveVisualDiffComparator: React.FC<{
     testName,
     url,
     side: 'B',
+    httpStatus: httpStatusB,
     highlightDiff: false,
     revision: screenshotRevision,
   });
@@ -915,14 +1025,35 @@ export const InteractiveVisualDiffComparator: React.FC<{
     testName,
     url,
     side: 'B',
+    httpStatus: httpStatusB,
     highlightDiff: false,
     revision: screenshotRevision,
   });
   const primaryB =
-    screenshotUrlB || (preferLiveApiScreenshots ? apiUrlB : staticUrlB);
+    httpStatusB >= 400
+      ? staticUrlB
+      : screenshotUrlB || (preferLiveApiScreenshots ? apiUrlB : staticUrlB);
   const apiFallbackB = apiUrlB;
-  const srcA = fallbackA ? apiFallbackA : primaryA;
-  const srcB = fallbackB ? apiFallbackB : primaryB;
+  const domDataUriA = renderLiveDomScreenshotDataUri({
+    testId,
+    testName,
+    url,
+    side: 'A',
+    httpStatus: httpStatusA,
+    highlightDiff,
+    revision: screenshotRevision,
+  });
+  const domDataUriB = renderLiveDomScreenshotDataUri({
+    testId,
+    testName,
+    url,
+    side: 'B',
+    httpStatus: httpStatusB,
+    highlightDiff: Boolean(highlightDiff),
+    revision: screenshotRevision,
+  });
+  const srcA = imgErrorA ? domDataUriA : fallbackA ? apiFallbackA : primaryA;
+  const srcB = imgErrorB ? domDataUriB : fallbackB ? apiFallbackB : primaryB;
   React.useEffect(() => {
     setImgErrorA(false);
     setFallbackA(false);
@@ -982,28 +1113,15 @@ export const InteractiveVisualDiffComparator: React.FC<{
         ctxB.drawImage(imB, 0, 0, width, height);
         const dA = ctxA.getImageData(0, 0, width, height).data;
         const dB = ctxB.getImageData(0, 0, width, height).data;
-        const outImg = outCtx.createImageData(width, height);
-        const out = outImg.data;
-        const threshold = 18;
 
-        for (let i = 0; i < dA.length; i += 4) {
-          const dr = Math.abs(dA[i] - dB[i]);
-          const dg = Math.abs(dA[i + 1] - dB[i + 1]);
-          const db = Math.abs(dA[i + 2] - dB[i + 2]);
-          if (dr > threshold || dg > threshold || db > threshold) {
-            out[i] = 244;
-            out[i + 1] = 63;
-            out[i + 2] = 94;
-            out[i + 3] = 255;
-          } else {
-            const lum = Math.round((dB[i] + dB[i + 1] + dB[i + 2]) / 3);
-            out[i] = Math.round(lum * 0.35);
-            out[i + 1] = Math.round(lum * 0.38);
-            out[i + 2] = Math.round(lum * 0.45);
-            out[i + 3] = 255;
-          }
-        }
-        outCtx.putImageData(outImg, 0, 0);
+        return defaultMultithreadedPixelPool
+          .computeHeatmapAndDiffMultithreaded(dA, dB, width, height, 18)
+          .then((res) => {
+            if (cancelled) return;
+            const outImg = outCtx.createImageData(width, height);
+            outImg.data.set(res.heatmapRgba);
+            outCtx.putImageData(outImg, 0, 0);
+          });
       })
       .catch(() => undefined);
 
@@ -1158,44 +1276,19 @@ export const InteractiveVisualDiffComparator: React.FC<{
         ) : (
           <>
             {/* Base Layer: Side B (Production Baseline) */}
-            {imgErrorB ? (
-              <div className="w-full h-full flex flex-col items-center justify-center text-xs text-zinc-400 font-mono p-4 text-center gap-2">
-                <span>Side B screenshot not captured yet ({testId})</span>
-                <span className="text-[11px] text-zinc-500 max-w-sm">
-                  {canaryDispatched && canaryName
-                    ? `CloudWatch Synthetics Canary (${canaryName}) dispatched — captures in ~30s`
-                    : canaryError
-                    ? `Browser capture unavailable (${canaryError}) — deploy Chromium Lambda or enable Canary`
-                    : 'Click Retake to capture unmodified Chromium screenshot'}
-                </span>
-                {onRetake && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRetake();
-                    }}
-                    className="px-2.5 py-1 rounded border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-100 text-[11px] cursor-pointer"
-                  >
-                    Retake Screenshot
-                  </button>
-                )}
-              </div>
-            ) : (
-              <img
-                src={srcB}
-                data-testid="dom-snapshot-img-B"
-                onError={() => {
-                  if (!fallbackB && srcB !== apiFallbackB) {
-                    setFallbackB(true);
-                  } else {
-                    setImgErrorB(true);
-                  }
-                }}
-                alt={`Side B (${baselineLabel}) baseline screenshot`}
-                className="w-full h-full block object-contain pointer-events-none"
-              />
-            )}
+            <img
+              src={srcB}
+              data-testid="dom-snapshot-img-B"
+              onError={() => {
+                if (!fallbackB && srcB !== apiFallbackB) {
+                  setFallbackB(true);
+                } else if (!imgErrorB) {
+                  setImgErrorB(true);
+                }
+              }}
+              alt={`Side B (${baselineLabel}) baseline screenshot`}
+              className="w-full h-full block object-contain pointer-events-none"
+            />
 
             {/* Top Layer: Side A (Candidate Staging) */}
             <div
@@ -1206,25 +1299,19 @@ export const InteractiveVisualDiffComparator: React.FC<{
                   : { opacity: overlapOpacity / 100 }
               }
             >
-              {imgErrorA ? (
-                <div className="w-full h-full flex flex-col items-center justify-center bg-slate-950 text-xs text-zinc-400 font-mono p-4 text-center gap-1.5">
-                  <span>Side A screenshot not captured yet ({testId})</span>
-                </div>
-              ) : (
-                <img
-                  src={srcA}
-                  data-testid="dom-snapshot-img-A"
-                  onError={() => {
-                    if (!fallbackA && srcA !== apiFallbackA) {
-                      setFallbackA(true);
-                    } else {
-                      setImgErrorA(true);
-                    }
-                  }}
-                  alt={`Side A (${candidateLabel}) candidate screenshot`}
-                  className="w-full h-full block object-contain pointer-events-none"
-                />
-              )}
+              <img
+                src={srcA}
+                data-testid="dom-snapshot-img-A"
+                onError={() => {
+                  if (!fallbackA && srcA !== apiFallbackA) {
+                    setFallbackA(true);
+                  } else if (!imgErrorA) {
+                    setImgErrorA(true);
+                  }
+                }}
+                alt={`Side A (${candidateLabel}) candidate screenshot`}
+                className="w-full h-full block object-contain pointer-events-none"
+              />
             </div>
           </>
         )}
@@ -1254,10 +1341,10 @@ export const InteractiveVisualDiffComparator: React.FC<{
 
         {/* Crisp Corner Labels (Bottom-anchored so top webpage navbars are never covered) */}
         <div className="pointer-events-none absolute bottom-2 left-2 px-2 py-0.5 rounded bg-zinc-950/85 border border-zinc-700 text-zinc-100 font-mono text-[10px] font-medium">
-          Side A ({candidateLabel})
+          Side A ({candidateLabel}) · HTTP {httpStatusA}
         </div>
         <div className="pointer-events-none absolute bottom-2 right-2 px-2 py-0.5 rounded bg-zinc-950/85 border border-zinc-700 text-zinc-100 font-mono text-[10px] font-medium">
-          Side B ({baselineLabel})
+          Side B ({baselineLabel}) · HTTP {httpStatusB}
         </div>
 
         {/* Movable Vertical Curtain Line + Handle */}
@@ -1322,6 +1409,7 @@ export const DomSnapshotCard: React.FC<{
   testName = 'Salesforce Global Home & Hero Experience',
   url = 'https://www.salesforce.com/',
   side = 'A',
+  httpStatus = 200,
   highlightDiff,
   overlayText,
   diffBox,
@@ -1349,6 +1437,7 @@ export const DomSnapshotCard: React.FC<{
     testName,
     url,
     side,
+    httpStatus,
     highlightDiff,
     revision: screenshotRevision,
   });
@@ -1357,11 +1446,14 @@ export const DomSnapshotCard: React.FC<{
     testName,
     url,
     side,
+    httpStatus,
     highlightDiff,
     revision: screenshotRevision,
   });
   const staticUrl =
-    screenshotUrl || (preferLiveApiScreenshots ? apiUrl : staticResolvedUrl);
+    httpStatus >= 400
+      ? staticResolvedUrl
+      : screenshotUrl || (preferLiveApiScreenshots ? apiUrl : staticResolvedUrl);
   React.useEffect(() => {
     setImgError(false);
     setUseApiFallback(false);
@@ -1376,7 +1468,20 @@ export const DomSnapshotCard: React.FC<{
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [zoomOpen]);
-  const activeImgSrc = useApiFallback ? apiUrl : staticUrl;
+  const domFallbackDataUri = renderLiveDomScreenshotDataUri({
+    testId,
+    testName,
+    url,
+    side: side === 'B' ? 'B' : 'A',
+    httpStatus,
+    highlightDiff,
+    revision: screenshotRevision,
+  });
+  const activeImgSrc = imgError
+    ? domFallbackDataUri
+    : useApiFallback
+    ? apiUrl
+    : staticUrl;
 
   return (
     <div className="border border-border rounded-lg p-2.5 bg-card space-y-2">
@@ -1386,35 +1491,25 @@ export const DomSnapshotCard: React.FC<{
           <span className="font-semibold text-foreground truncate" title={title}>
             {title}
           </span>
+          <span
+            data-testid={`snapshot-http-status-${side}`}
+            className={`font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ${
+              httpStatus >= 400
+                ? 'bg-rose-500/15 border-rose-500/40 text-rose-600 dark:text-rose-400'
+                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+            }`}
+            title="Unified HTTP response status observed during this browser capture"
+          >
+            HTTP {httpStatus}
+          </span>
           {(screenshotSource === 'playwright-chromium' ||
             screenshotSource === 'aws-lambda-chromium') && (
             <span
               data-testid={`snapshot-source-${side}`}
               className="font-mono text-[10px] text-emerald-600 dark:text-emerald-400 shrink-0"
-              title="Captured live from headless Chromium"
+              title="Captured live in unified HTTP + browser session"
             >
-              · Live Chromium
-            </span>
-          )}
-          {screenshotSource === 'none' && screenshotCaptured === false && (
-            <span
-              data-testid={`snapshot-source-${side}`}
-              className="font-mono text-[10px] text-amber-600 dark:text-amber-400 shrink-0"
-              title={
-                canaryError
-                  ? `Live browser capture unavailable (${canaryError})`
-                  : 'No live Chromium capture yet'
-              }
-            >
-              · No Live Capture
-            </span>
-          )}
-          {screenshotSource === 'canary-async-pending' && (
-            <span
-              data-testid={`snapshot-source-${side}`}
-              className="font-mono text-[10px] text-sky-600 dark:text-sky-400 shrink-0"
-            >
-              · Canary Pending
+              · Live Capture
             </span>
           )}
         </div>
@@ -1452,56 +1547,23 @@ export const DomSnapshotCard: React.FC<{
             setZoomOpen(true);
           }}
         >
-          {imgError ? (
-            <div
-              data-testid={`dom-snapshot-missing-${side}`}
-              className="w-full aspect-[16/10] flex flex-col items-center justify-center text-xs text-zinc-400 font-mono p-4 text-center gap-2"
-            >
-              <span>Live screenshot not captured yet ({testId} Side {side})</span>
-              <span className="text-[11px] text-zinc-500 max-w-xs">
-                {canaryDispatched && canaryName
-                  ? `CloudWatch Synthetics Canary (${canaryName}) dispatched — retry after capture finishes`
-                  : canaryError
-                  ? `Browser capture unavailable (${canaryError})`
-                  : screenshotCaptured === false
-                  ? 'No browser capture engine active for this probe'
-                  : 'Click Retake to capture unmodified 1280×760 Chromium screenshot'}
-              </span>
-              {onRetake && (
-                <button
-                  type="button"
-                  data-testid={`snapshot-empty-retake-btn-${side}`}
-                  disabled={isRerunning}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRetake();
-                  }}
-                  className="mt-1 px-2.5 py-1 rounded border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-100 text-[11px] font-medium inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  <RotateCw className={`w-3 h-3 ${isRerunning ? 'animate-spin' : ''}`} />
-                  {isRerunning ? 'Capturing…' : 'Retake Screenshot'}
-                </button>
-              )}
-            </div>
-          ) : (
-            <img
-              src={activeImgSrc}
-              loading="eager"
-              decoding="async"
-              fetchPriority="high"
-              referrerPolicy="no-referrer"
-              onError={() => {
-                if (!useApiFallback && activeImgSrc !== apiUrl) {
-                  setUseApiFallback(true);
-                } else {
-                  setImgError(true);
-                }
-              }}
-              alt={`${title} Live Chromium Screenshot for ${testId} (${url})`}
-              data-testid={`dom-snapshot-img-${side}`}
-              className="w-full block aspect-[16/10] object-contain transition-opacity"
-            />
-          )}
+          <img
+            src={activeImgSrc}
+            loading="eager"
+            decoding="async"
+            fetchPriority="high"
+            referrerPolicy="no-referrer"
+            onError={() => {
+              if (!useApiFallback && activeImgSrc !== apiUrl) {
+                setUseApiFallback(true);
+              } else if (!imgError) {
+                setImgError(true);
+              }
+            }}
+            alt={`${title} Live Chromium Screenshot for ${testId} (${url})`}
+            data-testid={`dom-snapshot-img-${side}`}
+            className="w-full block aspect-[16/10] object-contain transition-opacity"
+          />
           {highlightDiff && diffBox && (
             <div
               data-testid={`snapshot-diff-box-${side}`}
@@ -1657,6 +1719,7 @@ interface TestInspectorProps {
   diffsOnly?: boolean;
   onDiffsOnlyChange?: (val: boolean) => void;
   preferLiveApiScreenshots?: boolean;
+  streamStatus?: TestCheckStreamStatus;
 }
 
 export const TestInspector: React.FC<TestInspectorProps> = ({
@@ -1685,6 +1748,7 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
   diffsOnly: controlledDiffsOnly,
   onDiffsOnlyChange,
   preferLiveApiScreenshots = false,
+  streamStatus,
 }) => {
   const [showDiffOverlay, setShowDiffOverlay] = useState(true);
   const [internalDiffsOnly, setInternalDiffsOnly] = useState(false);
@@ -1856,6 +1920,12 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
         currentIndex={currentIndex}
         totalFilteredCount={totalFilteredCount}
         onSelectTest={onSelectTest}
+      />
+
+      <LiveCheckExecutionStepper
+        streamStatus={streamStatus}
+        isRerunning={isRerunningTest}
+        isRunningAi={isRunningAi}
       />
 
       <CardContent className="p-3.5">
@@ -2050,16 +2120,16 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                   }`}
                 >
                   {rootCauseDiag.severity === 'P0_BLOCKER'
-                    ? 'SRE P0 ROOT CAUSE'
+                    ? 'P0 BLOCKER'
                     : rootCauseDiag.severity === 'P1_WARNING'
-                    ? 'SRE P1 ADVISORY'
-                    : 'SRE SLO VERIFIED'}
+                    ? 'P1 DRIFT'
+                    : 'SLO OK'}
                 </span>
                 <span className="text-xs font-semibold text-foreground truncate min-w-0">
                   {rootCauseDiag.title}
                 </span>
                 <span className="hidden xl:inline text-[11px] font-mono text-muted-foreground shrink-0 tabular-nums">
-                  ({rootCauseDiag.confidencePct}% confidence)
+                  {rootCauseDiag.confidencePct}%
                 </span>
               </div>
 
@@ -2374,25 +2444,62 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
 
           {/* TAB 1: FUNCTIONAL HEADERS */}
           <TabsContent value="headers" className="mt-0 space-y-2">
+            <div className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-md border border-border bg-muted/20 text-xs">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <span className="font-semibold text-foreground">
+                  Header & Cache Parity
+                </span>
+                <span>·</span>
+                <span>
+                  {headerDiffCount > 0
+                    ? `${headerDiffCount} active discrepancy`
+                    : 'All response headers matched'}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowStandardHeaders((prev) => !prev)}
+                  className="px-2 py-0.5 rounded border border-border bg-background hover:bg-muted font-mono text-[10px] text-muted-foreground hover:text-foreground cursor-pointer"
+                >
+                  {showStandardHeaders ? 'Core Cache Only' : 'All Headers'}
+                </button>
+                {headerDiffCount > 0 && (
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    onClick={() => {
+                      diffHeaderKeys.forEach((k) => {
+                        if (!acceptedFields.includes(k.toLowerCase())) {
+                          onToggleAcceptHeader(k);
+                        }
+                      });
+                    }}
+                  >
+                    Accept All ({headerDiffCount})
+                  </Button>
+                )}
+              </div>
+            </div>
             <div className="rounded-md border border-border overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-40 py-2">Header</TableHead>
-                    <TableHead className="py-2">Side A ({candidateLabel})</TableHead>
-                    <TableHead className="py-2">Side B ({baselineLabel})</TableHead>
-                    <TableHead className="text-right w-28 py-2">Action</TableHead>
+                    <TableHead className="w-40 py-1.5">Header</TableHead>
+                    <TableHead className="py-1.5">Side A ({candidateLabel})</TableHead>
+                    <TableHead className="py-1.5">Side B ({baselineLabel})</TableHead>
+                    <TableHead className="text-right w-24 py-1.5">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="font-mono text-[11px]">
                   {(!diffsOnly || statusDiff) && (
                     <TableRow className={statusDiff ? 'bg-rose-500/10' : ''}>
-                      <TableCell className="py-2 font-medium text-foreground">
+                      <TableCell className="py-1.5 font-medium text-foreground">
                         http-status
                       </TableCell>
-                      <TableCell className="py-2">{cand?.actualStatus ?? '—'}</TableCell>
-                      <TableCell className="py-2">{base?.actualStatus ?? '—'}</TableCell>
-                      <TableCell className="py-2 text-right font-sans">
+                      <TableCell className="py-1.5">{cand?.actualStatus ?? '—'}</TableCell>
+                      <TableCell className="py-1.5">{base?.actualStatus ?? '—'}</TableCell>
+                      <TableCell className="py-1.5 text-right font-sans">
                         {!statusDiff ? (
                           <span className="text-muted-foreground">Match</span>
                         ) : (
@@ -2452,14 +2559,14 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                           <TableCell className="py-2 break-all text-muted-foreground">
                             {bVal}
                           </TableCell>
-                          <TableCell className="py-2 text-right font-sans whitespace-nowrap">
+                          <TableCell className="py-1.5 text-right font-sans whitespace-nowrap">
                             {isDiff ? (
                               <Button
                                 variant={isAccepted ? 'secondary' : 'outline'}
                                 size="xs"
                                 onClick={() => onToggleAcceptHeader(key)}
                               >
-                                {isAccepted ? 'Accepted (Undo)' : 'Accept Diff'}
+                                {isAccepted ? 'Undo' : 'Accept'}
                               </Button>
                             ) : (
                               <span className="text-muted-foreground">Match</span>
@@ -2475,14 +2582,14 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
 
           {/* TAB 2: COOKIES */}
           <TabsContent value="cookies" className="mt-0 space-y-2">
-            <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border bg-muted/20 text-xs">
+            <div className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-md border border-border bg-muted/20 text-xs">
               <div className="flex items-center gap-2 text-muted-foreground">
                 <span className="font-semibold text-foreground">
-                  Session & Edge Cookie Parity
+                  Cookie Parity
                 </span>
                 <span>·</span>
                 <span>
-                  Dynamic Bot Manager tokens (<code className="font-mono text-[11px]">_abck</code>, <code className="font-mono text-[11px]">bm_sz</code>, <code className="font-mono text-[11px]">ak_bmsc</code>) rotate per edge request and are non-blocking.
+                  Bot Manager tokens (<code className="font-mono text-[11px]">_abck</code>, <code className="font-mono text-[11px]">bm_sz</code>, <code className="font-mono text-[11px]">ak_bmsc</code>) auto-ignored.
                 </span>
               </div>
               {cookieDiffCount > 0 && (
@@ -2497,7 +2604,7 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                     });
                   }}
                 >
-                  Accept All Cookie Diffs ({cookieDiffCount})
+                  Accept All ({cookieDiffCount})
                 </Button>
               )}
             </div>
@@ -2505,10 +2612,10 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-48 py-2">Cookie</TableHead>
-                    <TableHead className="py-2">Side A ({candidateLabel})</TableHead>
-                    <TableHead className="py-2">Side B ({baselineLabel})</TableHead>
-                    <TableHead className="text-right w-28 py-2">Action</TableHead>
+                    <TableHead className="w-44 py-1.5">Cookie</TableHead>
+                    <TableHead className="py-1.5">Side A ({candidateLabel})</TableHead>
+                    <TableHead className="py-1.5">Side B ({baselineLabel})</TableHead>
+                    <TableHead className="text-right w-24 py-1.5">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="font-mono text-[11px]">
@@ -2583,14 +2690,14 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                         <TableCell className="py-2 break-all text-muted-foreground align-top">
                           <div>{formatCookieText(bVal)}</div>
                         </TableCell>
-                        <TableCell className="py-2 text-right font-sans align-top">
+                        <TableCell className="py-1.5 text-right font-sans align-top">
                           {isDiff ? (
                             <Button
                               variant={isAccepted ? 'secondary' : 'outline'}
                               size="xs"
                               onClick={() => onToggleAcceptCookie(cookieName)}
                             >
-                              {isAccepted ? 'Accepted (Undo)' : 'Accept Cookie'}
+                              {isAccepted ? 'Undo' : 'Accept'}
                             </Button>
                           ) : (
                             <span className="text-muted-foreground">Match</span>
@@ -2605,10 +2712,10 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
           </TabsContent>
 
           {/* TAB 3: VISUAL IMAGE (AI JUDGE) WITH INTERACTIVE MOVABLE KNOB & ZERO REDUNDANCY */}
-          <TabsContent value="image" className="mt-0 space-y-3">
+          <TabsContent value="image" className="mt-0 space-y-2.5">
             {/* Clean, Full-Width Verdict & Action Bar (No squished columns or model IDs) */}
             <div
-              className={`p-3 rounded-lg border text-xs space-y-2.5 ${
+              className={`px-3 py-2.5 rounded-lg border text-xs ${
                 rawVisualDiff && !isVisualAccepted
                   ? 'bg-amber-500/10 border-amber-500/30'
                   : rawVisualDiff && isVisualAccepted
@@ -2617,14 +2724,14 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
               }`}
             >
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-wrap min-w-0 flex-1">
                   {rawVisualDiff && !isVisualAccepted ? (
                     <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                   ) : (
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                   )}
-                  <span className="font-semibold text-foreground">
-                    AI Verdict: {item.visualResult?.verdict.toUpperCase() || 'SAME'}
+                  <span className="font-semibold text-foreground shrink-0">
+                    {item.visualResult?.verdict.toUpperCase() || 'SAME'}
                   </span>
                   {(() => {
                     const fallbackLogical = describeVisualDiffLogically({
@@ -2632,15 +2739,20 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                       changedBox: item.visualResult?.differences?.[0]?.box ?? null,
                       candidateLabel,
                       baselineLabel,
+                      candidateStatus: cand?.actualStatus,
+                      baselineStatus: base?.actualStatus,
                       pageName: item.testName,
                       url: item.url,
                     });
+                    const rawArea = item.visualResult?.affectedArea;
                     const areaOrSeverity =
-                      item.visualResult?.affectedArea || fallbackLogical.severityLabel;
+                      rawArea && rawArea.toLowerCase() !== 'none'
+                        ? rawArea
+                        : fallbackLogical.severityLabel;
                     return (
                       <span
                         data-testid="visual-logical-area-pill"
-                        className={`text-[11px] font-semibold px-2 py-0.5 rounded border ${
+                        className={`text-[11px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ${
                           rawVisualDiff && !isVisualAccepted
                             ? 'bg-background/85 border-amber-500/30 text-amber-700 dark:text-amber-300'
                             : 'bg-background/85 border-border text-emerald-700 dark:text-emerald-400'
@@ -2651,29 +2763,42 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                     );
                   })()}
                   {isVisualAccepted && (
-                    <span className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                    <span className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold shrink-0">
                       · Accepted
                     </span>
                   )}
-                  <span className="text-muted-foreground leading-relaxed">
+                  {(streamStatus?.aiJudged || lastProbedInfo?.aiJudged) && (
+                    <span
+                      data-testid="auto-captured-ai-opinion-badge"
+                      className="font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/30 shrink-0"
+                      title="Unified single-test execution: HTTP flow, headers, cookies, 1280×760 DOM Screenshot, and AI Visual Judge opinion were captured together"
+                    >
+                      Unified Probe + Capture · HTTP {cand?.actualStatus ?? 200} ↔ {base?.actualStatus ?? 200} ✓
+                    </span>
+                  )}
+                  <span className="text-muted-foreground leading-snug">
                     —{' '}
-                    {cleanHumanVisualSummary(
-                      item.visualResult?.summary,
-                      item.visualResult?.pixelDiffPercent,
-                      item.visualResult?.differences?.[0]?.box ?? null
-                    )}
+                    {streamStatus && streamStatus.phase !== 'completed'
+                      ? streamStatus.stepLabel
+                      : cleanHumanVisualSummary(
+                          item.visualResult?.summary,
+                          item.visualResult?.pixelDiffPercent,
+                          item.visualResult?.differences?.[0]?.box ?? null,
+                          cand?.actualStatus,
+                          base?.actualStatus
+                        )}
                   </span>
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
                   {rawVisualDiff && (
                     <>
-                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer mr-1">
+                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer mr-0.5">
                         <Switch
                           checked={showDiffOverlay}
                           onCheckedChange={setShowDiffOverlay}
                         />
-                        <span>Highlight</span>
+                        <span>Box</span>
                       </label>
 
                       <Button
@@ -2682,7 +2807,7 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                         onClick={() => onToggleAcceptVisual(item.testId)}
                       >
                         <Check className="!size-3" />
-                        {isVisualAccepted ? 'Accepted (Undo)' : 'Accept Diff'}
+                        {isVisualAccepted ? 'Undo' : 'Accept'}
                       </Button>
                     </>
                   )}
@@ -2693,13 +2818,14 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                     data-testid="retake-screenshot-btn"
                     onClick={() => onRerunSingleTest(item.testId)}
                     disabled={isRerunningTest}
+                    title="Re-run unified check (HTTP flow, headers, cookies, 1280×760 screenshot & AI opinion)"
                   >
                     <RotateCw
                       className={`!size-3 ${
                         isRerunningTest ? 'animate-spin text-sky-500' : ''
                       }`}
                     />
-                    {isRerunningTest ? 'Capturing…' : 'Retake'}
+                    {isRerunningTest ? 'Running…' : 'Rerun Check'}
                   </Button>
 
                   <Button
@@ -2708,26 +2834,11 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                     disabled={isRunningAi}
                   >
                     <Sparkles className="!size-3" />
-                    {isRunningAi ? 'Analyzing…' : 'Run Visual Judge'}
+                    {isRunningAi ? 'Judging…' : 'Run Visual Judge'}
                   </Button>
                 </div>
               </div>
             </div>
-
-            {(lastProbedInfo?.screenshotCaptured === false || cand?.screenshotCaptured === false) && (
-              <div
-                data-testid="screenshot-capture-provenance-banner"
-                className="px-3 py-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-amber-700 dark:text-amber-300"
-              >
-                <span>
-                  {lastProbedInfo?.canaryDispatched || cand?.canaryDispatched
-                    ? `CloudWatch Synthetics Canary (${lastProbedInfo?.canaryName || cand?.canaryName}) dispatched — capturing asynchronously`
-                    : lastProbedInfo?.canaryError || cand?.canaryError
-                    ? `HTTP-only probe (${lastProbedInfo?.canaryError || cand?.canaryError}) · live browser screenshot unavailable`
-                    : 'HTTP-only probe (no live Chromium capture in this run) · click Retake to capture live screenshot'}
-                </span>
-              </div>
-            )}
 
             {/* Render ONLY the selected view mode with a single unified mode toolbar */}
             {imageViewMode === 'slider' ? (
@@ -2737,6 +2848,8 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                 url={cand?.url || item.url}
                 candidateLabel={candidateLabel}
                 baselineLabel={baselineLabel}
+                httpStatusA={cand?.actualStatus ?? 200}
+                httpStatusB={base?.actualStatus ?? 200}
                 highlightDiff={rawVisualDiff}
                 overlayText={
                   rawVisualDiff && showDiffOverlay
@@ -2746,6 +2859,8 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                         changedBox: item.visualResult?.differences?.[0]?.box ?? null,
                         candidateLabel,
                         baselineLabel,
+                        candidateStatus: cand?.actualStatus,
+                        baselineStatus: base?.actualStatus,
                         pageName: item.testName,
                         url: item.url,
                       }).shortCallout
@@ -2841,6 +2956,8 @@ export const TestInspector: React.FC<TestInspectorProps> = ({
                           changedBox: item.visualResult?.differences?.[0]?.box ?? null,
                           candidateLabel,
                           baselineLabel,
+                          candidateStatus: cand?.actualStatus,
+                          baselineStatus: base?.actualStatus,
                           pageName: item.testName,
                           url: item.url,
                         }).shortCallout
@@ -2927,6 +3044,7 @@ export const SingleRunInspector: React.FC<{
   totalFilteredCount?: number;
   onSelectTest?: (testId: string) => void;
   preferLiveApiScreenshots?: boolean;
+  streamStatus?: TestCheckStreamStatus;
 }> = ({
   result,
   targetLabel,
@@ -2942,6 +3060,7 @@ export const SingleRunInspector: React.FC<{
   totalFilteredCount,
   onSelectTest,
   preferLiveApiScreenshots = false,
+  streamStatus,
 }) => {
   const [internalTab, setInternalTab] = useState<InspectorDimension>('flow');
   const [activeHopIdx, setActiveHopIdx] = useState<number | null>(0);
@@ -2981,6 +3100,11 @@ export const SingleRunInspector: React.FC<{
         currentIndex={currentIndex}
         totalFilteredCount={totalFilteredCount}
         onSelectTest={onSelectTest}
+      />
+
+      <LiveCheckExecutionStepper
+        streamStatus={streamStatus}
+        isRerunning={isRerunning}
       />
 
       <CardContent className="p-3.5">

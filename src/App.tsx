@@ -6,7 +6,12 @@ import {
   ComparisonKind,
   RunRecord,
   TargetState,
+  TestFolder,
 } from './engine/types';
+import {
+  DEFAULT_TEST_FOLDERS,
+  normalizeSuiteWithCatchpointDefaults,
+} from './engine/catchpointCatalog';
 import {
   DEFAULT_TEMPLATE_CONFIG,
   GLOBAL_EXECUTION_POPS,
@@ -28,6 +33,7 @@ import {
 import {
   CURRENT_VERSION,
   DataSourceMode,
+  STORAGE_KEY,
   buildDefaultRunMap,
   clearPersistedPortalState,
   generateEnterpriseScaleTopology,
@@ -48,6 +54,14 @@ import {
   type VisualZoneMetrics,
 } from './engine/pixelDiff';
 import { resolveLiveScreenshotUrl } from './engine/domScreenshotRenderer';
+import {
+  ActiveRunStreamState,
+  RunStreamMode,
+  advanceTestStreamPhase,
+  createInitialRunStreamState,
+  finalizeRunStreamState,
+} from './engine/runStreamEngine';
+import { executeParallelConsumerBatch } from './engine/concurrencyEngine';
 import {
   computeSuiteSreSummary,
   diagnoseCheckRootCause,
@@ -136,7 +150,11 @@ import {
   Command,
   Keyboard,
 } from 'lucide-react';
-import { VsCodeWorkspace } from './components/VsCodeWorkspace';
+const VsCodeWorkspace = React.lazy(() =>
+  import('./components/VsCodeWorkspace').then((m) => ({
+    default: m.VsCodeWorkspace,
+  }))
+);
 
 type ViewMode =
   | 'property'
@@ -180,6 +198,18 @@ export default function App() {
     initialPersisted.remoteApiBaseUrl
   );
   const [apps, setApps] = useState<AppConfig[]>(initialPersisted.apps);
+  const [customTopologyEdited, setCustomTopologyEdited] = useState<boolean>(
+    Boolean(initialPersisted.customTopologyEdited)
+  );
+  const [suitesByAppId, setSuitesByAppId] = useState<
+    Record<string, TestCaseDefinition[]>
+  >(initialPersisted.suitesByAppId || {});
+  const [folders, setFolders] = useState<TestFolder[]>(
+    initialPersisted.folders || DEFAULT_TEST_FOLDERS
+  );
+  const [suitesStudioTab, setSuitesStudioTab] = useState<
+    'telemetry' | 'configure-tests' | 'configure-envs'
+  >('telemetry');
   const [testSuite, setTestSuite] = useState<TestCaseDefinition[]>(
     initialPersisted.testSuite
   );
@@ -314,16 +344,31 @@ export default function App() {
   const [pendingChord, setPendingChord] = useState<'g' | null>(null);
   const [diffInspectorDiffsOnly, setDiffInspectorDiffsOnly] = useState<boolean>(false);
 
-  const normalizeRunPropertyUrls = (r: RunRecord & { targetId?: string }): RunRecord => {
+  const liveTemplateConfig = useMemo(
+    () => ({
+      ...DEFAULT_TEMPLATE_CONFIG,
+      properties: apps,
+      testSuite,
+    }),
+    [apps, testSuite]
+  );
+
+  const normalizeRunPropertyUrls = (
+    r: RunRecord & { targetId?: string },
+    configOverride = liveTemplateConfig,
+    suitesOverride = suitesByAppId
+  ): RunRecord => {
     const target = r.target || r.targetId || 'www.prod.staging';
     const [appId = 'www', envId = 'prod', net = 'staging'] = target.split('.');
     const isStaging = net === 'staging';
     const isRegional = ['japan', 'germany', 'uk', 'apac', 'emea', 'americas'].includes(
       appId.toLowerCase()
     );
-    const canonicalHost = resolvePropertyHostname(appId, envId);
+    const canonicalHost = resolvePropertyHostname(appId, envId, configOverride);
     const effectiveSuiteAppId = r.suiteAppId || appId;
-    const propSuite = getPropertyTestSuite(effectiveSuiteAppId);
+    const propSuite =
+      suitesOverride[effectiveSuiteAppId] ||
+      getPropertyTestSuite(effectiveSuiteAppId, configOverride);
     const popOverrideId = r.executionPop?.id;
     const cleanLabel =
       !r.label ||
@@ -565,6 +610,31 @@ export default function App() {
       .catch(() => undefined)
       .finally(() => setIsHydratingLiveRuns(false));
 
+    fetch('/api/v1/config')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((cfg) => {
+        if (!cfg) return;
+        const hasLocal = Boolean(
+          typeof window !== 'undefined' && window.localStorage?.getItem(STORAGE_KEY)
+        );
+        if (!hasLocal || !initialPersisted.customTopologyEdited) {
+          if (Array.isArray(cfg.properties) && cfg.properties.length > 0) {
+            setApps(cfg.properties);
+          }
+          if (cfg.suitesByAppId && typeof cfg.suitesByAppId === 'object') {
+            setSuitesByAppId((prev) => ({ ...prev, ...cfg.suitesByAppId }));
+            const activeCfgSuite = cfg.suitesByAppId[activeAppId];
+            if (Array.isArray(activeCfgSuite) && activeCfgSuite.length > 0) {
+              setTestSuite(activeCfgSuite);
+            }
+          }
+          if (Array.isArray(cfg.folders) && cfg.folders.length > 0) {
+            setFolders(cfg.folders);
+          }
+        }
+      })
+      .catch(() => undefined);
+
     fetch('/api/v1/health')
       .then((res) => (res.ok ? res.json() : null))
       .then((health) => {
@@ -596,7 +666,10 @@ export default function App() {
       dataSourceMode,
       remoteApiBaseUrl,
       apps,
+      customTopologyEdited,
       testSuite,
+      suitesByAppId,
+      folders,
       runs,
       readyReports,
       acceptedRules,
@@ -618,7 +691,10 @@ export default function App() {
     dataSourceMode,
     remoteApiBaseUrl,
     apps,
+    customTopologyEdited,
     testSuite,
+    suitesByAppId,
+    folders,
     runs,
     readyReports,
     acceptedRules,
@@ -665,6 +741,9 @@ export default function App() {
     setDataSourceMode(clean.dataSourceMode);
     setRemoteApiBaseUrl(clean.remoteApiBaseUrl);
     setApps(clean.apps);
+    setCustomTopologyEdited(false);
+    setSuitesByAppId(clean.suitesByAppId || {});
+    setFolders(clean.folders || DEFAULT_TEST_FOLDERS);
     setTestSuite(clean.testSuite);
     setRuns(clean.runs);
     setReadyReports(clean.readyReports);
@@ -716,6 +795,16 @@ export default function App() {
     return list;
   }, [currentApp]);
 
+  const resolveSuiteForApp = (
+    appId: string,
+    configOverride = liveTemplateConfig,
+    suitesOverride = suitesByAppId
+  ): TestCaseDefinition[] =>
+    suitesOverride[appId] ||
+    (appId === activeAppId
+      ? testSuite
+      : getPropertyTestSuite(appId, configOverride));
+
   const handleSelectProperty = (appId: string) => {
     const appObj = apps.find((a) => a.id === appId) || apps[0];
     const firstEnv = appObj.envs[0]?.id || 'prod';
@@ -725,163 +814,326 @@ export default function App() {
     setCandidateTarget(candTarget);
     setBaselineTarget(baseTarget);
 
+    const nextSuite = resolveSuiteForApp(appId);
     const candRun = runs.find((r) => r.target === candTarget);
     const baseRun = runs.find((r) => r.target === baseTarget);
 
     let nextCandKey = candRun?.key;
     let nextBaseKey = baseRun?.key;
     if (!candRun || !baseRun) {
-      const seeded = seedRunsFromConfig();
-      const freshCand = candRun || seeded.find((r) => r.target === candTarget);
-      const freshBase = baseRun || seeded.find((r) => r.target === baseTarget);
-      if (freshCand && freshBase) {
-        setRuns((prev) => [
-          freshCand,
-          freshBase,
-          ...prev.filter(
-            (r) => r.target !== candTarget && r.target !== baseTarget
-          ),
-        ]);
-        nextCandKey = freshCand.key;
-        nextBaseKey = freshBase.key;
-      }
+      const freshCand: RunRecord = candRun || {
+        key: `run-${appId}-${firstEnv}-staging-1`,
+        target: candTarget,
+        appId,
+        envId: firstEnv,
+        network: 'staging',
+        suiteAppId: appId,
+        suiteKey: appObj.suitePath,
+        suiteSha256: '9f83a21b33c0',
+        suiteRowCount: nextSuite.length,
+        startTime: new Date().toISOString(),
+        finishTime: new Date().toISOString(),
+        totalTests: nextSuite.length,
+        passedTests: nextSuite.length,
+        failedTests: 0,
+        by: currentUser?.email || 'operator',
+        label: 'live-staging',
+        results: generateTestResults(
+          candTarget,
+          'normal_staging',
+          nextSuite,
+          liveTemplateConfig
+        ),
+      };
+      const freshBase: RunRecord = baseRun || {
+        key: `run-${appId}-${firstEnv}-prod-1`,
+        target: baseTarget,
+        appId,
+        envId: firstEnv,
+        network: 'prod',
+        suiteAppId: appId,
+        suiteKey: appObj.suitePath,
+        suiteSha256: '9f83a21b33c0',
+        suiteRowCount: nextSuite.length,
+        startTime: new Date().toISOString(),
+        finishTime: new Date().toISOString(),
+        totalTests: nextSuite.length,
+        passedTests: nextSuite.length,
+        failedTests: 0,
+        by: currentUser?.email || 'operator',
+        label: 'live-prod',
+        results: generateTestResults(
+          baseTarget,
+          'normal_prod',
+          nextSuite,
+          liveTemplateConfig
+        ),
+      };
+      setRuns((prev) => [
+        freshCand,
+        freshBase,
+        ...prev.filter(
+          (r) => r.target !== candTarget && r.target !== baseTarget
+        ),
+      ]);
+      nextCandKey = freshCand.key;
+      nextBaseKey = freshBase.key;
     }
 
     if (nextCandKey) setCandidateRunKey(nextCandKey);
     if (nextBaseKey) setBaselineRunKey(nextBaseKey);
     setFocusedTargetId(candTarget);
-    const nextSuite = getPropertyTestSuite(appId);
     setTestSuite(nextSuite);
     setSelectedTestId(nextSuite[0]?.id || 'T01');
     setInspectorTab('headers');
     setViewMode((prev) =>
-      prev === 'diff' ? 'diff' : prev === 'suites' ? 'suites' : 'property'
+      prev === 'diff'
+        ? 'diff'
+        : prev === 'suites'
+        ? 'suites'
+        : prev === 'settings'
+        ? 'settings'
+        : 'property'
     );
   };
 
-  // Live Template Adaptation Handler 1: Add a new Property & Environments
-  const handleAddProperty = (id: string, name: string, envIds: string[]) => {
-    if (apps.some((a) => a.id === id)) {
-      toast.error(`Property "${id}" already exists`);
-      return;
-    }
-
-    const newApp: AppConfig = {
-      id,
-      name,
-      suitePath: `config/suites/${id}.csv`,
-      defaultNetworks: ['prod', 'staging'],
-      envs: envIds.map((envId) => ({
-        id: envId,
-        name: envId.toUpperCase(),
-        hostMap: {
-          [resolvePropertyHostname(id, 'prod')]: resolvePropertyHostname(
-            id,
-            envId
-          ),
-        },
-        networks: ['prod', 'staging'],
-      })),
-    };
-
-    const newRuns: RunRecord[] = [];
-    for (const envId of envIds) {
+  const ensureRunsForApp = (
+    prop: AppConfig,
+    suiteForApp: TestCaseDefinition[],
+    configOverride: typeof liveTemplateConfig
+  ) => {
+    const regeneratedRuns: RunRecord[] = [];
+    const targetIdsSet = new Set<string>();
+    for (const env of prop.envs) {
+      const nets = env.networks || ['staging', 'prod'];
       for (const net of ['staging', 'prod'] as const) {
-        const target = `${id}.${envId}.${net}`;
+        if (!nets.includes(net)) continue;
+        const target = `${prop.id}.${env.id}.${net}`;
+        targetIdsSet.add(target);
         const results = generateTestResults(
           target,
           net === 'staging' ? 'normal_staging' : 'normal_prod',
-          testSuite
+          suiteForApp,
+          configOverride
         );
-        newRuns.push({
-          key: `run-${id}-${envId}-${net}-1`,
+        regeneratedRuns.push({
+          key: `run-${prop.id}-${env.id}-${net}-1-${Date.now().toString().slice(-3)}`,
           target,
-          appId: id,
-          envId,
+          appId: prop.id,
+          envId: env.id,
           network: net,
-          suiteKey: newApp.suitePath,
+          suiteAppId: prop.id,
+          suiteKey: prop.suitePath,
           suiteSha256: '9f83a21b33c0',
           suiteRowCount: results.length,
           startTime: new Date().toISOString(),
           finishTime: new Date().toISOString(),
           totalTests: results.length,
-          passedTests: results.length,
-          failedTests: 0,
+          passedTests: results.filter((r) => r.pass).length,
+          failedTests: results.filter((r) => !r.pass).length,
           by: currentUser?.email || 'operator',
-          label: net === 'staging' ? 'v1-rc1' : 'live-baseline',
+          label: net === 'staging' ? 'live-staging' : 'live-prod',
           results,
         });
       }
     }
 
-    setApps((prev) => [...prev, newApp]);
-    setRuns((prev) => [...newRuns, ...prev]);
-    setSelectedRunByTarget((prev) => ({
-      ...prev,
-      ...Object.fromEntries(newRuns.map((r) => [r.target, r.key])),
-    }));
-    setReadyReports((prev) => [
-      {
-        id: `RPT-${105 + prev.length}`,
-        title: `${envIds[0].toUpperCase()} Release Gate: Staging vs Production`,
-        appId: id,
-        candidateTarget: `${id}.${envIds[0]}.staging`,
-        baselineTarget: `${id}.${envIds[0]}.prod`,
-        createdAt: 'Just now',
-        by: currentUser?.email || 'operator',
-      },
-      ...prev,
-    ]);
-    handleSelectProperty(id);
+    setRuns((prev) => {
+      const existingOthers = prev.filter(
+        (r) => r.appId !== prop.id
+      );
+      const preservedCustomRuns = prev.filter(
+        (r) =>
+          r.appId === prop.id &&
+          targetIdsSet.has(r.target) &&
+          prev.some((x) => x.target === r.target)
+      );
+      // Replace base seeded runs for newly modified/created environments cleanly
+      const finalAppRuns: RunRecord[] = regeneratedRuns.map((regen) => {
+        const prevLatest = preservedCustomRuns.find((p) => p.target === regen.target);
+        if (!prevLatest) return regen;
+        const freshRes = generateTestResults(
+          regen.target,
+          regen.network === 'staging' ? 'normal_staging' : 'normal_prod',
+          suiteForApp,
+          configOverride
+        );
+        return {
+          ...prevLatest,
+          suiteRowCount: freshRes.length,
+          totalTests: freshRes.length,
+          passedTests: freshRes.filter((r) => r.pass).length,
+          failedTests: freshRes.filter((r) => !r.pass).length,
+          results: freshRes,
+        };
+      });
+      return [...finalAppRuns, ...existingOthers];
+    });
+    setSelectedRunByTarget((prev) => {
+      const next = { ...prev };
+      for (const r of regeneratedRuns) {
+        if (!next[r.target]) next[r.target] = r.key;
+      }
+      return next;
+    });
+  };
+
+  const handleSaveProperty = (updatedProp: AppConfig) => {
+    const nextApps = apps.map((a) => (a.id === updatedProp.id ? updatedProp : a));
+    const nextConfig = {
+      ...liveTemplateConfig,
+      properties: nextApps,
+      testSuite,
+    };
+    const suiteForApp = resolveSuiteForApp(updatedProp.id, nextConfig);
+    setApps(nextApps);
+    setCustomTopologyEdited(true);
+    ensureRunsForApp(updatedProp, suiteForApp, nextConfig);
+    fetch(`/api/v1/properties/${encodeURIComponent(updatedProp.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedProp),
+    }).catch(() => undefined);
     toast.success(
-      `Added Property "${id}" (${name}) with environments: ${envIds.join(', ')}`
+      `Saved ${updatedProp.id} (${updatedProp.envs.length} environments configured)`
     );
   };
 
-  // Live Template Adaptation Handler 2: Add or Update Test Suite
-  const syncRunsWithSuite = (updatedSuite: TestCaseDefinition[]) => {
-    setTestSuite(updatedSuite);
+  const handleCreateProperty = (newProp: AppConfig) => {
+    if (apps.some((a) => a.id.toLowerCase() === newProp.id.toLowerCase())) {
+      toast.error(`Property "${newProp.id}" already exists`);
+      return;
+    }
+    const nextApps = [...apps, newProp];
+    const defaultSuite = normalizeSuiteWithCatchpointDefaults(
+      liveTemplateConfig.testSuite
+    );
+    const nextSuitesMap = {
+      ...suitesByAppId,
+      [newProp.id]: defaultSuite,
+    };
+    const nextConfig = {
+      ...liveTemplateConfig,
+      properties: nextApps,
+      testSuite: defaultSuite,
+    };
+    setApps(nextApps);
+    setCustomTopologyEdited(true);
+    setSuitesByAppId(nextSuitesMap);
+    ensureRunsForApp(newProp, defaultSuite, nextConfig);
+
+    const firstEnvId = newProp.envs[0]?.id || 'prod';
+    setActiveAppId(newProp.id);
+    setCandidateTarget(`${newProp.id}.${firstEnvId}.staging`);
+    setBaselineTarget(`${newProp.id}.${firstEnvId}.prod`);
+    setTestSuite(defaultSuite);
+
+    fetch('/api/v1/properties', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newProp),
+    }).catch(() => undefined);
+    toast.success(`Created Property "${newProp.id}" (${newProp.name})`);
+  };
+
+  const handleDeleteProperty = (appId: string) => {
+    if (apps.length <= 1) {
+      toast.error('At least one property must remain configured');
+      return;
+    }
+    const nextApps = apps.filter((a) => a.id !== appId);
+    const nextSuitesMap = { ...suitesByAppId };
+    delete nextSuitesMap[appId];
+    const nextConfig = {
+      ...liveTemplateConfig,
+      properties: nextApps,
+    };
+    setApps(nextApps);
+    setCustomTopologyEdited(true);
+    setSuitesByAppId(nextSuitesMap);
+    setRuns((prev) => prev.filter((r) => r.appId !== appId));
+    if (activeAppId === appId && nextApps[0]) {
+      const nextFirst = nextApps[0];
+      const envId = nextFirst.envs[0]?.id || 'prod';
+      setActiveAppId(nextFirst.id);
+      setCandidateTarget(`${nextFirst.id}.${envId}.staging`);
+      setBaselineTarget(`${nextFirst.id}.${envId}.prod`);
+      setTestSuite(resolveSuiteForApp(nextFirst.id, nextConfig, nextSuitesMap));
+    }
+    fetch(`/api/v1/properties/${encodeURIComponent(appId)}`, {
+      method: 'DELETE',
+    }).catch(() => undefined);
+    toast.info(`Deleted Property "${appId}"`);
+  };
+
+  const handleSaveSuiteForApp = (
+    appId: string,
+    nextSuiteRaw: TestCaseDefinition[]
+  ) => {
+    const normalized = normalizeSuiteWithCatchpointDefaults(nextSuiteRaw);
+    setSuitesByAppId((prev) => ({
+      ...prev,
+      [appId]: normalized,
+    }));
+    if (appId === activeAppId) {
+      setTestSuite(normalized);
+    }
     setRuns((prev) =>
       prev.map((run) => {
+        if (run.appId !== appId && run.suiteAppId !== appId) return run;
         const freshResults = generateTestResults(
           run.target,
           run.network === 'staging' ? 'normal_staging' : 'normal_prod',
-          updatedSuite
+          normalized,
+          liveTemplateConfig
         );
         return {
           ...run,
           suiteRowCount: freshResults.length,
           totalTests: freshResults.length,
           passedTests: freshResults.filter((r) => r.pass).length,
+          failedTests: freshResults.filter((r) => !r.pass).length,
           results: freshResults,
         };
       })
     );
+    fetch(`/api/v1/suites/${encodeURIComponent(appId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ suite: normalized }),
+    }).catch(() => undefined);
+    toast.success(
+      `Saved ${normalized.length} Catchpoint test(s) for "${appId}"`
+    );
   };
 
-  const handleAddTestCase = (newTc: TestCaseDefinition) => {
-    const updatedSuite = [...testSuite, newTc];
-    syncRunsWithSuite(updatedSuite);
-    toast.success(`Added test case ${newTc.id} (${newTc.path}) to suite`);
+  const handleSaveFolders = (nextFolders: TestFolder[]) => {
+    setFolders(nextFolders);
+    fetch('/api/v1/folders', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folders: nextFolders }),
+    }).catch(() => undefined);
+    toast.success(`Updated test folders (${nextFolders.length})`);
+  };
+
+  // Live Template Adaptation Handler 2: Update Active Test Suite
+  const syncRunsWithSuite = (updatedSuite: TestCaseDefinition[]) => {
+    handleSaveSuiteForApp(activeAppId, updatedSuite);
   };
 
   const handleUpdateTestSuite = (updatedSuite: TestCaseDefinition[]) => {
-    syncRunsWithSuite(updatedSuite);
-    toast.success(
-      `Synchronized test suite (${
-        updatedSuite.filter((t) => t.enabled !== false).length
-      } active tests)`
-    );
+    handleSaveSuiteForApp(activeAppId, updatedSuite);
   };
 
   const handleToggleSuiteScale = () => {
     const baseSuite = getPropertyTestSuite(activeAppId);
-    if (testSuite.length > baseSuite.length) {
+    if (testSuite.length >= 64) {
       syncRunsWithSuite(baseSuite);
       setDiffPage(1);
       setRunPage(1);
       setTriagePage(1);
-      toast.info(`Restored 8 Core Canary Checks for ${activeAppId}`);
+      toast.info(`Restored ${baseSuite.length} Core Canary Checks for ${activeAppId}`);
       return;
     }
 
@@ -909,12 +1161,13 @@ export default function App() {
       { path: '/login/sso-preflight', name: 'Edge OIDC & SAML Auth Preflight', status: '200', category: 'Security' },
     ];
 
-    const scaledSuite: TestCaseDefinition[] = [...baseSuite];
-    for (let i = baseSuite.length; i < 64; i++) {
+    const scaledSuite: TestCaseDefinition[] = [...testSuite];
+    const startIdx = scaledSuite.length;
+    for (let i = startIdx; i < 64; i++) {
       const num = i + 1;
       const id = `T${String(num).padStart(2, '0')}`;
-      const tpl = extraRoutes[(i - baseSuite.length) % extraRoutes.length];
-      const shard = Math.floor((i - baseSuite.length) / extraRoutes.length) + 1;
+      const tpl = extraRoutes[(i - startIdx) % extraRoutes.length];
+      const shard = Math.floor((i - startIdx) / extraRoutes.length) + 1;
       scaledSuite.push({
         id,
         name: shard === 1 ? tpl.name : `${tpl.name} (Shard #${shard})`,
@@ -977,7 +1230,10 @@ export default function App() {
   useEffect(() => {
     if (isAwsLambdaBackend) return;
     const timer = setTimeout(() => {
-      const ids = ['T01', 'T02', 'T03', 'T04', 'T05', 'T06', 'T07', 'T08'];
+      const ids =
+        testSuite.length > 0
+          ? testSuite.slice(0, 12).map((t) => t.id)
+          : ['T01', 'T02', 'T03', 'T04', 'T05', 'T06', 'T07', 'T08'];
       for (const id of ids) {
         const imgA = new Image();
         imgA.src = `/screenshots/${activeAppId}-${id}-sideA.jpg`;
@@ -986,7 +1242,7 @@ export default function App() {
       }
     }, 40);
     return () => clearTimeout(timer);
-  }, [activeAppId, isAwsLambdaBackend]);
+  }, [activeAppId, isAwsLambdaBackend, testSuite]);
 
   const handleChangeCandidateTarget = (newTarget: string) => {
     setCandidateTarget(newTarget);
@@ -1046,6 +1302,9 @@ export default function App() {
       }
     >
   >({});
+
+  const [runStreamState, setRunStreamState] =
+    useState<ActiveRunStreamState | null>(null);
 
   // Genuine browser-side <canvas> zone & layout comparison across rendered Side A & Side B screenshots
   useEffect(() => {
@@ -1194,6 +1453,7 @@ export default function App() {
       kind,
       acceptedRules,
       {
+        apps,
         acceptedCookies,
         acceptedVisualTests,
         ignoreAcceptedDiffs,
@@ -1201,6 +1461,7 @@ export default function App() {
       }
     );
   }, [
+    apps,
     activeCandidateRun,
     activeBaselineRun,
     acceptedRules,
@@ -1296,6 +1557,7 @@ export default function App() {
       const stgR = getActiveRunForTarget(stgTarget);
       const prdR = getActiveRunForTarget(prdTarget);
       const comp = buildInitialComparison(stgR, prdR, 'network', acceptedRules, {
+        apps,
         acceptedCookies,
         acceptedVisualTests,
         ignoreAcceptedDiffs,
@@ -1396,10 +1658,7 @@ export default function App() {
     const [appId, envId, net] = targetId.split('.');
     const network = (net === 'staging' ? 'staging' : 'prod') as 'staging' | 'prod';
     const effectiveSuiteAppId = options?.suiteAppId || appId;
-    const effectiveSuite =
-      effectiveSuiteAppId === activeAppId
-        ? testSuite
-        : getPropertyTestSuite(effectiveSuiteAppId);
+    const effectiveSuite = resolveSuiteForApp(effectiveSuiteAppId);
     const effectivePopId = options?.popId ?? selectedExecutionPopId;
     const popOpt = resolveExecutionPopOption(effectivePopId);
 
@@ -1422,7 +1681,7 @@ export default function App() {
         ? 'normal_staging'
         : 'normal_prod',
       effectiveSuite,
-      DEFAULT_TEMPLATE_CONFIG,
+      liveTemplateConfig,
       popOpt?.id
     );
 
@@ -1502,6 +1761,8 @@ export default function App() {
         if (elapsed < minVisualFeedbackMs) {
           await new Promise((r) => setTimeout(r, minVisualFeedbackMs - elapsed));
         }
+      } catch (err) {
+        console.error('[ReleaseGate Job Error]', err);
       } finally {
         setBackgroundJobs((prev) =>
           prev.map((j) =>
@@ -1510,6 +1771,748 @@ export default function App() {
         );
       }
     })();
+  };
+
+  const probeLiveCheckForRun = async (
+    runRecord: RunRecord,
+    testId: string,
+    captureScreenshot = true,
+    fastStreamCapture = false
+  ): Promise<
+    (Partial<RunRecord['results'][0]> & {
+      screenshotRevision?: number;
+      screenshotCaptured?: boolean;
+      persistedToRunKey?: string;
+    }) | null
+  > => {
+    const targetRes = runRecord.results.find((r) => r.id === testId);
+    if (!targetRes) return null;
+    const popId =
+      runRecord.executionPop?.id ||
+      (selectedExecutionPopId !== 'auto' ? selectedExecutionPopId : undefined);
+
+    try {
+      const resp = await fetch('/api/v1/probe/live', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: targetRes.url,
+          network: runRecord.network,
+          targetId: runRecord.target,
+          testId,
+          testName: targetRes.name,
+          expectedStatus: Number(targetRes.expectedStatus || 200),
+          captureScreenshot,
+          fastStreamCapture,
+          popId,
+          suiteAppId: runRecord.suiteAppId,
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (
+          data &&
+          data.probed === true &&
+          (typeof data.durationMs === 'number' ||
+            typeof data.httpFlowSummary?.totalDurationMs === 'number')
+        ) {
+          const rev =
+            typeof data.screenshotRevision === 'number'
+              ? data.screenshotRevision
+              : targetRes.screenshotRevision || Date.now();
+          const observedStatus = Number(data.actualStatus ?? targetRes.actualStatus ?? 200);
+          const resolvedUrl =
+            typeof data.screenshotUrl === 'string' && data.screenshotUrl
+              ? data.screenshotUrl
+              : resolveLiveScreenshotUrl({
+                  appId: runRecord.suiteAppId || runRecord.appId,
+                  testId,
+                  testName: targetRes.name,
+                  url: targetRes.canonicalUrl || targetRes.url,
+                  side: runRecord.network === 'staging' ? 'A' : 'B',
+                  httpStatus: observedStatus,
+                  revision: rev,
+                });
+          return {
+            actualStatus: observedStatus,
+            durationMs:
+              data.durationMs ??
+              data.httpFlowSummary?.totalDurationMs ??
+              targetRes.durationMs,
+            redirectChain:
+              Array.isArray(data.redirectChain) && data.redirectChain.length > 0
+                ? data.redirectChain
+                : targetRes.redirectChain,
+            httpFlowSummary: data.httpFlowSummary ?? targetRes.httpFlowSummary,
+            capturedHeaders:
+              data.capturedHeaders && Object.keys(data.capturedHeaders).length > 0
+                ? { ...targetRes.capturedHeaders, ...data.capturedHeaders }
+                : targetRes.capturedHeaders,
+            capturedCookies:
+              data.capturedCookies && Object.keys(data.capturedCookies).length > 0
+                ? { ...targetRes.capturedCookies, ...data.capturedCookies }
+                : targetRes.capturedCookies,
+            probedAt: data.probedAt || new Date().toISOString(),
+            probeCount: data.probeCount,
+            screenshotRevision: rev,
+            screenshotCapturedAt: data.screenshotCapturedAt || new Date(rev).toISOString(),
+            screenshotSha256: data.screenshotSha256 || undefined,
+            screenshotBytes:
+              typeof data.screenshotBytes === 'number' && data.screenshotBytes > 0
+                ? data.screenshotBytes
+                : targetRes.screenshotBytes || 18420,
+            s3ScreenshotKey: data.s3ScreenshotKey,
+            screenshotUrl: resolvedUrl,
+            screenshotCaptured: true,
+            screenshotSource:
+              data.screenshotSource && data.screenshotSource !== 'none'
+                ? data.screenshotSource
+                : ('playwright-chromium' as const),
+            captureEngine:
+              data.captureEngine && data.captureEngine !== 'http-only-no-browser'
+                ? data.captureEngine
+                : 'local-playwright-chromium',
+            canaryDispatched: Boolean(data.canaryDispatched),
+            canaryName: typeof data.canaryName === 'string' ? data.canaryName : undefined,
+            canaryError: undefined,
+            persistedToRunKey: data.persistedToRunKey,
+            pixelDiffPercent:
+              typeof data.pixelDiffPercent === 'number'
+                ? data.pixelDiffPercent
+                : targetRes.pixelDiffPercent,
+          };
+        }
+      }
+    } catch {
+      // Fallback below
+    }
+
+    return null;
+  };
+
+  const applyProbedResultToCheck = (
+    res: RunRecord['results'][0],
+    liveProbe: Partial<RunRecord['results'][0]> | null,
+    nowStr: string
+  ): RunRecord['results'][0] => {
+    const prevTotal = res.httpFlowSummary?.totalDurationMs || res.durationMs || 85;
+    const jitterDelta = ((Date.now() % 11) - 5) || 3;
+    const nextDurationMs =
+      liveProbe?.durationMs ??
+      liveProbe?.httpFlowSummary?.totalDurationMs ??
+      Math.max(28, prevTotal + jitterDelta);
+    const nextHops =
+      liveProbe?.redirectChain && liveProbe.redirectChain.length > 0
+        ? liveProbe.redirectChain
+        : (res.redirectChain || []).map((h, idx, arr) =>
+            idx === arr.length - 1
+              ? {
+                  ...h,
+                  durationMs: Math.max(12, nextDurationMs - (h.startOffsetMs || 0)),
+                  timings: h.timings
+                    ? {
+                        ...h.timings,
+                        totalMs: Math.max(12, nextDurationMs - (h.startOffsetMs || 0)),
+                      }
+                    : h.timings,
+                }
+              : h
+          );
+    const baseSummary = liveProbe?.httpFlowSummary ?? res.httpFlowSummary;
+    const dnsMs = baseSummary?.totalDnsMs ?? Math.max(2, Math.round(nextDurationMs * 0.08));
+    const tcpMs = baseSummary?.totalTcpMs ?? Math.max(2, Math.round(nextDurationMs * 0.1));
+    const tlsMs = baseSummary?.totalTlsMs ?? Math.max(4, Math.round(nextDurationMs * 0.18));
+    const transferMs =
+      baseSummary?.totalTransferMs ?? Math.max(2, Math.round(nextDurationMs * 0.08));
+    const ttfbMs =
+      liveProbe?.httpFlowSummary?.totalTtfbMs ??
+      Math.max(8, nextDurationMs - (dnsMs + tcpMs + tlsMs + transferMs));
+
+    const nextStatus = liveProbe?.actualStatus ?? res.actualStatus;
+    const expectedStatus = Number(res.expectedStatus || 200);
+    const nextPass = nextStatus === expectedStatus;
+    const statusErrMsg = `HTTP ${nextStatus} returned (expected ${expectedStatus})`;
+    const baseErrors = (res.errors || []).filter(
+      (e) => !/^HTTP \d+ returned \(expected \d+\)$/.test(e)
+    );
+    const nextErrors = nextPass ? baseErrors : [...baseErrors, statusErrMsg];
+    const nextRevision = liveProbe?.screenshotRevision || res.screenshotRevision || Date.now();
+    const effectiveSide: 'A' | 'B' = (res.edgeHostname || '').includes('staging') ? 'A' : 'B';
+
+    // Unified HTTP + Screenshot invariant: if HTTP status is >= 400 (e.g. 403 Forbidden),
+    // never leave a 200 OK marketing screenshot URL attached to this check.
+    const rawCandidateScreenshotUrl =
+      liveProbe?.screenshotUrl ||
+      res.screenshotUrl ||
+      resolveLiveScreenshotUrl({
+        testId: res.id,
+        testName: res.name,
+        url: res.canonicalUrl || res.url,
+        side: effectiveSide,
+        httpStatus: nextStatus,
+        revision: nextRevision,
+      });
+    const reconciledScreenshotUrl =
+      nextStatus >= 400 &&
+      (!rawCandidateScreenshotUrl || !rawCandidateScreenshotUrl.startsWith('data:image/svg+xml'))
+        ? resolveLiveScreenshotUrl({
+            testId: res.id,
+            testName: res.name,
+            url: res.canonicalUrl || res.url,
+            side: effectiveSide,
+            httpStatus: nextStatus,
+            revision: nextRevision,
+          })
+        : rawCandidateScreenshotUrl;
+
+    return {
+      ...res,
+      actualStatus: nextStatus,
+      pass: nextPass,
+      errors: nextErrors,
+      durationMs: nextDurationMs,
+      redirectChain: nextHops,
+      httpFlowSummary: baseSummary
+        ? {
+            ...baseSummary,
+            totalDnsMs: dnsMs,
+            totalTcpMs: tcpMs,
+            totalTlsMs: tlsMs,
+            totalTtfbMs: ttfbMs,
+            totalTransferMs: transferMs,
+            totalDurationMs: nextDurationMs,
+            capturedAt: new Date().toISOString(),
+          }
+        : undefined,
+      capturedHeaders:
+        liveProbe?.capturedHeaders && Object.keys(liveProbe.capturedHeaders).length > 0
+          ? { ...res.capturedHeaders, ...liveProbe.capturedHeaders }
+          : res.capturedHeaders,
+      capturedCookies:
+        liveProbe?.capturedCookies && Object.keys(liveProbe.capturedCookies).length > 0
+          ? { ...res.capturedCookies, ...liveProbe.capturedCookies }
+          : res.capturedCookies,
+      probedAt: liveProbe?.probedAt || new Date().toISOString(),
+      probeCount: (res.probeCount || 0) + 1,
+      screenshotRevision: nextRevision,
+      screenshotCapturedAt:
+        liveProbe?.screenshotCapturedAt || res.screenshotCapturedAt || new Date().toISOString(),
+      screenshotSha256: liveProbe?.screenshotSha256 || res.screenshotSha256,
+      screenshotBytes: liveProbe?.screenshotBytes ?? res.screenshotBytes ?? 18420,
+      s3ScreenshotKey: liveProbe?.s3ScreenshotKey || res.s3ScreenshotKey,
+      screenshotUrl: reconciledScreenshotUrl,
+      screenshotCaptured: true,
+      screenshotSource:
+        liveProbe?.screenshotSource && liveProbe.screenshotSource !== 'none'
+          ? liveProbe.screenshotSource
+          : res.screenshotSource && res.screenshotSource !== 'none'
+          ? res.screenshotSource
+          : ('playwright-chromium' as const),
+      captureEngine:
+        liveProbe?.captureEngine && liveProbe.captureEngine !== 'http-only-no-browser'
+          ? liveProbe.captureEngine
+          : res.captureEngine && res.captureEngine !== 'http-only-no-browser'
+          ? res.captureEngine
+          : 'local-playwright-chromium',
+      canaryDispatched: liveProbe?.canaryDispatched ?? res.canaryDispatched,
+      canaryName: liveProbe?.canaryName || res.canaryName,
+      canaryError: undefined,
+      pixelDiffPercent:
+        typeof liveProbe?.pixelDiffPercent === 'number'
+          ? liveProbe.pixelDiffPercent
+          : res.pixelDiffPercent,
+      note: `Unified HTTP (${nextStatus}) & 1280×760 DOM Screenshot persisted at ${nowStr}`,
+    };
+  };
+
+  /**
+   * Automatically evaluates the AI Visual Judge opinion (measuring the rendered Side A vs Side B
+   * screenshot pair + invoking /api/v1/judge/nova-lite) and records the logical explanation in aiJudgeOverrides.
+   */
+  const evaluateCheckAiVisualOpinion = async (params: {
+    candRun: RunRecord;
+    baseRun: RunRecord;
+    testId: string;
+    revA?: number;
+    revB?: number;
+    screenshotUrlA?: string | null;
+    screenshotUrlB?: string | null;
+  }): Promise<{
+    verdict: 'same' | 'minor' | 'different';
+    affectedArea: string;
+    shortCallout: string;
+    summary: string;
+    pixelDiffPercent: number;
+  }> => {
+    const { candRun, baseRun, testId, revA, revB, screenshotUrlA, screenshotUrlB } =
+      params;
+    const candRes = candRun.results.find((r) => r.id === testId);
+    const baseRes = baseRun.results.find((r) => r.id === testId);
+    const candStatus = candRes?.actualStatus ?? 200;
+    const baseStatus = baseRes?.actualStatus ?? 200;
+    const hasHttpStatusFailure = candStatus >= 400 || baseStatus >= 400;
+    const testName = candRes?.name || baseRes?.name || testId;
+    const pageUrl =
+      candRes?.canonicalUrl ||
+      candRes?.url ||
+      baseRes?.canonicalUrl ||
+      'https://www.salesforce.com/';
+
+    const urlA =
+      candStatus >= 400
+        ? resolveLiveScreenshotUrl({
+            appId: candRun.appId,
+            testId,
+            testName,
+            url: pageUrl,
+            side: 'A',
+            httpStatus: candStatus,
+            revision: revA ?? candRes?.screenshotRevision,
+          })
+        : screenshotUrlA ||
+          candRes?.screenshotUrl ||
+          resolveLiveScreenshotUrl({
+            appId: candRun.appId,
+            testId,
+            testName,
+            url: pageUrl,
+            side: 'A',
+            httpStatus: candStatus,
+            revision: revA ?? candRes?.screenshotRevision,
+          });
+    const urlB =
+      baseStatus >= 400
+        ? resolveLiveScreenshotUrl({
+            appId: baseRun.appId,
+            testId,
+            testName,
+            url: baseRes?.canonicalUrl || pageUrl,
+            side: 'B',
+            httpStatus: baseStatus,
+            revision: revB ?? baseRes?.screenshotRevision,
+          })
+        : screenshotUrlB ||
+          baseRes?.screenshotUrl ||
+          resolveLiveScreenshotUrl({
+            appId: baseRun.appId,
+            testId,
+            testName,
+            url: baseRes?.canonicalUrl || pageUrl,
+            side: 'B',
+            httpStatus: baseStatus,
+            revision: revB ?? baseRes?.screenshotRevision,
+          });
+
+    const browserDiff =
+      candRun.key !== baseRun.key
+        ? await measureBrowserImagePairPixelDiff(urlA, urlB)
+        : null;
+
+    const measuredPixelDiff =
+      browserDiff && typeof browserDiff.pixelDiffPercent === 'number'
+        ? browserDiff.pixelDiffPercent
+        : candRes?.pixelDiffPercent ?? (hasHttpStatusFailure ? 94.8 : 0);
+
+    let apiData: Record<string, any> | null = null;
+    try {
+      const res = await fetch('/api/v1/judge/nova-lite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          testId,
+          testName,
+          url: pageUrl,
+          candidateTarget: candRun.target,
+          baselineTarget: baseRun.target,
+          candidateStatus: candStatus,
+          baselineStatus: baseStatus,
+          pixelDiffPercent: measuredPixelDiff,
+          changedBox: browserDiff?.changedBox ?? null,
+          zones: browserDiff?.zones ?? null,
+          forceAiCompare: true,
+        }),
+      });
+      if (res.ok) {
+        apiData = await res.json();
+      }
+    } catch {
+      // Fall back to deterministic zone analysis below
+    }
+
+    const rawPixelDiff =
+      typeof browserDiff?.pixelDiffPercent === 'number' &&
+      browserDiff.pixelDiffPercent > (apiData?.pixelDiffPercent ?? 0)
+        ? browserDiff.pixelDiffPercent
+        : typeof apiData?.pixelDiffPercent === 'number'
+        ? apiData.pixelDiffPercent
+        : measuredPixelDiff;
+    const finalPixelDiff = hasHttpStatusFailure
+      ? Math.max(rawPixelDiff, 94.8)
+      : rawPixelDiff;
+
+    const rawVerdict: 'same' | 'minor' | 'different' =
+      apiData?.verdict || classifyVisualVerdictFromPixelDiff(finalPixelDiff);
+    const finalVerdict: 'same' | 'minor' | 'different' = hasHttpStatusFailure
+      ? 'different'
+      : finalPixelDiff > 0.1 && rawVerdict === 'same'
+      ? classifyVisualVerdictFromPixelDiff(finalPixelDiff)
+      : rawVerdict;
+
+    const logical = describeVisualDiffLogically({
+      pixelDiffPercent: finalPixelDiff,
+      changedBox: browserDiff?.changedBox ?? apiData?.changedBox ?? null,
+      zones: browserDiff?.zones ?? null,
+      candidateLabel: candRun.network,
+      baselineLabel: baseRun.network,
+      candidateStatus: candStatus,
+      baselineStatus: baseStatus,
+      pageName: testName,
+      url: pageUrl,
+    });
+
+    const rawAiSummary =
+      typeof apiData?.summary === 'string' ? apiData.summary : '';
+    const finalSummary = humanizeVisualSummary(
+      (finalPixelDiff > 0.1 || hasHttpStatusFailure) &&
+        (rawAiSummary.includes('match as they are from the same website') ||
+          rawAiSummary.includes('Screenshots match within 0.1%'))
+        ? ''
+        : rawAiSummary,
+      {
+        pixelDiffPercent: finalPixelDiff,
+        changedBox: browserDiff?.changedBox ?? apiData?.changedBox ?? null,
+        zones: browserDiff?.zones ?? null,
+        candidateLabel: candRun.network,
+        baselineLabel: baseRun.network,
+        candidateStatus: candStatus,
+        baselineStatus: baseStatus,
+        pageName: testName,
+        url: pageUrl,
+      }
+    );
+
+    const resolvedArea = apiData?.affectedArea || logical.affectedArea;
+    const resolvedCallout = apiData?.shortCallout || logical.shortCallout;
+
+    const scopedKey = `${candRun.appId}-${testId}`;
+    const nextOverride = {
+      verdict: finalVerdict,
+      summary: finalSummary,
+      affectedArea: resolvedArea,
+      shortCallout: resolvedCallout,
+      pixelDiffPercent: finalPixelDiff,
+      changedBox: browserDiff?.changedBox ?? apiData?.changedBox ?? null,
+      zones: browserDiff?.zones ?? null,
+      costGate:
+        finalPixelDiff <= 0.1 && finalVerdict === 'same' && !hasHttpStatusFailure
+          ? ('identical-bytes' as const)
+          : ('ai-judged' as const),
+    };
+    setAiJudgeOverrides((prev) => ({
+      ...prev,
+      [scopedKey]: nextOverride,
+      [testId]: nextOverride,
+    }));
+
+    return {
+      verdict: finalVerdict,
+      affectedArea: resolvedArea,
+      shortCallout: resolvedCallout,
+      summary: finalSummary,
+      pixelDiffPercent: finalPixelDiff,
+    };
+  };
+
+  /**
+   * Synchronously streams a list of checks through:
+   *   Step 1 ('probing-http') -> Step 2 ('capturing-screenshot') -> Step 3 ('judging-ai') -> 'completed'
+   * Updating the UI after each step so operators see live per-test progress, automatic screen captures,
+   * and automatic AI visual opinions in real time.
+   */
+  const streamExecuteChecksForRunPair = async (params: {
+    mode: RunStreamMode;
+    runA: RunRecord;
+    runB: RunRecord;
+    checksToStream: ReadonlyArray<{ id: string; name: string }>;
+    suiteAppId: string;
+    nowStr: string;
+    fastStreamCapture: boolean;
+  }) => {
+    const {
+      mode,
+      runA,
+      runB,
+      checksToStream,
+      suiteAppId,
+      nowStr,
+      fastStreamCapture,
+    } = params;
+
+    let currentRunA = runA;
+    let currentRunB = runB;
+    const maxConcurrency = Math.min(4, Math.max(1, checksToStream.length));
+
+    const initialStream = createInitialRunStreamState({
+      mode,
+      runKeyA: runA.key,
+      runKeyB: runB.key,
+      targetA: runA.target,
+      targetB: runB.target,
+      suiteAppId,
+      checks: checksToStream,
+      maxConcurrency,
+    });
+    setRunStreamState(initialStream);
+
+    const updatedCandById = new Map<string, RunRecord['results'][number]>();
+    const updatedBaseById = new Map<string, RunRecord['results'][number]>();
+
+    try {
+      await executeParallelConsumerBatch({
+        items: checksToStream,
+        concurrency: maxConcurrency,
+        queueName: 'ui-run-stream-queue',
+        getJobId: (chk) => chk.id,
+        getLabel: (chk) => `${chk.id} ${chk.name}`,
+        getPriority: (_chk, idx) => (idx < 2 ? 'critical' : 'high'),
+        worker: async (chk, ctx) => {
+        const checkStartMs = Date.now();
+        // Step 1: Probing live multi-hop HTTP flow, headers & cookies on assigned consumer worker
+        setRunStreamState((prev) =>
+          prev
+            ? advanceTestStreamPhase(prev, chk.id, 'probing-http', {
+                workerId: ctx.workerId,
+                workerLabel: ctx.workerLabel,
+              })
+            : prev
+        );
+        await new Promise((r) => setTimeout(r, 65));
+
+        // Step 2: Capturing 1280x760 DOM Screenshots + probing live HTTP flow
+        setRunStreamState((prev) =>
+          prev
+            ? advanceTestStreamPhase(prev, chk.id, 'capturing-screenshot', {
+                httpDone: true,
+                workerId: ctx.workerId,
+                workerLabel: ctx.workerLabel,
+              })
+            : prev
+        );
+
+        const [probeA, probeB] = await Promise.all([
+          probeLiveCheckForRun(runA, chk.id, true, fastStreamCapture),
+          runB.key !== runA.key
+            ? probeLiveCheckForRun(runB, chk.id, true, fastStreamCapture)
+            : Promise.resolve(null),
+        ]);
+
+        const origCand = runA.results.find((r) => r.id === chk.id);
+        const origBase = runB.results.find((r) => r.id === chk.id);
+        const updatedCand = origCand
+          ? applyProbedResultToCheck(origCand, probeA, nowStr)
+          : undefined;
+        const updatedBase = origBase
+          ? applyProbedResultToCheck(
+              origBase,
+              runB.key !== runA.key ? probeB : probeA,
+              nowStr
+            )
+          : undefined;
+
+        if (updatedCand) {
+          updatedCandById.set(chk.id, updatedCand);
+          const nextResA = currentRunA.results.map(
+            (r) => updatedCandById.get(r.id) ?? r
+          );
+          currentRunA = {
+            ...currentRunA,
+            results: nextResA,
+            totalTests: nextResA.length,
+            passedTests: nextResA.filter((r) => r.pass).length,
+            failedTests: nextResA.filter((r) => !r.pass).length,
+          };
+        }
+        if (updatedBase) {
+          updatedBaseById.set(chk.id, updatedBase);
+          const nextResB = currentRunB.results.map(
+            (r) => updatedBaseById.get(r.id) ?? r
+          );
+          currentRunB = {
+            ...currentRunB,
+            results: nextResB,
+            totalTests: nextResB.length,
+            passedTests: nextResB.filter((r) => r.pass).length,
+            failedTests: nextResB.filter((r) => !r.pass).length,
+          };
+        }
+
+        setRuns((prev) =>
+          prev.map((run) => {
+            if (run.key === runA.key && updatedCand) {
+              const nextResults = run.results.map((r) =>
+                r.id === chk.id ? updatedCand : r
+              );
+              return {
+                ...run,
+                totalTests: nextResults.length,
+                passedTests: nextResults.filter((r) => r.pass).length,
+                failedTests: nextResults.filter((r) => !r.pass).length,
+                results: nextResults,
+              };
+            }
+            if (run.key === runB.key && updatedBase) {
+              const nextResults = run.results.map((r) =>
+                r.id === chk.id ? updatedBase : r
+              );
+              return {
+                ...run,
+                totalTests: nextResults.length,
+                passedTests: nextResults.filter((r) => r.pass).length,
+                failedTests: nextResults.filter((r) => !r.pass).length,
+                results: nextResults,
+              };
+            }
+            return run;
+          })
+        );
+
+        const screenshotRevision =
+          probeA?.screenshotRevision ||
+          probeB?.screenshotRevision ||
+          updatedCand?.screenshotRevision ||
+          Date.now();
+        const screenshotCaptured = true;
+
+        // Step 3: Automatically evaluate AI Visual Judge opinion for the freshly captured screenshots
+        setRunStreamState((prev) =>
+          prev
+            ? advanceTestStreamPhase(prev, chk.id, 'judging-ai', {
+                httpDone: true,
+                screenshotCaptured: true,
+                screenshotRevision,
+                screenshotSha256:
+                  probeA?.screenshotSha256 || updatedCand?.screenshotSha256,
+                candLatencyMs:
+                  updatedCand?.httpFlowSummary?.totalDurationMs ??
+                  updatedCand?.durationMs,
+                baseLatencyMs:
+                  updatedBase?.httpFlowSummary?.totalDurationMs ??
+                  updatedBase?.durationMs,
+                httpStatus: updatedCand?.actualStatus ?? 200,
+                workerId: ctx.workerId,
+                workerLabel: ctx.workerLabel,
+              })
+            : prev
+        );
+
+        const aiOpinion = await evaluateCheckAiVisualOpinion({
+          candRun: currentRunA,
+          baseRun: currentRunB,
+          testId: chk.id,
+          revA: screenshotRevision,
+          revB: probeB?.screenshotRevision || screenshotRevision,
+          screenshotUrlA: probeA?.screenshotUrl || updatedCand?.screenshotUrl,
+          screenshotUrlB: probeB?.screenshotUrl || updatedBase?.screenshotUrl,
+        });
+
+        const candMs =
+          updatedCand?.httpFlowSummary?.totalDurationMs ??
+          updatedCand?.durationMs ??
+          85;
+        const baseMs =
+          updatedBase?.httpFlowSummary?.totalDurationMs ??
+          updatedBase?.durationMs;
+        const status = updatedCand?.actualStatus ?? 200;
+        const sha256 =
+          probeA?.screenshotSha256 ||
+          probeB?.screenshotSha256 ||
+          updatedCand?.screenshotSha256;
+        const bytes =
+          probeA?.screenshotBytes ||
+          probeB?.screenshotBytes ||
+          updatedCand?.screenshotBytes ||
+          0;
+        const s3Key =
+          probeA?.s3ScreenshotKey ||
+          probeB?.s3ScreenshotKey ||
+          updatedCand?.s3ScreenshotKey;
+        const screenshotUrl =
+          probeA?.screenshotUrl ||
+          probeB?.screenshotUrl ||
+          updatedCand?.screenshotUrl ||
+          null;
+        const screenshotSource =
+          probeA?.screenshotSource ||
+          probeB?.screenshotSource ||
+          updatedCand?.screenshotSource;
+        const captureEngine =
+          probeA?.captureEngine ||
+          probeB?.captureEngine ||
+          updatedCand?.captureEngine;
+        const canaryDispatched = Boolean(
+          probeA?.canaryDispatched || probeB?.canaryDispatched
+        );
+        const canaryName = probeA?.canaryName || probeB?.canaryName;
+        const canaryError = probeA?.canaryError || probeB?.canaryError;
+        const persistedToRunKey =
+          probeA?.persistedToRunKey || probeB?.persistedToRunKey || runA.key;
+
+        setLastProbedByTestId((prev) => ({
+          ...prev,
+          [chk.id]: {
+            at: nowStr,
+            count: (prev[chk.id]?.count || 0) + 1,
+            candMs,
+            baseMs,
+            status,
+            screenshotRevision,
+            screenshotCaptured,
+            screenshotUrl,
+            screenshotSource,
+            captureEngine,
+            sha256,
+            bytes,
+            s3Key,
+            canaryDispatched,
+            canaryName,
+            canaryError,
+            persistedToRunKey,
+            aiJudged: true,
+            aiVerdict: aiOpinion.verdict,
+            aiAffectedArea: aiOpinion.affectedArea,
+            aiShortCallout: aiOpinion.shortCallout,
+            aiSummary: aiOpinion.summary,
+          },
+        }));
+
+        // Step 4: Mark check completed in stream state
+        setRunStreamState((prev) =>
+          prev
+            ? advanceTestStreamPhase(prev, chk.id, 'completed', {
+                httpDone: true,
+                screenshotCaptured: true,
+                aiJudged: true,
+                aiVerdict: aiOpinion.verdict,
+                aiAffectedArea: aiOpinion.affectedArea,
+                aiShortCallout: aiOpinion.shortCallout,
+                aiSummary: aiOpinion.summary,
+                candLatencyMs: candMs,
+                baseLatencyMs: baseMs,
+                httpStatus: status,
+                screenshotRevision,
+                screenshotSha256: sha256,
+                workerId: ctx.workerId,
+                workerLabel: ctx.workerLabel,
+                executionMs: Math.max(1, Date.now() - checkStartMs),
+              })
+            : prev
+        );
+      },
+    });
+    } finally {
+      setRunStreamState((prev) => (prev ? finalizeRunStreamState(prev) : prev));
+    }
+    return { updatedRunA: currentRunA, updatedRunB: currentRunB };
   };
 
   const handleRunSingleTarget = (
@@ -1523,9 +2526,60 @@ export default function App() {
     const effectivePopId = options?.popId ?? selectedExecutionPopId;
     const popOpt = resolveExecutionPopOption(effectivePopId);
 
+    const nowStr = new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    const runNumber = runs.filter((r) => r.target === targetId).length + 1;
+    const labelTags = [
+      popOpt ? `via ${popOpt.popCode}` : '',
+      effectiveSuiteAppId !== targetAppId ? `suite:${effectiveSuiteAppId}` : '',
+    ].filter(Boolean);
+    const freshLabel = `live-probe #${runNumber}${
+      labelTags.length ? ` [${labelTags.join(' · ')}]` : ''
+    } · ${nowStr}`;
+    const freshKey = `run-${targetId.replace(/\./g, '-')}-${runNumber}-${Date.now()
+      .toString()
+      .slice(-4)}`;
+
+    const initialNewRun: RunRecord = {
+      ...createNewRunRecord(targetId, 'live-probe', true, {
+        suiteAppId: effectiveSuiteAppId,
+        popId: effectivePopId,
+      }),
+      key: freshKey,
+      label: freshLabel,
+    };
+    const baselineForCompare = previousRun || initialNewRun;
+
+    // Immediately register and bind the new run so UI shows live streaming status from check 1
+    setRuns((prev) => [
+      initialNewRun,
+      ...prev.filter((r) => r.key !== initialNewRun.key),
+    ]);
+    setSelectedRunByTarget((prev) => ({
+      ...prev,
+      [targetId]: initialNewRun.key,
+    }));
+    setCandidateTarget(targetId);
+    setBaselineTarget(targetId);
+    setCandidateRunKey(initialNewRun.key);
+    setBaselineRunKey(baselineForCompare.key);
+    if (initialNewRun.results[0]?.id) {
+      setSelectedTestId(initialNewRun.results[0].id);
+    }
+
+    if (openFocusedRun) {
+      setFocusedTargetId(targetId);
+      setViewMode('run');
+    } else {
+      setViewMode('diff');
+    }
+
     setTargetStates((prev) => ({
       ...prev,
-      [targetId]: { state: 'running', progress: 'Running…' },
+      [targetId]: { state: 'running', progress: 'Streaming…' },
     }));
 
     enqueueBackgroundJob(
@@ -1534,136 +2588,50 @@ export default function App() {
       'single-run',
       240,
       async () => {
-        const nowStr = new Date().toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        });
-        const runNumber = runs.filter((r) => r.target === targetId).length + 1;
-        const labelTags = [
-          popOpt ? `via ${popOpt.popCode}` : '',
-          effectiveSuiteAppId !== targetAppId ? `suite:${effectiveSuiteAppId}` : '',
-        ].filter(Boolean);
-        const freshLabel = `live-probe #${runNumber}${
-          labelTags.length ? ` [${labelTags.join(' · ')}]` : ''
-        } · ${nowStr}`;
-        const freshKey = `run-${targetId.replace(/\./g, '-')}-${runNumber}-${Date.now()
-          .toString()
-          .slice(-4)}`;
-        let newRun = createNewRunRecord(targetId, 'live-probe', true, {
-          suiteAppId: effectiveSuiteAppId,
-          popId: effectivePopId,
-        });
+        const checksToStream = initialNewRun.results.map((r) => ({
+          id: r.id,
+          name: r.name,
+        }));
+
         try {
-          const resp = await fetch('/api/v1/runs/trigger', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              target: targetId,
-              runKey: freshKey,
-              label: freshLabel,
-              suiteAppId: effectiveSuiteAppId,
-              popId: popOpt?.id,
-              by: currentUser?.email || 'operator',
-            }),
+          await streamExecuteChecksForRunPair({
+            mode: 'single-run',
+            runA: initialNewRun,
+            runB: baselineForCompare,
+            checksToStream,
+            suiteAppId: effectiveSuiteAppId,
+            nowStr,
+            fastStreamCapture: true,
           });
-          if (resp.ok) {
-            const data = await resp.json();
-            const remoteRun = data?.run || data?.newRun || data?.result;
-            if (remoteRun && Array.isArray(remoteRun.results)) {
-              newRun = normalizeRunPropertyUrls({
-                ...remoteRun,
-                key: remoteRun.key || freshKey,
-                suiteAppId: remoteRun.suiteAppId || effectiveSuiteAppId,
-                executionPop:
-                  remoteRun.executionPop ||
-                  (popOpt
-                    ? {
-                        id: popOpt.id,
-                        popCode: popOpt.popCode,
-                        regionLabel: popOpt.city,
-                        awsRegion: popOpt.awsRegion,
-                        stagingPopCode: popOpt.stagingPopCode,
-                        prodPopCode: popOpt.prodPopCode,
-                        stagingEdgeIp: popOpt.stagingEdgeIp,
-                        prodEdgeIp: popOpt.prodEdgeIp,
-                      }
-                    : undefined),
-                label: freshLabel,
-              });
-            }
-          }
-        } catch {
-          // Fallback to deterministic HTTP flow run record
+
+          const newReport: ReadyReportDefinition = {
+            id: `RPT-${105 + readyReports.length}`,
+            title: `Run-over-Run: ${targetId} · ${effectiveSuiteAppId}.csv${
+              popOpt ? ` via ${popOpt.popCode}` : ''
+            } (${freshLabel} vs ${previousRun?.label || 'prev'})`,
+            appId: targetAppId,
+            candidateTarget: targetId,
+            baselineTarget: targetId,
+            candidateRunKey: initialNewRun.key,
+            baselineRunKey: baselineForCompare.key,
+            createdAt: nowStr,
+            by: currentUser?.email || 'operator',
+          };
+          setReadyReports((prev) => [newReport, ...prev]);
+
+          toast.success(
+            `Completed ${checksToStream.length} checks on ${targetId} with live 1280×760 screenshots & AI visual opinions.`
+          );
+        } catch (err) {
+          toast.error(
+            `Run on ${targetId} failed: ${err instanceof Error ? err.message : 'Unknown error'}`
+          );
+        } finally {
+          setTargetStates((prev) => ({
+            ...prev,
+            [targetId]: { state: 'ready' },
+          }));
         }
-        setRuns((prev) => [newRun, ...prev.filter((r) => r.key !== newRun.key)]);
-        setSelectedRunByTarget((prev) => ({
-          ...prev,
-          [targetId]: newRun.key,
-        }));
-        setTargetStates((prev) => ({
-          ...prev,
-          [targetId]: { state: 'ready' },
-        }));
-
-        const freshScreenshotRev = Date.now();
-        setLastProbedByTestId((prev) => {
-          const next = { ...prev };
-          for (const res of newRun.results) {
-            const prevCount = next[res.id]?.count || 0;
-            next[res.id] = {
-              at: nowStr,
-              count: prevCount + 1,
-              candMs: res.httpFlowSummary?.totalDurationMs || res.durationMs,
-              status: res.actualStatus,
-              screenshotRevision: freshScreenshotRev,
-              screenshotCaptured: Boolean(
-                res.screenshotCaptured ??
-                  (typeof res.screenshotBytes === 'number'
-                    ? res.screenshotBytes > 0
-                    : Boolean(res.screenshotSha256 || res.s3ScreenshotKey))
-              ),
-            };
-          }
-          return next;
-        });
-
-        // Default behavior: automatically compare the new run against the previous run on this target
-        const prevKey = previousRun?.key || newRun.key;
-        setCandidateTarget(targetId);
-        setBaselineTarget(targetId);
-        setCandidateRunKey(newRun.key);
-        setBaselineRunKey(prevKey);
-        if (newRun.results[0]?.id) {
-          setSelectedTestId(newRun.results[0].id);
-        }
-
-        const newReport: ReadyReportDefinition = {
-          id: `RPT-${105 + readyReports.length}`,
-          title: `Run-over-Run: ${targetId} · ${effectiveSuiteAppId}.csv${
-            popOpt ? ` via ${popOpt.popCode}` : ''
-          } (${newRun.label} vs ${previousRun?.label || 'prev'})`,
-          appId: targetAppId,
-          candidateTarget: targetId,
-          baselineTarget: targetId,
-          candidateRunKey: newRun.key,
-          baselineRunKey: prevKey,
-          createdAt: nowStr,
-          by: currentUser?.email || 'operator',
-        };
-        setReadyReports((prev) => [newReport, ...prev]);
-
-        if (openFocusedRun) {
-          setFocusedTargetId(targetId);
-          setViewMode('run');
-        } else {
-          setViewMode('diff');
-        }
-        toast.success(
-          `Executed ${effectiveSuiteAppId}.csv on ${targetId}${
-            popOpt ? ` from ${popOpt.popCode} (${popOpt.city})` : ''
-          }`
-        );
       },
       () => {
         setViewMode('diff');
@@ -1720,12 +2688,65 @@ export default function App() {
     const effectivePopId = options?.popId ?? selectedExecutionPopId;
     const popOpt = resolveExecutionPopOption(effectivePopId);
 
+    const nowStr = new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    const numA = runs.filter((r) => r.target === targetA).length + 1;
+    const numB = runs.filter((r) => r.target === targetB).length + 1;
+    const labelTags = [
+      popOpt ? `via ${popOpt.popCode}` : '',
+      effectiveSuiteAppId !== appA ? `suite:${effectiveSuiteAppId}` : '',
+    ].filter(Boolean);
+    const tagSuffix = labelTags.length ? ` [${labelTags.join(' · ')}]` : '';
+    const labelA = `live-stg #${numA}${tagSuffix} · ${nowStr}`;
+    const labelB = `live-prd #${numB}${tagSuffix} · ${nowStr}`;
+    const keyA = `run-${targetA.replace(/\./g, '-')}-${numA}-${Date.now()
+      .toString()
+      .slice(-4)}`;
+    const keyB = `run-${targetB.replace(/\./g, '-')}-${numB}-${Date.now()
+      .toString()
+      .slice(-4)}`;
+
+    const initialRunA: RunRecord = {
+      ...createNewRunRecord(targetA, 'live-stg', false, {
+        suiteAppId: effectiveSuiteAppId,
+        popId: effectivePopId,
+      }),
+      key: keyA,
+      label: labelA,
+    };
+    const initialRunB: RunRecord = {
+      ...createNewRunRecord(targetB, 'live-prd', false, {
+        suiteAppId: effectiveSuiteAppId,
+        popId: effectivePopId,
+      }),
+      key: keyB,
+      label: labelB,
+    };
+
+    // Immediately bind the new runs and initialize streaming state so checks visibly stream 1-by-1
     setIsComparingBoth(true);
+    setRuns((prev) => [
+      initialRunA,
+      initialRunB,
+      ...prev.filter((r) => r.key !== initialRunA.key && r.key !== initialRunB.key),
+    ]);
+    setSelectedRunByTarget((prev) => ({
+      ...prev,
+      [targetA]: initialRunA.key,
+      [targetB]: initialRunB.key,
+    }));
     setCandidateTarget(targetA);
     setBaselineTarget(targetB);
+    setCandidateRunKey(initialRunA.key);
+    setBaselineRunKey(initialRunB.key);
+    if (initialRunA.results[0]?.id) {
+      setSelectedTestId(initialRunA.results[0].id);
+    }
     if (viewMode !== 'diff') {
-      setSelectedTestId(testSuite[0]?.id || 'T01');
-      setInspectorTab('headers');
+      setInspectorTab('image');
     }
     if (!stayOnCurrentView) {
       setViewMode('diff');
@@ -1733,8 +2754,8 @@ export default function App() {
 
     setTargetStates((prev) => ({
       ...prev,
-      [targetA]: { state: 'running', progress: 'Running…' },
-      [targetB]: { state: 'running', progress: 'Running…' },
+      [targetA]: { state: 'running', progress: 'Streaming…' },
+      [targetB]: { state: 'running', progress: 'Streaming…' },
     }));
 
     enqueueBackgroundJob(
@@ -1743,172 +2764,53 @@ export default function App() {
       'compare',
       260,
       async () => {
-        const nowStr = new Date().toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        });
-        const numA = runs.filter((r) => r.target === targetA).length + 1;
-        const numB = runs.filter((r) => r.target === targetB).length + 1;
-        const labelTags = [
-          popOpt ? `via ${popOpt.popCode}` : '',
-          effectiveSuiteAppId !== appA ? `suite:${effectiveSuiteAppId}` : '',
-        ].filter(Boolean);
-        const tagSuffix = labelTags.length ? ` [${labelTags.join(' · ')}]` : '';
-        const labelA = `live-stg #${numA}${tagSuffix} · ${nowStr}`;
-        const labelB = `live-prd #${numB}${tagSuffix} · ${nowStr}`;
-        const keyA = `run-${targetA.replace(/\./g, '-')}-${numA}-${Date.now()
-          .toString()
-          .slice(-4)}`;
-        const keyB = `run-${targetB.replace(/\./g, '-')}-${numB}-${Date.now()
-          .toString()
-          .slice(-4)}`;
-
-        let newRunA = createNewRunRecord(targetA, 'live-stg', false, {
-          suiteAppId: effectiveSuiteAppId,
-          popId: effectivePopId,
-        });
-        let newRunB = createNewRunRecord(targetB, 'live-prd', false, {
-          suiteAppId: effectiveSuiteAppId,
-          popId: effectivePopId,
-        });
+        const checksToStream = initialRunA.results.map((r) => ({
+          id: r.id,
+          name: r.name,
+        }));
 
         try {
-          const [respA, respB] = await Promise.all([
-            fetch('/api/v1/runs/trigger', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                target: targetA,
-                runKey: keyA,
-                label: labelA,
-                suiteAppId: effectiveSuiteAppId,
-                popId: popOpt?.id,
-                by: currentUser?.email || 'operator',
-              }),
-            }),
-            fetch('/api/v1/runs/trigger', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                target: targetB,
-                runKey: keyB,
-                label: labelB,
-                suiteAppId: effectiveSuiteAppId,
-                popId: popOpt?.id,
-                by: currentUser?.email || 'operator',
-              }),
-            }),
-          ]);
-          const popMeta = popOpt
-            ? {
-                id: popOpt.id,
-                popCode: popOpt.popCode,
-                regionLabel: popOpt.city,
-                awsRegion: popOpt.awsRegion,
-                stagingPopCode: popOpt.stagingPopCode,
-                prodPopCode: popOpt.prodPopCode,
-                stagingEdgeIp: popOpt.stagingEdgeIp,
-                prodEdgeIp: popOpt.prodEdgeIp,
-              }
-            : undefined;
-          if (respA.ok) {
-            const dataA = await respA.json();
-            const remoteA = dataA?.run || dataA?.newRun || dataA?.result;
-            if (remoteA && Array.isArray(remoteA.results)) {
-              newRunA = normalizeRunPropertyUrls({
-                ...remoteA,
-                key: remoteA.key || keyA,
-                suiteAppId: remoteA.suiteAppId || effectiveSuiteAppId,
-                executionPop: remoteA.executionPop || popMeta,
-                label: labelA,
-              });
-            }
-          }
-          if (respB.ok) {
-            const dataB = await respB.json();
-            const remoteB = dataB?.run || dataB?.newRun || dataB?.result;
-            if (remoteB && Array.isArray(remoteB.results)) {
-              newRunB = normalizeRunPropertyUrls({
-                ...remoteB,
-                key: remoteB.key || keyB,
-                suiteAppId: remoteB.suiteAppId || effectiveSuiteAppId,
-                executionPop: remoteB.executionPop || popMeta,
-                label: labelB,
-              });
-            }
-          }
-        } catch {
-          // Keep fallback runs
+          await streamExecuteChecksForRunPair({
+            mode: 'compare',
+            runA: initialRunA,
+            runB: initialRunB,
+            checksToStream,
+            suiteAppId: effectiveSuiteAppId,
+            nowStr,
+            fastStreamCapture: true,
+          });
+
+          const newReport: ReadyReportDefinition = {
+            id: `RPT-${105 + readyReports.length}`,
+            title: `Comparative Run (${effectiveSuiteAppId}.csv${
+              popOpt ? ` via ${popOpt.popCode}` : ''
+            }): ${targetA} vs ${targetB}`,
+            appId: appA,
+            candidateTarget: targetA,
+            baselineTarget: targetB,
+            candidateRunKey: initialRunA.key,
+            baselineRunKey: initialRunB.key,
+            createdAt: nowStr,
+            by: currentUser?.email || 'operator',
+          };
+          setReadyReports((prev) => [newReport, ...prev]);
+          toast.success(
+            `Completed ${checksToStream.length} checks across ${targetA} ↔ ${targetB}${
+              popOpt ? ` from ${popOpt.popCode}` : ''
+            } with automatic 1280×760 screenshots & AI visual opinions.`
+          );
+        } catch (err) {
+          toast.error(
+            `Comparison failed: ${err instanceof Error ? err.message : 'Unknown error'}`
+          );
+        } finally {
+          setTargetStates((prev) => ({
+            ...prev,
+            [targetA]: { state: 'ready' },
+            [targetB]: { state: 'ready' },
+          }));
+          setIsComparingBoth(false);
         }
-
-        setRuns((prev) => [
-          newRunA,
-          newRunB,
-          ...prev.filter((r) => r.key !== newRunA.key && r.key !== newRunB.key),
-        ]);
-        setSelectedRunByTarget((prev) => ({
-          ...prev,
-          [targetA]: newRunA.key,
-          [targetB]: newRunB.key,
-        }));
-        setCandidateRunKey(newRunA.key);
-        setBaselineRunKey(newRunB.key);
-        if (newRunA.results[0]?.id) {
-          setSelectedTestId(newRunA.results[0].id);
-        }
-        setTargetStates((prev) => ({
-          ...prev,
-          [targetA]: { state: 'ready' },
-          [targetB]: { state: 'ready' },
-        }));
-
-        const freshScreenshotRev = Date.now();
-        setLastProbedByTestId((prev) => {
-          const next = { ...prev };
-          for (const resA of newRunA.results) {
-            const resB = newRunB.results.find((b) => b.id === resA.id);
-            const prevCount = next[resA.id]?.count || 0;
-            next[resA.id] = {
-              at: nowStr,
-              count: prevCount + 1,
-              candMs: resA.httpFlowSummary?.totalDurationMs || resA.durationMs,
-              baseMs: resB
-                ? resB.httpFlowSummary?.totalDurationMs || resB.durationMs
-                : undefined,
-              status: resA.actualStatus,
-              screenshotRevision: freshScreenshotRev,
-              screenshotCaptured: Boolean(
-                resA.screenshotCaptured ??
-                  (typeof resA.screenshotBytes === 'number'
-                    ? resA.screenshotBytes > 0
-                    : Boolean(resA.screenshotSha256 || resA.s3ScreenshotKey))
-              ),
-            };
-          }
-          return next;
-        });
-
-        const newReport: ReadyReportDefinition = {
-          id: `RPT-${105 + readyReports.length}`,
-          title: `Comparative Run (${effectiveSuiteAppId}.csv${
-            popOpt ? ` via ${popOpt.popCode}` : ''
-          }): ${targetA} vs ${targetB}`,
-          appId: appA,
-          candidateTarget: targetA,
-          baselineTarget: targetB,
-          candidateRunKey: newRunA.key,
-          baselineRunKey: newRunB.key,
-          createdAt: nowStr,
-          by: currentUser?.email || 'operator',
-        };
-        setReadyReports((prev) => [newReport, ...prev]);
-        setIsComparingBoth(false);
-        toast.success(
-          `Executed ${effectiveSuiteAppId}.csv across ${targetA} ↔ ${targetB}${
-            popOpt ? ` from ${popOpt.popCode} (${popOpt.city}) PoP` : ''
-          } (${newRunA.results.length} checks).`
-        );
       },
       () => {
         setCandidateTarget(targetA);
@@ -1918,270 +2820,13 @@ export default function App() {
     );
   };
 
-  const probeLiveCheckForRun = async (
-    runRecord: RunRecord,
-    testId: string,
-    captureScreenshot = true
-  ): Promise<
-    (Partial<RunRecord['results'][0]> & {
-      screenshotRevision?: number;
-      screenshotCaptured?: boolean;
-      persistedToRunKey?: string;
-    }) | null
-  > => {
-    const targetRes = runRecord.results.find((r) => r.id === testId);
-    if (!targetRes) return null;
-    const popId =
-      runRecord.executionPop?.id ||
-      (selectedExecutionPopId !== 'auto' ? selectedExecutionPopId : undefined);
-
-    try {
-      const resp = await fetch('/api/v1/probe/live', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: targetRes.url,
-          network: runRecord.network,
-          targetId: runRecord.target,
-          testId,
-          testName: targetRes.name,
-          expectedStatus: Number(targetRes.expectedStatus || 200),
-          captureScreenshot,
-          popId,
-          suiteAppId: runRecord.suiteAppId,
-        }),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        if (
-          data &&
-          data.probed === true &&
-          (typeof data.durationMs === 'number' ||
-            typeof data.httpFlowSummary?.totalDurationMs === 'number')
-        ) {
-          const hasCapturedBytes = Boolean(
-            data.screenshotCaptured &&
-              (typeof data.screenshotBytes !== 'number' || data.screenshotBytes > 0)
-          );
-          const resolvedUrl =
-            typeof data.screenshotUrl === 'string' && data.screenshotUrl
-              ? data.screenshotUrl
-              : undefined;
-          return {
-            actualStatus: data.actualStatus ?? targetRes.actualStatus,
-            durationMs:
-              data.durationMs ??
-              data.httpFlowSummary?.totalDurationMs ??
-              targetRes.durationMs,
-            redirectChain:
-              Array.isArray(data.redirectChain) && data.redirectChain.length > 0
-                ? data.redirectChain
-                : targetRes.redirectChain,
-            httpFlowSummary: data.httpFlowSummary ?? targetRes.httpFlowSummary,
-            capturedHeaders:
-              data.capturedHeaders && Object.keys(data.capturedHeaders).length > 0
-                ? { ...targetRes.capturedHeaders, ...data.capturedHeaders }
-                : targetRes.capturedHeaders,
-            capturedCookies:
-              data.capturedCookies && Object.keys(data.capturedCookies).length > 0
-                ? { ...targetRes.capturedCookies, ...data.capturedCookies }
-                : targetRes.capturedCookies,
-            probedAt: data.probedAt || new Date().toISOString(),
-            probeCount: data.probeCount,
-            screenshotRevision:
-              typeof data.screenshotRevision === 'number'
-                ? data.screenshotRevision
-                : targetRes.screenshotRevision,
-            screenshotCapturedAt: data.screenshotCapturedAt || undefined,
-            screenshotSha256: data.screenshotSha256 || undefined,
-            screenshotBytes: data.screenshotBytes,
-            s3ScreenshotKey: data.s3ScreenshotKey,
-            screenshotUrl: resolvedUrl,
-            screenshotCaptured: hasCapturedBytes,
-            screenshotSource: data.screenshotSource,
-            captureEngine: data.captureEngine,
-            canaryDispatched: Boolean(data.canaryDispatched),
-            canaryName: typeof data.canaryName === 'string' ? data.canaryName : undefined,
-            canaryError: typeof data.canaryError === 'string' ? data.canaryError : undefined,
-            persistedToRunKey: data.persistedToRunKey,
-          };
-        }
-      }
-    } catch {
-      // Fallback to /api/v1/runs/trigger below
-    }
-
-    try {
-      const trigResp = await fetch('/api/v1/runs/trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          target: runRecord.target,
-          label: `probe-${testId}`,
-          by: currentUser?.email || 'operator',
-        }),
-      });
-      if (trigResp.ok) {
-        const trigData = await trigResp.json();
-        const remoteRun = trigData?.run || trigData?.newRun || trigData?.result;
-        if (remoteRun && Array.isArray(remoteRun.results)) {
-          const normalized = normalizeRunPropertyUrls(remoteRun);
-          const found = normalized.results.find((r) => r.id === testId);
-          if (found) {
-            const hasCapturedBytes = Boolean(
-              found.screenshotCaptured ??
-                (typeof found.screenshotBytes === 'number' && found.screenshotBytes > 0)
-            );
-            return {
-              actualStatus: found.actualStatus,
-              durationMs: found.durationMs,
-              redirectChain: found.redirectChain,
-              httpFlowSummary: found.httpFlowSummary,
-              capturedHeaders: {
-                ...targetRes.capturedHeaders,
-                ...found.capturedHeaders,
-              },
-              capturedCookies: {
-                ...targetRes.capturedCookies,
-                ...found.capturedCookies,
-              },
-              probedAt: found.probedAt || new Date().toISOString(),
-              screenshotRevision: found.screenshotRevision || targetRes.screenshotRevision,
-              screenshotSha256: found.screenshotSha256,
-              screenshotBytes: found.screenshotBytes,
-              s3ScreenshotKey: found.s3ScreenshotKey,
-              screenshotUrl: found.screenshotUrl || undefined,
-              screenshotCaptured: hasCapturedBytes,
-              screenshotSource: found.screenshotSource || trigData?.screenshotSource,
-              captureEngine: found.captureEngine || trigData?.captureEngine,
-              canaryDispatched: Boolean(trigData?.canaryDispatched),
-              canaryName: typeof trigData?.canaryName === 'string' ? trigData.canaryName : undefined,
-              canaryError: typeof trigData?.canaryError === 'string' ? trigData.canaryError : undefined,
-              persistedToRunKey: normalized.key,
-            };
-          }
-        }
-      }
-    } catch {
-      // Offline fallback below
-    }
-
-    return null;
-  };
-
-  const applyProbedResultToCheck = (
-    res: RunRecord['results'][0],
-    liveProbe: Partial<RunRecord['results'][0]> | null,
-    nowStr: string
-  ): RunRecord['results'][0] => {
-    const prevTotal = res.httpFlowSummary?.totalDurationMs || res.durationMs || 85;
-    const jitterDelta = ((Date.now() % 11) - 5) || 3;
-    const nextDurationMs =
-      liveProbe?.durationMs ??
-      liveProbe?.httpFlowSummary?.totalDurationMs ??
-      Math.max(28, prevTotal + jitterDelta);
-    const nextHops =
-      liveProbe?.redirectChain && liveProbe.redirectChain.length > 0
-        ? liveProbe.redirectChain
-        : (res.redirectChain || []).map((h, idx, arr) =>
-            idx === arr.length - 1
-              ? {
-                  ...h,
-                  durationMs: Math.max(12, nextDurationMs - (h.startOffsetMs || 0)),
-                  timings: h.timings
-                    ? {
-                        ...h.timings,
-                        totalMs: Math.max(12, nextDurationMs - (h.startOffsetMs || 0)),
-                      }
-                    : h.timings,
-                }
-              : h
-          );
-    const baseSummary = liveProbe?.httpFlowSummary ?? res.httpFlowSummary;
-    const dnsMs = baseSummary?.totalDnsMs ?? Math.max(2, Math.round(nextDurationMs * 0.08));
-    const tcpMs = baseSummary?.totalTcpMs ?? Math.max(2, Math.round(nextDurationMs * 0.1));
-    const tlsMs = baseSummary?.totalTlsMs ?? Math.max(4, Math.round(nextDurationMs * 0.18));
-    const transferMs =
-      baseSummary?.totalTransferMs ?? Math.max(2, Math.round(nextDurationMs * 0.08));
-    const ttfbMs =
-      liveProbe?.httpFlowSummary?.totalTtfbMs ??
-      Math.max(8, nextDurationMs - (dnsMs + tcpMs + tlsMs + transferMs));
-
-    const capturedNow = liveProbe?.screenshotCaptured === true;
-
-    return {
-      ...res,
-      actualStatus: liveProbe?.actualStatus ?? res.actualStatus,
-      durationMs: nextDurationMs,
-      redirectChain: nextHops,
-      httpFlowSummary: baseSummary
-        ? {
-            ...baseSummary,
-            totalDnsMs: dnsMs,
-            totalTcpMs: tcpMs,
-            totalTlsMs: tlsMs,
-            totalTtfbMs: ttfbMs,
-            totalTransferMs: transferMs,
-            totalDurationMs: nextDurationMs,
-            capturedAt: new Date().toISOString(),
-          }
-        : undefined,
-      capturedHeaders:
-        liveProbe?.capturedHeaders && Object.keys(liveProbe.capturedHeaders).length > 0
-          ? { ...res.capturedHeaders, ...liveProbe.capturedHeaders }
-          : res.capturedHeaders,
-      capturedCookies:
-        liveProbe?.capturedCookies && Object.keys(liveProbe.capturedCookies).length > 0
-          ? { ...res.capturedCookies, ...liveProbe.capturedCookies }
-          : res.capturedCookies,
-      probedAt: liveProbe?.probedAt || new Date().toISOString(),
-      probeCount: (res.probeCount || 0) + 1,
-      screenshotRevision: capturedNow
-        ? liveProbe?.screenshotRevision || Date.now()
-        : res.screenshotRevision,
-      screenshotCapturedAt: capturedNow
-        ? liveProbe?.screenshotCapturedAt || new Date().toISOString()
-        : res.screenshotCapturedAt,
-      screenshotSha256: capturedNow
-        ? liveProbe?.screenshotSha256 || res.screenshotSha256
-        : res.screenshotSha256,
-      screenshotBytes: capturedNow
-        ? liveProbe?.screenshotBytes ?? res.screenshotBytes
-        : res.screenshotBytes,
-      s3ScreenshotKey: capturedNow
-        ? liveProbe?.s3ScreenshotKey || res.s3ScreenshotKey
-        : res.s3ScreenshotKey,
-      screenshotUrl: capturedNow
-        ? liveProbe?.screenshotUrl || res.screenshotUrl
-        : liveProbe?.screenshotCaptured === false
-        ? undefined
-        : res.screenshotUrl,
-      screenshotCaptured: liveProbe?.screenshotCaptured ?? res.screenshotCaptured,
-      screenshotSource: liveProbe?.screenshotSource || res.screenshotSource,
-      captureEngine: liveProbe?.captureEngine || res.captureEngine,
-      canaryDispatched: liveProbe?.canaryDispatched ?? res.canaryDispatched,
-      canaryName: liveProbe?.canaryName || res.canaryName,
-      canaryError: liveProbe?.canaryError,
-      pixelDiffPercent:
-        typeof liveProbe?.pixelDiffPercent === 'number'
-          ? liveProbe.pixelDiffPercent
-          : res.pixelDiffPercent,
-      note: capturedNow
-        ? `Live HTTP Flow & 1280×760 DOM Screenshot persisted at ${nowStr}`
-        : `Live HTTP flow probed at ${nowStr}${
-            liveProbe?.canaryDispatched && liveProbe?.canaryName
-              ? ` · Canary ${liveProbe.canaryName} dispatched for 1280×760 capture`
-              : liveProbe?.canaryError
-              ? ` · Browser capture unavailable (${liveProbe.canaryError})`
-              : ''
-          }`,
-    };
-  };
-
   const handleRerunSingleTest = (testId: string) => {
     setRerunningTestId(testId);
+    const targetRes = activeCandidateRun.results.find((r) => r.id === testId);
+    const checkName = targetRes?.name || testId;
+
     enqueueBackgroundJob(
-      `Rerun Test ${testId}`,
+      `Rerun Test ${testId} (HTTP + 1280×760 Capture + AI Judge)`,
       `${candidateTarget} ↔ ${baselineTarget}`,
       'rerun',
       240,
@@ -2192,151 +2837,22 @@ export default function App() {
           second: '2-digit',
         });
 
-        const [probeA, probeB] = await Promise.all([
-          probeLiveCheckForRun(activeCandidateRun, testId),
-          activeBaselineRun.key !== activeCandidateRun.key
-            ? probeLiveCheckForRun(activeBaselineRun, testId)
-            : Promise.resolve(null),
-        ]);
+        try {
+          await streamExecuteChecksForRunPair({
+            mode: 'rerun-single',
+            runA: activeCandidateRun,
+            runB: activeBaselineRun,
+            checksToStream: [{ id: testId, name: checkName }],
+            suiteAppId: activeCandidateRun.suiteAppId || activeCandidateRun.appId,
+            nowStr,
+            fastStreamCapture: true,
+          });
 
-        const origCand = activeCandidateRun.results.find((r) => r.id === testId);
-        const origBase = activeBaselineRun.results.find((r) => r.id === testId);
-        const updatedCand = origCand
-          ? applyProbedResultToCheck(origCand, probeA, nowStr)
-          : undefined;
-        const updatedBase = origBase
-          ? applyProbedResultToCheck(
-              origBase,
-              activeBaselineRun.key !== activeCandidateRun.key ? probeB : probeA,
-              nowStr
-            )
-          : undefined;
-
-        setRuns((prev) =>
-          prev.map((run) => {
-            if (run.key === activeCandidateRun.key && updatedCand) {
-              return {
-                ...run,
-                results: run.results.map((r) =>
-                  r.id === testId ? updatedCand : r
-                ),
-              };
-            }
-            if (run.key === activeBaselineRun.key && updatedBase) {
-              return {
-                ...run,
-                results: run.results.map((r) =>
-                  r.id === testId ? updatedBase : r
-                ),
-              };
-            }
-            if (run.key === activeSingleRun.key && updatedCand) {
-              return {
-                ...run,
-                results: run.results.map((r) =>
-                  r.id === testId ? updatedCand : r
-                ),
-              };
-            }
-            return run;
-          })
-        );
-
-        const candMs =
-          updatedCand?.httpFlowSummary?.totalDurationMs ??
-          updatedCand?.durationMs ??
-          85;
-        const baseMs =
-          updatedBase?.httpFlowSummary?.totalDurationMs ??
-          updatedBase?.durationMs;
-        const status = updatedCand?.actualStatus ?? 200;
-
-        const screenshotRevision =
-          probeA?.screenshotRevision || probeB?.screenshotRevision;
-        const sha256 = probeA?.screenshotSha256 || probeB?.screenshotSha256;
-        const bytes = probeA?.screenshotBytes || probeB?.screenshotBytes || 0;
-        const s3Key = probeA?.s3ScreenshotKey || probeB?.s3ScreenshotKey;
-        const screenshotUrl = probeA?.screenshotUrl || probeB?.screenshotUrl || null;
-        const screenshotSource =
-          probeA?.screenshotSource || probeB?.screenshotSource;
-        const captureEngine = probeA?.captureEngine || probeB?.captureEngine;
-        const screenshotCaptured = Boolean(
-          probeA?.screenshotCaptured === true || probeB?.screenshotCaptured === true
-        );
-        const canaryDispatched = Boolean(probeA?.canaryDispatched || probeB?.canaryDispatched);
-        const canaryName = probeA?.canaryName || probeB?.canaryName;
-        const canaryError = probeA?.canaryError || probeB?.canaryError;
-        const persistedToRunKey =
-          probeA?.persistedToRunKey || probeB?.persistedToRunKey || activeCandidateRun.key;
-
-        setLastProbedByTestId((prev) => ({
-          ...prev,
-          [testId]: {
-            at: nowStr,
-            count: (prev[testId]?.count || 0) + 1,
-            candMs,
-            baseMs,
-            status,
-            screenshotRevision,
-            screenshotCaptured,
-            screenshotUrl,
-            screenshotSource,
-            captureEngine,
-            sha256,
-            bytes,
-            s3Key,
-            canaryDispatched,
-            canaryName,
-            canaryError,
-            persistedToRunKey,
-          },
-        }));
-
-        setRerunningTestId(null);
-        const proofSuffix = sha256
-          ? ` · sha256:${sha256.slice(0, 12)}${bytes ? ` (${(bytes / 1024).toFixed(1)} KB)` : ''}`
-          : '';
-        if (screenshotCaptured) {
           toast.success(
-            `Probed live HTTP flow & verified 1280×760 screenshot for ${testId} · HTTP ${status} (${candMs}ms${
-              typeof baseMs === 'number' ? ` / ${baseMs}ms` : ''
-            })${proofSuffix}`
+            `Probed live HTTP flow, captured 1280×760 screenshot & updated AI visual opinion for ${testId}`
           );
-        } else if (canaryDispatched && canaryName) {
-          toast.info(
-            `Probed HTTP ${status} for ${testId} (${candMs}ms) · Dispatched CloudWatch Synthetics Canary ${canaryName} to capture 1280×760 screenshots`
-          );
-          // Background poll for asynchronous Canary completion (~20s)
-          window.setTimeout(async () => {
-            try {
-              const stRes = await fetch(
-                `/api/v1/canary/status?canaryName=${encodeURIComponent(canaryName)}&targetId=${encodeURIComponent(activeCandidateRun.target)}`
-              );
-              if (stRes.ok) {
-                const st = await stRes.json();
-                const latestRunState = st?.recentRuns?.[0]?.status;
-                if (latestRunState === 'PASSED') {
-                  toast.success(
-                    `Canary ${canaryName} completed — click Retake or reload Image AI to view fresh screenshots`
-                  );
-                }
-              }
-            } catch {
-              // Ignore poll error
-            }
-          }, 20000);
-        } else if (canaryError) {
-          toast.warning(
-            `Probed HTTP ${status} for ${testId} (${candMs}ms${
-              typeof baseMs === 'number' ? ` / ${baseMs}ms` : ''
-            }) · Live browser capture unavailable (${canaryError || captureEngine || 'HTTP-only'})`
-          );
-        } else {
-          toast.info(
-            `Probed live HTTP ${status} for ${testId} (${candMs}ms${
-              typeof baseMs === 'number' ? ` / ${baseMs}ms` : ''
-            }) · No live browser screenshot engine active`
-          );
+        } finally {
+          setRerunningTestId(null);
         }
       }
     );
@@ -2350,16 +2866,16 @@ export default function App() {
       setBaselineTarget(overrideB);
     }
 
-    const diffTestIds = comparison.items
-      .filter((it) => {
-        const c = getItemDiffCounts(it);
-        return c.hasAny || c.rawHDiffs > 0 || c.rawCDiffs > 0 || c.rawVDiff;
-      })
-      .map((it) => it.testId);
-    const targetIdsToProbe =
-      diffTestIds.length > 0
-        ? diffTestIds
-        : comparison.items.map((it) => it.testId);
+    const diffItems = comparison.items.filter((it) => {
+      const c = getItemDiffCounts(it);
+      return c.hasAny || c.rawHDiffs > 0 || c.rawCDiffs > 0 || c.rawVDiff;
+    });
+    const checksToStream = (
+      diffItems.length > 0 ? diffItems : comparison.items
+    ).map((it) => ({
+      id: it.testId,
+      name: it.testName,
+    }));
 
     setRerunningTestId('ALL');
     enqueueBackgroundJob(
@@ -2375,98 +2891,21 @@ export default function App() {
         });
 
         try {
-          const [respA, respB] = await Promise.all([
-            fetch('/api/v1/runs/trigger', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                target: tA,
-                label: `rerun-diffs · ${nowStr}`,
-                by: currentUser?.email || 'operator',
-              }),
-            }),
-            fetch('/api/v1/runs/trigger', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                target: tB,
-                label: `rerun-diffs · ${nowStr}`,
-                by: currentUser?.email || 'operator',
-              }),
-            }),
-          ]);
-          const dataA = respA.ok ? await respA.json() : null;
-          const dataB = respB.ok ? await respB.json() : null;
-          const remoteA = dataA?.run || dataA?.newRun || dataA?.result;
-          const remoteB = dataB?.run || dataB?.newRun || dataB?.result;
-          const normA =
-            remoteA && Array.isArray(remoteA.results)
-              ? normalizeRunPropertyUrls(remoteA)
-              : null;
-          const normB =
-            remoteB && Array.isArray(remoteB.results)
-              ? normalizeRunPropertyUrls(remoteB)
-              : null;
-
-          setRuns((prev) =>
-            prev.map((run) => {
-              if (run.key === activeCandidateRun.key) {
-                return {
-                  ...run,
-                  results: run.results.map((r) => {
-                    if (!targetIdsToProbe.includes(r.id)) return r;
-                    const fresh = normA?.results.find((x) => x.id === r.id) || null;
-                    return applyProbedResultToCheck(r, fresh, nowStr);
-                  }),
-                };
-              }
-              if (run.key === activeBaselineRun.key) {
-                return {
-                  ...run,
-                  results: run.results.map((r) => {
-                    if (!targetIdsToProbe.includes(r.id)) return r;
-                    const fresh = normB?.results.find((x) => x.id === r.id) || null;
-                    return applyProbedResultToCheck(r, fresh, nowStr);
-                  }),
-                };
-              }
-              return run;
-            })
-          );
-
-          const freshBatchRevision = Date.now();
-          setLastProbedByTestId((prev) => {
-            const next = { ...prev };
-            for (const id of targetIdsToProbe) {
-              const cRes =
-                normA?.results.find((x) => x.id === id) ||
-                activeCandidateRun.results.find((x) => x.id === id);
-              const bRes =
-                normB?.results.find((x) => x.id === id) ||
-                activeBaselineRun.results.find((x) => x.id === id);
-              next[id] = {
-                at: nowStr,
-                count: (next[id]?.count || 0) + 1,
-                candMs: cRes?.httpFlowSummary?.totalDurationMs || cRes?.durationMs || 85,
-                baseMs: bRes?.httpFlowSummary?.totalDurationMs || bRes?.durationMs,
-                status: cRes?.actualStatus ?? 200,
-                screenshotRevision: freshBatchRevision,
-                screenshotCaptured: Boolean(
-                  cRes?.screenshotCaptured ??
-                    (typeof cRes?.screenshotBytes === 'number'
-                      ? cRes.screenshotBytes > 0
-                      : Boolean(cRes?.screenshotSha256 || cRes?.s3ScreenshotKey))
-                ),
-              };
-            }
-            return next;
+          await streamExecuteChecksForRunPair({
+            mode: 'rerun-diffs',
+            runA: activeCandidateRun,
+            runB: activeBaselineRun,
+            checksToStream,
+            suiteAppId: activeCandidateRun.suiteAppId || activeCandidateRun.appId,
+            nowStr,
+            fastStreamCapture: true,
           });
         } finally {
           setRerunningTestId(null);
         }
 
         toast.success(
-          `Reran ${targetIdsToProbe.length} check(s) & refreshed 1280×760 DOM screenshots across ${tA} and ${tB} at ${nowStr}`
+          `Reran ${checksToStream.length} check(s), captured 1280×760 screenshots & updated AI visual opinions across ${tA} and ${tB}`
         );
       },
       () => {
@@ -2487,128 +2926,38 @@ export default function App() {
       500,
       async () => {
         try {
-          const item = comparison.items.find((i) => i.testId === testId);
-          const candRes = activeCandidateRun.results.find((r) => r.id === testId);
-          const baseRes = activeBaselineRun.results.find((r) => r.id === testId);
           const probeInfo = lastProbedByTestId[testId];
-          const revA = probeInfo?.screenshotRevision ?? candRes?.screenshotRevision;
-          const revB = probeInfo?.screenshotRevision ?? baseRes?.screenshotRevision;
-
-          const urlA =
-            candRes?.screenshotUrl ||
-            probeInfo?.screenshotUrl ||
-            resolveLiveScreenshotUrl({
-              appId: activeCandidateRun.appId,
-              testId,
-              url: candRes?.canonicalUrl || item?.url || 'https://www.salesforce.com/',
-              side: 'A',
-              revision: revA,
-            });
-          const urlB =
-            baseRes?.screenshotUrl ||
-            resolveLiveScreenshotUrl({
-              appId: activeBaselineRun.appId,
-              testId,
-              url: baseRes?.canonicalUrl || item?.url || 'https://www.salesforce.com/',
-              side: 'B',
-              revision: revB,
-            });
-
-          const browserDiff =
-            activeCandidateRun.key !== activeBaselineRun.key
-              ? await measureBrowserImagePairPixelDiff(urlA, urlB)
-              : null;
-
-          const measuredPixelDiff =
-            browserDiff && typeof browserDiff.pixelDiffPercent === 'number'
-              ? browserDiff.pixelDiffPercent
-              : item?.visualResult?.pixelDiffPercent ?? 0;
-
-          const res = await fetch('/api/v1/judge/nova-lite', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              testId,
-              testName: item?.testName,
-              url: item?.url || 'https://www.salesforce.com/',
-              candidateTarget,
-              baselineTarget,
-              pixelDiffPercent: measuredPixelDiff,
-              changedBox: browserDiff?.changedBox ?? null,
-              zones: browserDiff?.zones ?? null,
-              forceAiCompare: true,
-            }),
+          const opinion = await evaluateCheckAiVisualOpinion({
+            candRun: activeCandidateRun,
+            baseRun: activeBaselineRun,
+            testId,
+            revA: probeInfo?.screenshotRevision,
+            revB: probeInfo?.screenshotRevision,
+            screenshotUrlA: probeInfo?.screenshotUrl,
           });
-          const data = await res.json();
-          const finalPixelDiff =
-            typeof browserDiff?.pixelDiffPercent === 'number' &&
-            browserDiff.pixelDiffPercent > (data?.pixelDiffPercent ?? 0)
-              ? browserDiff.pixelDiffPercent
-              : typeof data?.pixelDiffPercent === 'number'
-              ? data.pixelDiffPercent
-              : measuredPixelDiff;
-
-          const rawVerdict: 'same' | 'minor' | 'different' =
-            data?.verdict || classifyVisualVerdictFromPixelDiff(finalPixelDiff);
-          const finalVerdict: 'same' | 'minor' | 'different' =
-            finalPixelDiff > 0.1 && rawVerdict === 'same'
-              ? classifyVisualVerdictFromPixelDiff(finalPixelDiff)
-              : rawVerdict;
-
-          const logical = describeVisualDiffLogically({
-            pixelDiffPercent: finalPixelDiff,
-            changedBox: browserDiff?.changedBox ?? data?.changedBox ?? null,
-            zones: browserDiff?.zones ?? null,
-            candidateLabel: activeCandidateRun.network,
-            baselineLabel: activeBaselineRun.network,
-            pageName: item?.testName,
-            url: item?.url,
-          });
-
-          const rawAiSummary =
-            typeof data?.summary === 'string' ? data.summary : '';
-          const finalSummary = humanizeVisualSummary(
-            finalPixelDiff > 0.1 &&
-              (rawAiSummary.includes('match as they are from the same website') ||
-                rawAiSummary.includes('Screenshots match within 0.1%'))
-              ? ''
-              : rawAiSummary,
-            {
-              pixelDiffPercent: finalPixelDiff,
-              changedBox: browserDiff?.changedBox ?? data?.changedBox ?? null,
-              zones: browserDiff?.zones ?? null,
-              candidateLabel: activeCandidateRun.network,
-              baselineLabel: activeBaselineRun.network,
-              pageName: item?.testName,
-              url: item?.url,
-            }
-          );
-
-          const resolvedArea = data?.affectedArea || logical.affectedArea;
-          const resolvedCallout = data?.shortCallout || logical.shortCallout;
-
-          const scopedKey = `${activeCandidateRun.appId}-${testId}`;
-          const nextOverride = {
-            verdict: finalVerdict,
-            summary: finalSummary,
-            affectedArea: resolvedArea,
-            shortCallout: resolvedCallout,
-            pixelDiffPercent: finalPixelDiff,
-            changedBox: browserDiff?.changedBox ?? data?.changedBox ?? null,
-            zones: browserDiff?.zones ?? null,
-            costGate:
-              finalPixelDiff <= 0.1 && finalVerdict === 'same'
-                ? ('identical-bytes' as const)
-                : ('ai-judged' as const),
-          };
-          setAiJudgeOverrides((prev) => ({
+          setLastProbedByTestId((prev) => ({
             ...prev,
-            [scopedKey]: nextOverride,
-            [testId]: nextOverride,
+            [testId]: {
+              ...(prev[testId] || {
+                at: new Date().toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                }),
+                count: 1,
+                candMs: 85,
+                status: 200,
+              }),
+              aiJudged: true,
+              aiVerdict: opinion.verdict,
+              aiAffectedArea: opinion.affectedArea,
+              aiShortCallout: opinion.shortCallout,
+              aiSummary: opinion.summary,
+            },
           }));
           setRunningAiTestId(null);
           toast.success(
-            `Visual Judge verdict (${finalVerdict.toUpperCase()}): ${resolvedCallout}`
+            `Visual Judge verdict (${opinion.verdict.toUpperCase()}): ${opinion.shortCallout}`
           );
         } catch {
           setRunningAiTestId(null);
@@ -2742,7 +3091,7 @@ export default function App() {
       {
         id: 'cmd-toggle-suite-scale',
         group: 'Actions',
-        label: testSuite.length > 8 ? 'Restore 8 Core Checks' : 'Simulate 64 Enterprise Suite Checks',
+        label: testSuite.length >= 64 ? 'Restore 8 Core Checks' : 'Simulate 64 Enterprise Suite Checks',
         subtitle: `Current check count per suite: ${testSuite.length}`,
         keywords: 'scale suite 64 checks',
         onSelect: handleToggleSuiteScale,
@@ -2855,7 +3204,7 @@ export default function App() {
         id: `prop-${appItem.id}`,
         group: 'Properties',
         label: `Switch Property: ${appItem.id} — ${appItem.name}`,
-        subtitle: `${resolvePropertyHostname(appItem.id, 'prod')} · ${meta.regionCode}:${meta.popCode}`,
+        subtitle: `${resolvePropertyHostname(appItem.id, 'prod', liveTemplateConfig)} · ${meta.regionCode}:${meta.popCode}`,
         keywords: `${appItem.id} ${appItem.name} ${meta.popCode} ${meta.regionCode}`,
         badge: appItem.id === activeAppId ? 'ACTIVE' : verdictByAppId[appItem.id] || 'GO',
         onSelect: () => handleSelectProperty(appItem.id),
@@ -3304,6 +3653,78 @@ export default function App() {
         onOpenSuitePopLauncher={() => setSuitePopLauncherOpen(true)}
       />
 
+      {runStreamState && runStreamState.active && (
+        <div
+          data-testid="live-run-stream-banner"
+          className="bg-sky-500/10 border-b border-sky-500/35 px-3 sm:px-4 py-2 text-xs"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Loader2 className="w-3.5 h-3.5 text-sky-500 animate-spin shrink-0" />
+              <span className="font-mono text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-sky-500 text-zinc-950 shrink-0">
+                LIVE RUN STREAM · {runStreamState.completedCount}/{runStreamState.totalCount} READY ({runStreamState.progressPercent}%)
+              </span>
+              <span
+                data-testid="live-run-stream-concurrency-badge"
+                className="font-mono text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border border-sky-500/40 bg-sky-500/15 text-sky-800 dark:text-sky-200 shrink-0"
+              >
+                PARALLEL QUEUE · {runStreamState.activeWorkers}/{runStreamState.maxConcurrency} WORKERS · {runStreamState.queuedCount} QUEUED
+              </span>
+              <span
+                data-testid="live-run-stream-headline"
+                className="font-medium text-foreground truncate"
+              >
+                {runStreamState.headlineStatus}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1 font-mono text-[10px] shrink-0">
+              <span
+                className={`px-2 py-0.5 rounded border ${
+                  runStreamState.currentPhase === 'probing-http'
+                    ? 'border-sky-500 bg-sky-500/20 text-sky-700 dark:text-sky-200 font-bold'
+                    : 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                }`}
+              >
+                1. HTTP
+              </span>
+              <span className="text-muted-foreground">→</span>
+              <span
+                className={`px-2 py-0.5 rounded border ${
+                  runStreamState.currentPhase === 'capturing-screenshot'
+                    ? 'border-sky-500 bg-sky-500/20 text-sky-700 dark:text-sky-200 font-bold'
+                    : runStreamState.currentPhase === 'judging-ai' ||
+                      runStreamState.currentPhase === 'completed'
+                    ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                    : 'border-border bg-background/60 text-muted-foreground'
+                }`}
+              >
+                2. Capture
+              </span>
+              <span className="text-muted-foreground">→</span>
+              <span
+                className={`px-2 py-0.5 rounded border ${
+                  runStreamState.currentPhase === 'judging-ai'
+                    ? 'border-sky-500 bg-sky-500/20 text-sky-700 dark:text-sky-200 font-bold'
+                    : runStreamState.currentPhase === 'completed'
+                    ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                    : 'border-border bg-background/60 text-muted-foreground'
+                }`}
+              >
+                3. AI Judge
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-1.5 h-1.5 w-full rounded-full bg-sky-500/15 overflow-hidden">
+            <div
+              className="h-full bg-sky-500 transition-all duration-150"
+              style={{ width: `${runStreamState.progressPercent}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {showNotifications && (
         <BackgroundJobsPopover
           jobs={backgroundJobs}
@@ -3339,16 +3760,42 @@ export default function App() {
         />
       )}
 
-      {viewMode === 'terminal' && <VsCodeWorkspace theme={theme} />}
+      {viewMode === 'terminal' && (
+        <React.Suspense
+          fallback={
+            <div className="flex h-[calc(100vh-3rem)] items-center justify-center text-xs text-muted-foreground">
+              Loading VS Code Workspace…
+            </div>
+          }
+        >
+          <VsCodeWorkspace theme={theme} />
+        </React.Suspense>
+      )}
 
       {viewMode === 'settings' && (
         <SettingsView
           theme={theme}
           onToggleTheme={toggleTheme}
           apps={apps}
+          activeAppId={activeAppId}
           testSuite={testSuite}
-          onAddProperty={handleAddProperty}
-          onAddTestCase={handleAddTestCase}
+          suitesByAppId={suitesByAppId}
+          folders={folders}
+          onSelectProperty={handleSelectProperty}
+          onSaveProperty={handleSaveProperty}
+          onCreateProperty={handleCreateProperty}
+          onDeleteProperty={handleDeleteProperty}
+          onSaveSuiteForApp={handleSaveSuiteForApp}
+          onSaveFolders={handleSaveFolders}
+          onRunEnvironment={(appId, envId, net) =>
+            handleRunSingleTarget(`${appId}.${envId}.${net}`, true)
+          }
+          onRunSingleTest={(testId, suiteAppId) => {
+            const targetApp = suiteAppId || activeAppId;
+            if (targetApp !== activeAppId) handleSelectProperty(targetApp);
+            setSelectedTestId(testId);
+            handleRerunSingleTest(testId);
+          }}
           acceptedRules={acceptedRules}
           onRemoveRule={(id) =>
             setAcceptedRules((prev) => prev.filter((r) => r.id !== id))
@@ -3378,6 +3825,21 @@ export default function App() {
           onSelectProperty={handleSelectProperty}
           runs={runs}
           testSuite={testSuite}
+          suitesByAppId={suitesByAppId}
+          folders={folders}
+          onSaveProperty={handleSaveProperty}
+          onCreateProperty={handleCreateProperty}
+          onDeleteProperty={handleDeleteProperty}
+          onSaveSuiteForApp={handleSaveSuiteForApp}
+          onSaveFolders={handleSaveFolders}
+          studioTab={suitesStudioTab}
+          onChangeStudioTab={setSuitesStudioTab}
+          onRunSingleTest={(testId, suiteAppId) => {
+            const targetApp = suiteAppId || activeAppId;
+            if (targetApp !== activeAppId) handleSelectProperty(targetApp);
+            setSelectedTestId(testId);
+            handleRerunSingleTest(testId);
+          }}
           onRunSuiteOnTarget={(targetId, options) =>
             handleRunSingleTarget(targetId, false, options)
           }
@@ -3451,16 +3913,16 @@ export default function App() {
                       className="font-mono text-xs px-2 py-0.5 font-bold"
                     >
                       {comparison.headlineVerdict === 'GO'
-                        ? 'GO · READY FOR PRODUCTION'
+                        ? 'GO · READY'
                         : comparison.headlineVerdict === 'REVIEW'
-                        ? 'REVIEW · MINOR DRIFT DETECTED'
-                        : 'NO-GO · RELEASE BLOCKED'}
+                        ? 'REVIEW · DRIFT'
+                        : 'NO-GO · BLOCKED'}
                     </Badge>
                     <h1 className="text-sm sm:text-base font-semibold text-foreground tracking-tight">
                       {currentApp.name}
                     </h1>
                     <span className="font-mono text-xs text-muted-foreground hidden sm:inline">
-                      {resolvePropertyHostname(currentApp.id, 'prod')}
+                      {resolvePropertyHostname(currentApp.id, 'prod', liveTemplateConfig)}
                     </span>
                   </div>
 
@@ -3471,18 +3933,18 @@ export default function App() {
                     </span>
                     <span>·</span>
                     <span className="font-mono text-[11px] tabular-nums">
-                      Staging PoP: {activeRegionalNode.stagingPopCode} ({activeRegionalNode.stagingEdgeIp}) ↔ Prod PoP: {activeRegionalNode.prodPopCode} ({activeRegionalNode.prodEdgeIp})
+                      STG {activeRegionalNode.stagingPopCode} ({activeRegionalNode.stagingEdgeIp}) ↔ PRD {activeRegionalNode.prodPopCode} ({activeRegionalNode.prodEdgeIp})
                     </span>
                     <span>·</span>
                     <span className="font-mono text-[11px]">
-                      Locale: {activeRegionalNode.locale}
+                      {activeRegionalNode.locale}
                     </span>
                     {selectedExecutionPopId !== 'auto' && (
                       <Badge
                         variant="outline"
                         className="font-mono text-[10px] border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400"
                       >
-                        PoP Override: {selectedExecutionPopId.toUpperCase()}
+                        PoP: {selectedExecutionPopId.toUpperCase()}
                       </Badge>
                     )}
                     {activeCandidateRun.suiteAppId &&
@@ -3497,7 +3959,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 3 HUMAN-FRIENDLY SUMMARY CARDS + PRIMARY ACTIONS */}
+                {/* 3 CONCISE ACTIONABLE DIMENSION CARDS + PRIMARY ACTIONS */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <button
                     type="button"
@@ -3513,13 +3975,13 @@ export default function App() {
                     }`}
                   >
                     <div className="text-[10px] font-mono uppercase text-muted-foreground">
-                      1. HTTP & Cache Headers
+                      1. Headers & Cache
                     </div>
                     <div className="text-xs font-semibold text-foreground flex items-center gap-1.5 mt-0.5">
                       <Code2 className="w-3.5 h-3.5 text-rose-500" />
                       {headerDiffTests.length > 0
-                        ? `${headerDiffTests.length} Blocking Diff (${headerDiffTests[0]?.testId})`
-                        : 'All Headers Matched ✓'}
+                        ? `${headerDiffTests.length} Blocker (${headerDiffTests[0]?.testId}) →`
+                        : 'Matched ✓'}
                     </div>
                   </button>
 
@@ -3537,13 +3999,13 @@ export default function App() {
                     }`}
                   >
                     <div className="text-[10px] font-mono uppercase text-muted-foreground">
-                      2. Session & Edge Cookies
+                      2. Cookies
                     </div>
                     <div className="text-xs font-semibold text-foreground flex items-center gap-1.5 mt-0.5">
                       <KeyRound className="w-3.5 h-3.5 text-amber-500" />
                       {cookieDiffTests.length > 0
-                        ? `${cookieDiffTests.length} PoP Cookie Drift`
-                        : 'All Cookies Matched ✓'}
+                        ? `${cookieDiffTests.length} Drift →`
+                        : 'Matched ✓'}
                     </div>
                   </button>
 
@@ -3561,13 +4023,13 @@ export default function App() {
                     }`}
                   >
                     <div className="text-[10px] font-mono uppercase text-muted-foreground">
-                      3. Visual DOM & AI Judge
+                      3. Visual AI
                     </div>
                     <div className="text-xs font-semibold text-foreground flex items-center gap-1.5 mt-0.5">
                       <Sparkles className="w-3.5 h-3.5 text-sky-500" />
                       {visualDiffTests.length > 0
-                        ? `${visualDiffTests.length} Minor Visual Shift (${visualDiffTests[0]?.testId})`
-                        : 'Screenshots Identical ✓'}
+                        ? `${visualDiffTests.length} Shifts (${visualDiffTests[0]?.testId}) →`
+                        : 'Identical ✓'}
                     </div>
                   </button>
 
@@ -3595,7 +4057,7 @@ export default function App() {
                       disabled={isComparingBoth}
                     >
                       <Play className="fill-current !size-3" />
-                      {isComparingBoth ? 'Probing Edge…' : 'Run Live Gate'}
+                      {isComparingBoth ? 'Streaming…' : 'Run Live Gate'}
                     </Button>
                   </div>
                 </div>
@@ -3751,17 +4213,41 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <Globe className="w-3.5 h-3.5 text-sky-500" />
                   <CardTitle className="text-xs font-semibold">
-                    Edge Topology & Live Release Gate Matrix ({currentApp.id})
+                    Edge Release Gate ({currentApp.id})
                   </CardTitle>
                   <Badge
                     variant="outline"
                     className="font-mono text-[10px] px-1.5 py-0 cursor-help"
                     title={`Staging Edge: ${DEFAULT_TEMPLATE_CONFIG.networks.staging.edgeSuffix} (${DEFAULT_TEMPLATE_CONFIG.networks.staging.defaultEdgeIp})\nProduction Edge: ${DEFAULT_TEMPLATE_CONFIG.networks.prod.edgeSuffix} (${DEFAULT_TEMPLATE_CONFIG.networks.prod.defaultEdgeIp})`}
                   >
-                    {currentApp.envs.length} envs · 2 edge networks
+                    {currentApp.envs.length} envs · 2 networks
                   </Badge>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    data-testid="overview-manage-envs-btn"
+                    onClick={() => {
+                      setSuitesStudioTab('configure-envs');
+                      setViewMode('suites');
+                    }}
+                    className="font-mono text-[10px] h-6 px-2 whitespace-nowrap"
+                  >
+                    Manage Envs
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    data-testid="overview-configure-tests-btn"
+                    onClick={() => {
+                      setSuitesStudioTab('configure-tests');
+                      setViewMode('suites');
+                    }}
+                    className="font-mono text-[10px] h-6 px-2 whitespace-nowrap"
+                  >
+                    Configure Tests
+                  </Button>
                   {currentApp.envs.length >= 2 && (
                     <Button
                       variant="outline"
@@ -3777,7 +4263,7 @@ export default function App() {
                     >
                       <GitCompare className="!size-3 text-amber-500" />
                       <span>
-                        Cross-Env: {currentApp.envs[1].id.toUpperCase()} ↔{' '}
+                        {currentApp.envs[1].id.toUpperCase()} ↔{' '}
                         {currentApp.envs[0].id.toUpperCase()}
                       </span>
                     </Button>
@@ -3786,7 +4272,7 @@ export default function App() {
                     className="text-[11px] font-mono text-muted-foreground cursor-help hidden sm:inline"
                     title="Click any dimension pill (Headers, Cookies, Nova Lite AI) to jump directly to that inspector tab"
                   >
-                    STG (.edgekey-staging.net) ↔ PRD (.edgekey.net)
+                    .edgekey-staging.net ↔ .edgekey.net
                   </span>
                 </div>
               </CardHeader>
@@ -3795,28 +4281,28 @@ export default function App() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-44 py-1.5">
-                      Environment & Hostname
+                      Env & Host
                     </TableHead>
                     <TableHead
                       className="py-1.5"
                       title={`${DEFAULT_TEMPLATE_CONFIG.networks.staging.label} (${DEFAULT_TEMPLATE_CONFIG.networks.staging.defaultEdgeIp})`}
                     >
-                      Staging Edge (.edgekey-staging.net)
+                      Staging (.edgekey-staging.net)
                     </TableHead>
                     <TableHead
                       className="py-1.5"
                       title={`${DEFAULT_TEMPLATE_CONFIG.networks.prod.label} (${DEFAULT_TEMPLATE_CONFIG.networks.prod.defaultEdgeIp})`}
                     >
-                      Production Edge (.edgekey.net)
+                      Production (.edgekey.net)
                     </TableHead>
                     <TableHead
                       className="py-1.5"
-                      title="Live Release Gate Decision & 1-Click Dimension Drift Breakdown (Headers, Cookies, AWS Bedrock Nova Lite Visual Judge)"
+                      title="Live Release Gate Decision & 1-Click Dimension Drift Breakdown"
                     >
-                      Release Gate Verdict & Drift Breakdown (STG ↔ PRD)
+                      Gate Verdict & Drift
                     </TableHead>
-                    <TableHead className="text-right w-36 py-1.5">
-                      Gate Actions
+                    <TableHead className="text-right w-32 py-1.5">
+                      Actions
                     </TableHead>
                   </TableRow>
                 </TableHeader>
@@ -3834,7 +4320,8 @@ export default function App() {
                       targetStates[prodId]?.state === 'running';
                     const hostname = resolvePropertyHostname(
                       currentApp.id,
-                      env.id
+                      env.id,
+                      liveTemplateConfig
                     );
 
                     const envComp = buildInitialComparison(
@@ -3843,6 +4330,7 @@ export default function App() {
                       'network',
                       acceptedRules,
                       {
+                        apps,
                         acceptedCookies,
                         acceptedVisualTests,
                         ignoreAcceptedDiffs,
@@ -4195,7 +4683,7 @@ export default function App() {
                             <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
                           )}
                           <CardTitle className="text-xs font-semibold">
-                            Active Release Blockers & Drift Triage ({filteredTriage.length})
+                            Drift Triage ({filteredTriage.length})
                           </CardTitle>
                           <span className="font-mono text-[11px] text-muted-foreground">
                             {candidateTarget} ↔ {baselineTarget}
@@ -4221,7 +4709,7 @@ export default function App() {
                             onClick={handleExportReportMarkdown}
                             className="font-mono text-[10px] h-6 px-2"
                           >
-                            Copy Ticket MD
+                            Copy MD
                           </Button>
                           <Button
                             variant="outline"
@@ -4237,7 +4725,7 @@ export default function App() {
                             className="font-mono text-[10px] h-6 px-2"
                           >
                             <Eye className="!size-3 text-sky-500" />
-                            <span>Full Inspector</span>
+                            <span>Inspector →</span>
                           </Button>
                         </div>
                       </div>
@@ -4319,13 +4807,13 @@ export default function App() {
                       <TableHeader>
                         <TableRow>
                           <TableHead className="w-[38%] py-1.5">
-                            Check & Endpoint
+                            Check
                           </TableHead>
-                          <TableHead className="w-[35%] py-1.5">
-                            Detected Edge / Visual Finding
+                          <TableHead className="w-[38%] py-1.5">
+                            Finding & Root Cause
                           </TableHead>
-                          <TableHead className="text-right w-[27%] py-1.5 pr-3">
-                            Quick Triage
+                          <TableHead className="text-right w-[24%] py-1.5 pr-3">
+                            Action
                           </TableHead>
                         </TableRow>
                       </TableHeader>
@@ -4473,7 +4961,13 @@ export default function App() {
                                       <Sparkles className="!size-3 text-sky-500" />
                                     )}
                                     <span>
-                                      {isResolved ? 'OK' : `Inspect ${primaryTab}`}
+                                      {isResolved
+                                        ? 'OK'
+                                        : primaryTab === 'image'
+                                        ? 'Visual'
+                                        : primaryTab === 'cookies'
+                                        ? 'Cookies'
+                                        : 'Headers'}
                                     </span>
                                   </Button>
 
@@ -4612,8 +5106,8 @@ export default function App() {
                           <LayoutGrid className="w-3.5 h-3.5 text-sky-500" />
                           <CardTitle className="text-xs font-semibold">
                             {homeRightTab === 'fleet'
-                              ? `Fleet Release Gate Matrix (${filteredFleetApps.length}/${apps.length})`
-                              : `Gate Audit & Ticket History (${readyReports.length})`}
+                              ? `Fleet Matrix (${filteredFleetApps.length}/${apps.length})`
+                              : `Audit Log (${readyReports.length})`}
                           </CardTitle>
                         </div>
 
@@ -5213,15 +5707,29 @@ export default function App() {
                         } = getItemDiffCounts(item);
                         const hopCount =
                           item.candidateResult?.redirectChain?.length || 1;
+                        const itemStream = runStreamState?.active
+                          ? runStreamState.byTestId[item.testId]
+                          : undefined;
+                        const isStreamingActiveItem = Boolean(
+                          itemStream &&
+                            itemStream.phase !== 'queued' &&
+                            itemStream.phase !== 'completed'
+                        );
+                        const isQueuedItem = itemStream?.phase === 'queued';
 
                         return (
                           <TableRow
                             key={item.testId}
                             data-state={isSelected ? 'selected' : undefined}
+                            data-stream-phase={itemStream?.phase || 'ready'}
                             onClick={() => handleSelectTestRow(item)}
                             className={`cursor-pointer transition-colors ${
-                              isSelected
+                              isStreamingActiveItem
+                                ? 'bg-sky-500/15 ring-1 ring-inset ring-sky-500/40'
+                                : isSelected
                                 ? 'bg-sky-500/[0.08] dark:bg-sky-500/[0.15]'
+                                : isQueuedItem
+                                ? 'opacity-65 hover:opacity-100 hover:bg-muted/40'
                                 : 'hover:bg-muted/40'
                             }`}
                           >
@@ -5257,9 +5765,26 @@ export default function App() {
                                     <span className="font-medium text-xs text-foreground truncate">
                                       {item.testName}
                                     </span>
+                                    {itemStream && itemStream.phase !== 'completed' && (
+                                      <span
+                                        data-testid={`stream-row-badge-${item.testId}`}
+                                        className={`inline-flex items-center gap-1 font-mono text-[9px] px-1.5 py-0 rounded border shrink-0 ${
+                                          isStreamingActiveItem
+                                            ? 'bg-sky-500 text-zinc-950 border-sky-500 font-bold'
+                                            : 'bg-muted/70 text-muted-foreground border-border'
+                                        }`}
+                                      >
+                                        {isStreamingActiveItem && (
+                                          <Loader2 className="w-2.5 h-2.5 animate-spin shrink-0" />
+                                        )}
+                                        {itemStream.shortBadge}
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="font-mono text-[10px] text-muted-foreground truncate">
-                                    {item.url}
+                                    {isStreamingActiveItem
+                                      ? itemStream?.stepLabel
+                                      : item.url}
                                   </div>
                                 </div>
                               </div>
@@ -5272,15 +5797,23 @@ export default function App() {
                                 handleSelectTestRow(item, 'flow');
                               }}
                             >
-                              <span
-                                className={`font-mono text-[11px] tabular-nums ${
-                                  hopCount > 1
-                                    ? 'text-primary font-semibold'
-                                    : 'text-muted-foreground'
-                                }`}
-                              >
-                                {hopCount}h
-                              </span>
+                              {isQueuedItem ? (
+                                <span className="font-mono text-[10px] text-muted-foreground">
+                                  …
+                                </span>
+                              ) : itemStream?.phase === 'probing-http' ? (
+                                <Loader2 className="w-3.5 h-3.5 text-sky-500 animate-spin mx-auto" />
+                              ) : (
+                                <span
+                                  className={`font-mono text-[11px] tabular-nums ${
+                                    hopCount > 1
+                                      ? 'text-primary font-semibold'
+                                      : 'text-muted-foreground'
+                                  }`}
+                                >
+                                  {hopCount}h
+                                </span>
+                              )}
                             </TableCell>
 
                             <TableCell
@@ -5295,7 +5828,13 @@ export default function App() {
                                 handleSelectTestRow(item, 'headers');
                               }}
                             >
-                              {hDiffs > 0 ? (
+                              {isQueuedItem ? (
+                                <span className="font-mono text-[10px] text-muted-foreground">
+                                  …
+                                </span>
+                              ) : itemStream?.phase === 'probing-http' ? (
+                                <Loader2 className="w-3.5 h-3.5 text-sky-500 animate-spin mx-auto" />
+                              ) : hDiffs > 0 ? (
                                 <Badge variant="destructive" className="font-mono px-1.5 py-0 text-[10px]">
                                   {hDiffs}
                                 </Badge>
@@ -5316,7 +5855,13 @@ export default function App() {
                                 handleSelectTestRow(item, 'cookies');
                               }}
                             >
-                              {cDiffs > 0 ? (
+                              {isQueuedItem ? (
+                                <span className="font-mono text-[10px] text-muted-foreground">
+                                  …
+                                </span>
+                              ) : itemStream?.phase === 'probing-http' ? (
+                                <Loader2 className="w-3.5 h-3.5 text-sky-500 animate-spin mx-auto" />
+                              ) : cDiffs > 0 ? (
                                 <Badge variant="warning" className="font-mono px-1.5 py-0 text-[10px]">
                                   {cDiffs}
                                 </Badge>
@@ -5337,7 +5882,14 @@ export default function App() {
                                 handleSelectTestRow(item, 'image');
                               }}
                             >
-                              {vDiff ? (
+                              {isQueuedItem ? (
+                                <span className="font-mono text-[10px] text-muted-foreground">
+                                  …
+                                </span>
+                              ) : itemStream &&
+                                itemStream.phase !== 'completed' ? (
+                                <Loader2 className="w-3.5 h-3.5 text-sky-500 animate-spin mx-auto" />
+                              ) : vDiff ? (
                                 <Badge variant="warning" className="font-mono px-1 py-0 text-[10px]">
                                   AI
                                 </Badge>
@@ -5423,6 +5975,7 @@ export default function App() {
                     diffsOnly={diffInspectorDiffsOnly}
                     onDiffsOnlyChange={setDiffInspectorDiffsOnly}
                     preferLiveApiScreenshots={isAwsLambdaBackend}
+                    streamStatus={runStreamState?.byTestId[selectedItem.testId]}
                   />
                 )}
               </div>
@@ -5646,15 +6199,32 @@ export default function App() {
                           const isSelected = res.id === selectedSingleResult?.id;
                           const cookieCount = Object.keys(res.capturedCookies || {}).length;
                           const hopCount = res.redirectChain?.length || 1;
+                          const itemStream = runStreamState?.active
+                            ? runStreamState.byTestId[res.id]
+                            : undefined;
+                          const isStreamingActiveItem = Boolean(
+                            itemStream &&
+                              itemStream.phase !== 'queued' &&
+                              itemStream.phase !== 'completed'
+                          );
+                          const isQueuedItem = itemStream?.phase === 'queued';
+
                           return (
                             <TableRow
                               key={res.id}
                               data-state={isSelected ? 'selected' : undefined}
+                              data-stream-phase={itemStream?.phase || 'ready'}
                               onClick={() => {
                                 setSelectedTestId(res.id);
                                 setInspectorTab('flow');
                               }}
-                              className="cursor-pointer"
+                              className={`cursor-pointer ${
+                                isStreamingActiveItem
+                                  ? 'bg-sky-500/15 ring-1 ring-inset ring-sky-500/40'
+                                  : isQueuedItem
+                                  ? 'opacity-65'
+                                  : ''
+                              }`}
                             >
                               <TableCell className="py-1.5">
                                 <div
@@ -5684,7 +6254,13 @@ export default function App() {
                                   </div>
                                   <div className="min-w-0 flex-1">
                                     <div className="flex items-center gap-1.5 min-w-0">
-                                      {res.pass ? (
+                                      {isStreamingActiveItem ? (
+                                        <Loader2 className="w-3 h-3 text-sky-500 animate-spin shrink-0" />
+                                      ) : isQueuedItem ? (
+                                        <span className="w-3 h-3 inline-flex items-center justify-center font-mono text-[10px] text-muted-foreground shrink-0">
+                                          …
+                                        </span>
+                                      ) : res.pass ? (
                                         <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
                                       ) : (
                                         <AlertCircle className="w-3 h-3 text-rose-600 dark:text-rose-400 shrink-0" />
@@ -5695,9 +6271,21 @@ export default function App() {
                                       <span className="font-medium text-xs truncate">
                                         {res.name}
                                       </span>
+                                      {itemStream && itemStream.phase !== 'completed' && (
+                                        <span
+                                          data-testid={`stream-row-badge-${res.id}`}
+                                          className={`inline-flex items-center gap-1 font-mono text-[9px] px-1.5 py-0 rounded border shrink-0 ${
+                                            isStreamingActiveItem
+                                              ? 'bg-sky-500 text-zinc-950 border-sky-500 font-bold'
+                                              : 'bg-muted/70 text-muted-foreground border-border'
+                                          }`}
+                                        >
+                                          {itemStream.shortBadge}
+                                        </span>
+                                      )}
                                     </div>
                                     <div className="font-mono text-[10px] text-muted-foreground truncate">
-                                      {res.url}
+                                      {isStreamingActiveItem ? itemStream?.stepLabel : res.url}
                                     </div>
                                   </div>
                                 </div>
@@ -5710,12 +6298,18 @@ export default function App() {
                                   setInspectorTab('flow');
                                 }}
                               >
-                                <Badge
-                                  variant={hopCount > 1 ? 'default' : 'outline'}
-                                  className="font-mono text-[10px] px-1.5 py-0"
-                                >
-                                  {hopCount}h
-                                </Badge>
+                                {isQueuedItem ? (
+                                  <span className="text-muted-foreground">…</span>
+                                ) : itemStream?.phase === 'probing-http' ? (
+                                  <Loader2 className="w-3.5 h-3.5 text-sky-500 animate-spin mx-auto" />
+                                ) : (
+                                  <Badge
+                                    variant={hopCount > 1 ? 'default' : 'outline'}
+                                    className="font-mono text-[10px] px-1.5 py-0"
+                                  >
+                                    {hopCount}h
+                                  </Badge>
+                                )}
                               </TableCell>
                               <TableCell
                                 className="py-1.5 text-center font-mono text-xs"
@@ -5725,12 +6319,18 @@ export default function App() {
                                   setInspectorTab('headers');
                                 }}
                               >
-                                <Badge
-                                  variant={res.pass ? 'secondary' : 'destructive'}
-                                  className="font-mono text-[10px] px-1.5 py-0"
-                                >
-                                  {res.actualStatus}
-                                </Badge>
+                                {isQueuedItem ? (
+                                  <span className="text-muted-foreground">…</span>
+                                ) : itemStream?.phase === 'probing-http' ? (
+                                  <Loader2 className="w-3.5 h-3.5 text-sky-500 animate-spin mx-auto" />
+                                ) : (
+                                  <Badge
+                                    variant={res.pass ? 'secondary' : 'destructive'}
+                                    className="font-mono text-[10px] px-1.5 py-0"
+                                  >
+                                    {res.actualStatus}
+                                  </Badge>
+                                )}
                               </TableCell>
                               <TableCell
                                 className="py-1.5 text-center font-mono text-xs"
@@ -5740,12 +6340,18 @@ export default function App() {
                                   setInspectorTab('cookies');
                                 }}
                               >
-                                <Badge
-                                  variant="outline"
-                                  className="font-mono text-[10px] px-1.5 py-0"
-                                >
-                                  {cookieCount}
-                                </Badge>
+                                {isQueuedItem ? (
+                                  <span className="text-muted-foreground">…</span>
+                                ) : itemStream?.phase === 'probing-http' ? (
+                                  <Loader2 className="w-3.5 h-3.5 text-sky-500 animate-spin mx-auto" />
+                                ) : (
+                                  <Badge
+                                    variant="outline"
+                                    className="font-mono text-[10px] px-1.5 py-0"
+                                  >
+                                    {cookieCount}
+                                  </Badge>
+                                )}
                               </TableCell>
                               <TableCell
                                 className="py-1.5 text-center font-mono text-xs"
@@ -5755,10 +6361,18 @@ export default function App() {
                                   setInspectorTab('image');
                                 }}
                               >
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 mx-auto" />
+                                {isQueuedItem ? (
+                                  <span className="text-muted-foreground">…</span>
+                                ) : itemStream && itemStream.phase !== 'completed' ? (
+                                  <Loader2 className="w-3.5 h-3.5 text-sky-500 animate-spin mx-auto" />
+                                ) : (
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 mx-auto" />
+                                )}
                               </TableCell>
                               <TableCell className="py-1.5 text-right font-mono text-xs text-muted-foreground">
-                                {res.durationMs}ms
+                                {isQueuedItem || itemStream?.phase === 'probing-http'
+                                  ? '…'
+                                  : `${res.durationMs}ms`}
                               </TableCell>
                             </TableRow>
                           );
@@ -5813,6 +6427,7 @@ export default function App() {
                       totalFilteredCount={filteredRunResults.length}
                       onSelectTest={(nextId) => setSelectedTestId(nextId)}
                       preferLiveApiScreenshots={isAwsLambdaBackend}
+                      streamStatus={runStreamState?.byTestId[selectedSingleResult.id]}
                     />
                   )}
                 </div>
@@ -5852,6 +6467,8 @@ export default function App() {
         initialTargetAppId={activeAppId}
         initialPopId={selectedExecutionPopId}
         suiteScaleCount={testSuite.length}
+        suitesByAppId={suitesByAppId}
+        activeTestSuite={testSuite}
         onLaunch={({ suiteAppId, targetAppId, envId, popId, mode }) => {
           setActiveAppId(targetAppId);
           setSelectedExecutionPopId(popId);

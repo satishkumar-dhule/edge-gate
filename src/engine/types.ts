@@ -11,22 +11,100 @@ export type TestClass =
   | 'flaky'
   | 'n/N failed';
 
+export type CatchpointMonitorFamily =
+  | 'web'
+  | 'transaction'
+  | 'api'
+  | 'dns'
+  | 'network'
+  | 'infra';
+
+export type CatchpointTestType =
+  | 'web-chrome'
+  | 'web-mobile'
+  | 'http-object'
+  | 'playback'
+  | 'streaming'
+  | 'transaction-playwright'
+  | 'transaction-selenium'
+  | 'api'
+  | 'grpc'
+  | 'websocket'
+  | 'dns-direct'
+  | 'dns-experience'
+  | 'ping'
+  | 'traceroute'
+  | 'ssl'
+  | 'transport-tcp'
+  | 'bgp'
+  | 'ftp'
+  | 'smtp'
+  | 'mqtt'
+  | 'ntp'
+  | 'ldap'
+  | 'ssh'
+  | 'rum'
+  | 'custom';
+
+export interface TransactionStep {
+  step: number;
+  action: 'open' | 'click' | 'type' | 'waitForSelector' | 'assertText' | 'assertStatus' | 'screenshot';
+  target: string;
+  value?: string;
+  assertText?: string;
+}
+
+export interface TestAssertions {
+  expectedBodyMatch?: string;
+  maxLatencyMs?: number;
+  minTlsVersion?: string;
+  requireDnssec?: boolean;
+  maxHops?: number;
+}
+
+export interface TestFolder {
+  id: string;
+  name: string;
+  description?: string;
+  parentId?: string | null;
+  color?: 'sky' | 'emerald' | 'amber' | 'rose' | 'violet' | 'slate';
+  order?: number;
+}
+
 export interface HostMap {
   [canonicalHost: string]: string;
 }
 
+export type EnvironmentTier = 'prod' | 'staging' | 'uat' | 'qa' | 'dev' | 'canary' | 'dr';
+
 export interface EnvironmentConfig {
   id: string;
   name: string;
+  tier?: EnvironmentTier;
+  description?: string;
   hostMap: HostMap;
   networks?: ('staging' | 'prod')[];
+  edgeIps?: {
+    staging?: string;
+    prod?: string;
+  };
+  defaultPopId?: string;
+  headers?: Record<string, string>;
+  variables?: Record<string, string>;
+  scheduleIntervalMin?: number;
+  alertThresholdMs?: number;
   pinnedBaselineRunKey?: string;
+  order?: number;
 }
 
 export interface AppConfig {
   id: string;
   name: string;
   suitePath: string;
+  division?: string;
+  folder?: string;
+  description?: string;
+  tags?: string[];
   defaultNetworks: ('staging' | 'prod')[];
   envs: EnvironmentConfig[];
   headers?: Record<string, string>;

@@ -18,6 +18,7 @@ import {
   computeZeroTokenDiffFingerprint,
   defaultZeroTokenEngine,
 } from './zeroTokenArchitecture';
+import { normalizeCacheControl } from './rules';
 
 export type GatePluginCategory =
   | 'Edge Cache & Headers'
@@ -282,13 +283,13 @@ export function evaluatePluginPipeline(
         findings.push(`x-check-cacheable parity verified (${candCacheable})`);
       }
 
-      const candIsMaxAge = /^max-age=\d+$/i.test(candCc.trim());
-      const baseIsMaxAge = /^max-age=\d+$/i.test(baseCc.trim());
-      if (candIsMaxAge && baseIsMaxAge) {
+      const normCandCc = normalizeCacheControl(candCc);
+      const normBaseCc = normalizeCacheControl(baseCc);
+      if (normCandCc === normBaseCc) {
         findings.push(
           `cache-control TTL normalized to max-age=N (${candCc} vs ${baseCc})`
         );
-      } else if (candCc.toLowerCase() !== baseCc.toLowerCase()) {
+      } else {
         verdict = 'FAIL';
         findings.push(
           `cache-control policy regression: Candidate="${candCc}" vs Baseline="${baseCc}"`

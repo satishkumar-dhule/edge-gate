@@ -281,12 +281,20 @@ export class ZeroTokenArchitectureEngine {
     input: ZeroTokenDiffSignatureInput
   ): ZeroTokenEvaluationDecision {
     const now = new Date().toISOString();
-    const pct = Math.max(0, Number(input.pixelDiffPercent || 0));
+    const hasHttpError =
+      (typeof input.candidateStatus === 'number' && input.candidateStatus >= 400) ||
+      (typeof input.baselineStatus === 'number' && input.baselineStatus >= 400);
+    const pct = hasHttpError
+      ? Math.max(94.8, Number(input.pixelDiffPercent || 0))
+      : Math.max(0, Number(input.pixelDiffPercent || 0));
     const url = input.url || 'https://www.salesforce.com/';
-    const fingerprint = computeZeroTokenDiffFingerprint(input);
+    const fingerprint = computeZeroTokenDiffFingerprint({
+      ...input,
+      pixelDiffPercent: pct,
+    });
 
-    // TIER 1: Deterministic 0.1% Pixel Cost Gate (0 Tokens)
-    if (pct <= COST_GATE_THRESHOLD_PCT) {
+    // TIER 1: Deterministic 0.1% Pixel Cost Gate (0 Tokens) — ONLY when neither side returned an HTTP error (>= 400)
+    if (pct <= COST_GATE_THRESHOLD_PCT && !hasHttpError) {
       this.tier1DeterministicSkips += 1;
       const decision: ZeroTokenEvaluationDecision = {
         fingerprint,
@@ -355,6 +363,8 @@ export class ZeroTokenArchitectureEngine {
       url,
       candidateTarget: input.candidateTarget || 'www.prod.staging',
       baselineTarget: input.baselineTarget || 'www.prod.prod',
+      candidateStatus: input.candidateStatus,
+      baselineStatus: input.baselineStatus,
       pixelDiffPercent: pct,
       changedBox: input.changedBox ?? null,
       zones: input.zones ?? null,

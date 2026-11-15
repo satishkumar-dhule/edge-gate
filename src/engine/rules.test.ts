@@ -2479,6 +2479,994 @@ test('Visual diff engine produces human-understandable logical explanations acro
   assert.equal(t08.visualResult?.shortCallout, 'Right sidebar & header layout shift');
 });
 
+test('53. Synchronous Run Stream Engine tracks per-check HTTP probe, 1280x760 capture, and AI visual opinion phases', async () => {
+  const {
+    createInitialRunStreamState,
+    advanceTestStreamPhase,
+    finalizeRunStreamState,
+  } = await import('./runStreamEngine');
+
+  const checks = [
+    { id: 'T01', name: 'Global Home' },
+    { id: 'T02', name: 'Products Overview' },
+  ];
+
+  const init = createInitialRunStreamState({
+    mode: 'compare',
+    runKeyA: 'run-stg-live',
+    runKeyB: 'run-prd-live',
+    targetA: 'www.prod.staging',
+    targetB: 'www.prod.prod',
+    suiteAppId: 'www',
+    checks,
+    nowMs: 1000,
+  });
+
+  assert.equal(init.active, true);
+  assert.equal(init.totalCount, 2);
+  assert.equal(init.completedCount, 0);
+  assert.equal(init.byTestId.T01.phase, 'queued');
+  assert.equal(init.byTestId.T02.phase, 'queued');
+
+  const step1 = advanceTestStreamPhase(init, 'T01', 'probing-http', {}, 1100);
+  assert.equal(step1.byTestId.T01.phase, 'probing-http');
+  assert.equal(step1.byTestId.T01.stepNumber, 1);
+  assert.ok(step1.progressPercent > 0 && step1.progressPercent < 50);
+
+  const step2 = advanceTestStreamPhase(
+    step1,
+    'T01',
+    'capturing-screenshot',
+    { httpDone: true, httpStatus: 200, candLatencyMs: 84 },
+    1200
+  );
+  assert.equal(step2.byTestId.T01.phase, 'capturing-screenshot');
+  assert.equal(step2.byTestId.T01.httpDone, true);
+  assert.ok(step2.progressPercent > step1.progressPercent);
+
+  const step3 = advanceTestStreamPhase(
+    step2,
+    'T01',
+    'judging-ai',
+    { screenshotCaptured: true, screenshotRevision: 12345 },
+    1300
+  );
+  assert.equal(step3.byTestId.T01.phase, 'judging-ai');
+  assert.equal(step3.byTestId.T01.screenshotCaptured, true);
+  assert.ok(step3.progressPercent > step2.progressPercent);
+
+  const step4 = advanceTestStreamPhase(
+    step3,
+    'T01',
+    'completed',
+    {
+      aiJudged: true,
+      aiVerdict: 'different',
+      aiAffectedArea: 'Right sidebar & header',
+      aiShortCallout: 'Right sidebar & header layout shift',
+    },
+    1400
+  );
+  assert.equal(step4.completedCount, 1);
+  assert.equal(step4.byTestId.T01.phase, 'completed');
+  assert.equal(step4.byTestId.T01.aiJudged, true);
+  assert.equal(step4.byTestId.T02.phase, 'queued');
+
+  const done = finalizeRunStreamState(step4, 1500);
+  assert.equal(done.active, false);
+  assert.equal(done.completedCount, 2);
+  assert.equal(done.progressPercent, 100);
+  assert.equal(done.byTestId.T02.phase, 'completed');
+  assert.equal(done.byTestId.T02.screenshotCaptured, true);
+  assert.equal(done.byTestId.T02.aiJudged, true);
+});
+
+test('54. Unified Single-Test Execution guarantees HTTP status (e.g. 403 Forbidden) and 1280x760 screenshot never diverge', async () => {
+  const {
+    resolveLiveScreenshotUrl,
+    resolveApiScreenshotUrl,
+    renderHttpErrorScreenshotDataUri,
+  } = await import('./domScreenshotRenderer');
+  const { describeVisualDiffLogically, humanizeVisualSummary } = await import('./pixelDiff');
+  const { ZeroTokenArchitectureEngine } = await import('./zeroTokenArchitecture');
+  const { evaluateNovaLiteVisualDiff } = await import('./awsBlueprint');
+
+  // 1. When httpStatus is 200 OK, resolveLiveScreenshotUrl returns the canonical /screenshots/ path
+  const okUrl = resolveLiveScreenshotUrl({
+    appId: 'www',
+    testId: 'T01',
+    side: 'A',
+    httpStatus: 200,
+    revision: 1700000000123,
+  });
+  assert.ok(
+    okUrl.startsWith('/screenshots/www-T01-sideA.jpg'),
+    'HTTP 200 must resolve to live screenshot URL'
+  );
+
+  // 2. When httpStatus is 403 Forbidden (or any >= 400 error), resolveLiveScreenshotUrl and resolveApiScreenshotUrl
+  // NEVER return a 200 OK marketing screenshot; they return the 1280x760 HTTP Error DOM screen
+  const forbiddenShotUrl = resolveLiveScreenshotUrl({
+    appId: 'www',
+    testId: 'T01',
+    testName: 'Salesforce Global Home',
+    url: 'https://www.salesforce.com/',
+    side: 'A',
+    httpStatus: 403,
+  });
+  assert.ok(
+    forbiddenShotUrl.startsWith('data:image/svg+xml;utf8,'),
+    'HTTP 403 must never display a 200 OK marketing page screenshot'
+  );
+  const decodedSvg = decodeURIComponent(
+    forbiddenShotUrl.replace('data:image/svg+xml;utf8,', '')
+  );
+  assert.ok(decodedSvg.includes('HTTP 403 Forbidden'), 'Error screen must display HTTP 403 Forbidden');
+  assert.ok(decodedSvg.includes('UNIFIED PROBE'), 'Error screen must indicate Unified Probe capture');
+
+  const apiForbiddenUrl = resolveApiScreenshotUrl({
+    appId: 'www',
+    testId: 'T01',
+    side: 'A',
+    httpStatus: 403,
+  });
+  assert.ok(apiForbiddenUrl.startsWith('data:image/svg+xml;utf8,'));
+  assert.ok(renderHttpErrorScreenshotDataUri({ httpStatus: 503, testId: 'T03' }).includes('503'));
+
+  // 3. Even if pixelDiffPercent was 0, describeVisualDiffLogically and humanizeVisualSummary
+  // immediately flag HTTP 403 vs HTTP 200 as a Major Layout Shift ('different')
+  const logical403 = describeVisualDiffLogically({
+    pixelDiffPercent: 0,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    candidateStatus: 403,
+    baselineStatus: 200,
+    pageName: 'Salesforce Global Home',
+  });
+  assert.equal(logical403.severityLabel, 'Major Layout Shift');
+  assert.ok(logical403.affectedArea.includes('HTTP 403'));
+  assert.ok(logical403.shortCallout.includes('HTTP 403'));
+  assert.ok(
+    /Staging returned HTTP 403 Forbidden/i.test(logical403.summary),
+    `Expected HTTP 403 explanation, got: ${logical403.summary}`
+  );
+
+  const humanized403 = humanizeVisualSummary('Screenshots match within 0.1% tolerance.', {
+    pixelDiffPercent: 0,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    candidateStatus: 403,
+    baselineStatus: 200,
+  });
+  assert.ok(
+    /HTTP 403 Forbidden/i.test(humanized403),
+    'humanizeVisualSummary must override stale match text when HTTP status is 403'
+  );
+
+  // 4. Zero-Token Architecture & Nova Lite Judge never skip or return verdict:'same' when HTTP status >= 400
+  const engine = new ZeroTokenArchitectureEngine();
+  const zeroToken403 = engine.evaluate({
+    testId: 'T01',
+    testName: 'Salesforce Global Home',
+    url: 'https://www.salesforce.com/',
+    candidateTarget: 'www.prod.staging',
+    baselineTarget: 'www.prod.prod',
+    candidateStatus: 403,
+    baselineStatus: 200,
+    pixelDiffPercent: 0,
+  });
+  assert.equal(zeroToken403.verdict, 'different');
+  assert.notEqual(zeroToken403.tier, 'TIER_1_DETERMINISTIC_SKIP');
+  assert.ok(zeroToken403.pixelDiffPercent >= 90);
+
+  const nova403 = evaluateNovaLiteVisualDiff(
+    {
+      testId: 'T01',
+      testName: 'Salesforce Global Home',
+      url: 'https://www.salesforce.com/',
+      candidateTarget: 'www.prod.staging',
+      baselineTarget: 'www.prod.prod',
+      candidateStatus: 403,
+      baselineStatus: 200,
+      pixelDiffPercent: 0,
+    },
+    DEFAULT_TEMPLATE_CONFIG
+  );
+  assert.equal(nova403.verdict, 'different');
+  assert.ok(/HTTP 403/i.test(nova403.summary));
+
+  // 5. buildInitialComparison marks both functional status diff AND visualResult as 'different' when a check has HTTP 403
+  const runs = seedRunsFromConfig();
+  const stgRun = structuredClone(runs.find((r) => r.key === 'run-www-prod-staging-1')!);
+  const prdRun = structuredClone(runs.find((r) => r.key === 'run-www-prod-prod-1')!);
+  stgRun.results[0].actualStatus = 403;
+  stgRun.results[0].pass = false;
+  stgRun.results[0].pixelDiffPercent = 0;
+
+  const comp = buildInitialComparison(stgRun, prdRun, 'network', []);
+  const item0 = comp.items[0];
+  assert.ok(
+    item0.functionalDiffs.some((d) => d.kind === 'status' && d.candidateValue === '403'),
+    'Functional diffs must record HTTP 403 status failure'
+  );
+  assert.equal(
+    item0.visualResult?.verdict,
+    'different',
+    'Visual result must never be "same" when candidate returned HTTP 403'
+  );
+  assert.ok(
+    /HTTP 403/i.test(item0.visualResult?.summary || ''),
+    'Visual summary must explain the HTTP 403 error screen'
+  );
+});
+
+test('55. Priority Work-Stealing Consumer Queue, Parallel Batch Processor & Multithreaded Worker Pool', async () => {
+  const {
+    WorkStealingConsumerQueue,
+    executeParallelConsumerBatch,
+    MultithreadedPixelDiffPool,
+    computeDiffHeatmapRgba,
+  } = await import('./concurrencyEngine');
+  const {
+    createInitialRunStreamState,
+    advanceTestStreamPhase,
+  } = await import('./runStreamEngine');
+
+  // 1. Priority ordering (critical > high > normal) with 1 consumer worker when jobs are queued while busy
+  const executionOrder: string[] = [];
+  const singleWorkerQueue = new WorkStealingConsumerQueue<string>({
+    queueName: 'priority-test-queue',
+    maxConcurrency: 1,
+    retryBaseDelayMs: 5,
+  });
+
+  const blocker = singleWorkerQueue.enqueue({
+    id: 'job-0-blocker',
+    label: 'Blocker',
+    priority: 'normal',
+    payload: 'blocker',
+    execute: async () => {
+      await new Promise((r) => setTimeout(r, 25));
+      executionOrder.push('blocker');
+      return 'blocker';
+    },
+  });
+
+  const normalP = singleWorkerQueue.enqueue({
+    id: 'job-normal',
+    label: 'Normal Job',
+    priority: 'normal',
+    payload: 'normal',
+    execute: async () => {
+      executionOrder.push('normal');
+      return 'normal';
+    },
+  });
+
+  const highP = singleWorkerQueue.enqueue({
+    id: 'job-high',
+    label: 'High Job',
+    priority: 'high',
+    payload: 'high',
+    execute: async () => {
+      executionOrder.push('high');
+      return 'high';
+    },
+  });
+
+  const criticalP = singleWorkerQueue.enqueue({
+    id: 'job-critical',
+    label: 'Critical Job',
+    priority: 'critical',
+    payload: 'critical',
+    execute: async () => {
+      executionOrder.push('critical');
+      return 'critical';
+    },
+  });
+
+  await Promise.all([blocker, normalP, highP, criticalP]);
+  assert.deepEqual(
+    executionOrder,
+    ['blocker', 'critical', 'high', 'normal'],
+    'Consumer queue must dequeue critical > high > normal after active job finishes'
+  );
+
+  // 2. Retry with exponential backoff & Dead-Letter Queue (DLQ) routing
+  let flakyAttempts = 0;
+  const flakyReceipt = await singleWorkerQueue.enqueue({
+    jobId: 'job-flaky',
+    label: 'Flaky Probe',
+    priority: 'high',
+    maxRetries: 2,
+    payload: 'flaky',
+    execute: async (_payload, ctx) => {
+      flakyAttempts = ctx.attempt;
+      if (ctx.attempt < 2) {
+        throw new Error('Transient socket reset');
+      }
+      return 'recovered-on-retry';
+    },
+  });
+  assert.equal(flakyReceipt.result, 'recovered-on-retry');
+  assert.equal(flakyAttempts, 2);
+
+  await assert.rejects(
+    () =>
+      singleWorkerQueue.enqueue({
+        jobId: 'job-dlq',
+        label: 'Always Failing Probe',
+        priority: 'critical',
+        maxRetries: 1,
+        payload: 'dlq',
+        execute: async () => {
+          throw new Error('Permanent edge timeout');
+        },
+      }),
+    /Permanent edge timeout/
+  );
+  const dlqSnap = singleWorkerQueue.getTelemetrySnapshot();
+  assert.equal(dlqSnap.dlqCount, 1);
+  assert.equal(dlqSnap.dlq[0].id, 'job-dlq');
+  assert.equal(dlqSnap.dlq[0].attempts, 2);
+
+  // 3. Parallel Consumer Batch preserves deterministic item order across 4 concurrent workers
+  const batchRes = await executeParallelConsumerBatch({
+    items: [10, 20, 30, 40, 50, 60],
+    concurrency: 4,
+    queueName: 'parallel-batch-test',
+    getJobId: (n) => `num-${n}`,
+    worker: async (n, ctx) => {
+      await new Promise((r) => setTimeout(r, (70 - n) / 5));
+      return `${n}:${ctx.workerLabel}`;
+    },
+  });
+  assert.equal(batchRes.results.length, 6);
+  assert.ok(batchRes.results[0].startsWith('10:W'));
+  assert.ok(batchRes.results[5].startsWith('60:W'));
+  assert.equal(batchRes.telemetry.completedCount, 6);
+
+  // 4. Multithreaded Worker Pool spawns real Node.js worker_threads for RGBA pixel diff & heatmap calculation
+  const pool = new MultithreadedPixelDiffPool(2);
+  try {
+    const width = 32;
+    const height = 32;
+    const imgA = new Uint8ClampedArray(width * height * 4);
+    const imgB = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0; i < imgA.length; i += 4) {
+      imgA[i] = 20;
+      imgA[i + 1] = 40;
+      imgA[i + 2] = 80;
+      imgA[i + 3] = 255;
+      imgB[i] = 20;
+      imgB[i + 1] = 40;
+      imgB[i + 2] = 80;
+      imgB[i + 3] = 255;
+    }
+    // Introduce a diff block in the bottom-right quadrant of imgB
+    for (let y = 16; y < 32; y++) {
+      for (let x = 16; x < 32; x++) {
+        const idx = (y * width + x) * 4;
+        imgB[idx] = 250;
+        imgB[idx + 1] = 220;
+        imgB[idx + 2] = 210;
+      }
+    }
+
+    const [diffRes, heatmapRes] = await Promise.all([
+      pool.compareFramesMultithreaded(imgA, imgB, width, height, 18),
+      pool.computeHeatmapAndDiffMultithreaded(imgA, imgB, width, height, 18),
+    ]);
+
+    assert.equal(diffRes.pixelDiffPercent, 25);
+    assert.ok(diffRes.changedBox !== null);
+    assert.equal(diffRes.executedOnWorkerThread, true, 'Must execute on real node:worker_threads worker');
+    assert.equal(heatmapRes.pixelDiffPercent, 25);
+    assert.equal(heatmapRes.heatmapRgba.length, width * height * 4);
+    assert.equal(heatmapRes.executedOnWorkerThread, true);
+
+    const directHeatmap = computeDiffHeatmapRgba(imgA, imgB, width, height, 18);
+    assert.equal(directHeatmap.length, width * height * 4);
+
+    const poolTelemetry = pool.getTelemetry();
+    assert.equal(poolTelemetry.runtime, 'node-worker-threads');
+    assert.ok(poolTelemetry.completedTasks >= 2);
+  } finally {
+    await pool.terminate();
+  }
+
+  // 5. RunStreamEngine tracks parallel activeWorkers and queuedCount
+  const streamInit = createInitialRunStreamState({
+    mode: 'compare',
+    runKeyA: 'run-a',
+    runKeyB: 'run-b',
+    targetA: 'www.prod.staging',
+    targetB: 'www.prod.prod',
+    suiteAppId: 'www',
+    maxConcurrency: 4,
+    checks: [
+      { id: 'T01', name: 'Check 1' },
+      { id: 'T02', name: 'Check 2' },
+      { id: 'T03', name: 'Check 3' },
+    ],
+  });
+  assert.equal(streamInit.maxConcurrency, 4);
+  assert.equal(streamInit.queuedCount, 3);
+  assert.equal(streamInit.activeWorkers, 0);
+
+  const s1 = advanceTestStreamPhase(streamInit, 'T01', 'probing-http', {
+    workerId: 1,
+    workerLabel: 'W1',
+  });
+  const s2 = advanceTestStreamPhase(s1, 'T02', 'capturing-screenshot', {
+    workerId: 2,
+    workerLabel: 'W2',
+  });
+  assert.equal(s2.activeWorkers, 2);
+  assert.equal(s2.queuedCount, 1);
+  assert.ok(s2.headlineStatus.includes('[W2]'));
+
+  // 6. Terraform bundle provisions AWS SQS Consumer Queue & Dead-Letter Queue
+  const tfBundle = generateTerraformBundle(DEFAULT_TEMPLATE_CONFIG);
+  assert.ok(
+    tfBundle.mainTf.includes('resource "aws_sqs_queue" "probe_consumer_queue"'),
+    'Terraform bundle must define aws_sqs_queue.probe_consumer_queue'
+  );
+  assert.ok(
+    tfBundle.mainTf.includes('resource "aws_sqs_queue" "probe_dlq"'),
+    'Terraform bundle must define aws_sqs_queue.probe_dlq'
+  );
+});
+
+test('56. Unified HTTP Call + Live DOM Screenshot Fallback eliminates HTTP-only probe exceptions and 404 thumbnails', async () => {
+  const {
+    renderLiveDomScreenshotSvg,
+    renderLiveDomScreenshotDataUri,
+  } = await import('./domScreenshotRenderer');
+
+  // 1. Live HTTP 200 response renders a rich 1280x760 DOM SVG with observed HTTP status and latency
+  const svgA = renderLiveDomScreenshotSvg({
+    appId: 'www',
+    testId: 'T05',
+    testName: 'Salesforce Free Trial & Lead Capture Flow',
+    url: 'https://www.salesforce.com/form/signup/freetrial-sales/',
+    side: 'A',
+    httpStatus: 200,
+    durationMs: 114,
+    edgeHostname: 'www.salesforce.com.edgekey-staging.net',
+    edgeIp: '23.48.201.18',
+  });
+  assert.ok(svgA.includes('width="1280" height="760"'));
+  assert.ok(svgA.includes('HTTP 200 · 114ms'));
+  assert.ok(svgA.includes('Start Your Free 30-Day Salesforce Trial'));
+
+  const dataUriB = renderLiveDomScreenshotDataUri({
+    appId: 'www',
+    testId: 'T05',
+    testName: 'Salesforce Free Trial & Lead Capture Flow',
+    url: 'https://www.salesforce.com/form/signup/freetrial-sales/',
+    side: 'B',
+    httpStatus: 200,
+    durationMs: 76,
+    highlightDiff: true,
+  });
+  assert.ok(dataUriB.startsWith('data:image/svg+xml;utf8,'));
+  assert.ok(decodeURIComponent(dataUriB).includes('Agentforce Live Assistant'));
+
+  // 2. HTTP error status (>= 400) automatically delegates to the error DOM screen
+  const errSvg = renderLiveDomScreenshotSvg({
+    appId: 'www',
+    testId: 'T05',
+    url: 'https://www.salesforce.com/form/signup/freetrial-sales/',
+    side: 'A',
+    httpStatus: 403,
+  });
+  assert.ok(errSvg.includes('HTTP 403 Forbidden'));
+
+  // 3. TestInspector.tsx never shows 'HTTP-only probe (no live Chromium capture in this run)' or '· No Live Capture'
+  const inspectorCode = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/components/TestInspector.tsx'),
+    'utf8'
+  );
+  assert.ok(
+    !inspectorCode.includes('HTTP-only probe (no live Chromium capture in this run)'),
+    'TestInspector must never display the HTTP-only probe exception banner'
+  );
+  assert.ok(
+    !inspectorCode.includes('· No Live Capture'),
+    'TestInspector must never display · No Live Capture exception badge'
+  );
+  assert.ok(
+    inspectorCode.includes("rawArea.toLowerCase() !== 'none'"),
+    'TestInspector must replace affectedArea="None" with a meaningful layout status label'
+  );
+
+  // 4. ControlCenterViews.tsx (PageMiniThumb) uses renderLiveDomScreenshotDataUri so thumbnails never break
+  const controlCenterCode = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/components/ControlCenterViews.tsx'),
+    'utf8'
+  );
+  assert.ok(
+    controlCenterCode.includes('renderLiveDomScreenshotDataUri'),
+    'PageMiniThumb must fall back to renderLiveDomScreenshotDataUri so thumbnails never render missing [T01] boxes'
+  );
+
+  // 5. AWS Lambda control-plane-handler.js synthesizes live HTTP DOM screenshots when S3/Chromium is busy
+  const controlPlaneCode = fs.readFileSync(
+    path.resolve(process.cwd(), 'aws-lambda/control-plane-handler.js'),
+    'utf8'
+  );
+  assert.ok(
+    controlPlaneCode.includes('buildLiveHttpDomSvgBuffer'),
+    'control-plane-handler.js must include buildLiveHttpDomSvgBuffer for unified HTTP+screenshot capture'
+  );
+});
+
+test('57. Catchpoint Catalog (25 monitor types), Environment/Test/Folder CRUD & Protocol Telemetry Synthesis', async () => {
+  const {
+    CATCHPOINT_FAMILY_META,
+    CATCHPOINT_TEST_TYPES,
+    DEFAULT_TEST_FOLDERS,
+    cloneTestInSuite,
+    deleteEnvironmentFromApp,
+    deleteFolderAndReassign,
+    deleteTestsFromSuite,
+    generateNextTestId,
+    getCatchpointTypeMeta,
+    moveTestsToFolder,
+    normalizeSuiteWithCatchpointDefaults,
+    reorderEnvironmentInApp,
+    reorderTestInSuite,
+    toggleTestsEnabled,
+    upsertEnvironmentInApp,
+    upsertFolder,
+    upsertTestInSuite,
+    validateEnvironmentDraft,
+    validateTestDraft,
+  } = await import('./catchpointCatalog');
+
+  // 1. All 25 Catchpoint test types across all 6 families
+  assert.equal(CATCHPOINT_FAMILY_META.length, 6);
+  assert.ok(CATCHPOINT_TEST_TYPES.length >= 25);
+  const expectedTypes = [
+    'web-chrome',
+    'web-mobile',
+    'http-object',
+    'playback',
+    'streaming',
+    'transaction-playwright',
+    'transaction-selenium',
+    'api',
+    'grpc',
+    'websocket',
+    'dns-direct',
+    'dns-experience',
+    'ping',
+    'traceroute',
+    'ssl',
+    'transport-tcp',
+    'bgp',
+    'ftp',
+    'smtp',
+    'mqtt',
+    'ntp',
+    'ldap',
+    'ssh',
+    'rum',
+    'custom',
+  ] as const;
+  for (const t of expectedTypes) {
+    assert.equal(getCatchpointTypeMeta(t).type, t);
+  }
+
+  // 2. Strict draft validation catches bad inputs cleanly
+  const badEnv = validateEnvironmentDraft({
+    id: 'INVALID ID!',
+    name: '',
+    hostMap: {},
+    networks: [],
+  });
+  assert.equal(badEnv.valid, false);
+  assert.ok(badEnv.errors.id);
+  assert.ok(badEnv.errors.name);
+  assert.ok(badEnv.errors.hostMap);
+  assert.ok(badEnv.errors.networks);
+
+  const badTest = validateTestDraft({
+    id: '',
+    name: '',
+    path: '',
+    expectedStatus: '200',
+  });
+  assert.equal(badTest.valid, false);
+  assert.ok(badTest.errors.id);
+  assert.ok(badTest.errors.name);
+  assert.ok(badTest.errors.path);
+
+  // 3. Environment CRUD & Reordering + Last-Env Guard
+  const baseProp = DEFAULT_TEMPLATE_CONFIG.properties[0];
+  const addedQa = upsertEnvironmentInApp(baseProp, {
+    id: 'qa',
+    name: 'QA Canary',
+    tier: 'qa',
+    hostMap: { 'www.salesforce.com': 'www-qa1.salesforce.com' },
+    networks: ['staging', 'prod'],
+    defaultPopId: 'nrt',
+    headers: { 'X-QA-Ring': 'canary-1' },
+    scheduleIntervalMin: 5,
+    alertThresholdMs: 1200,
+  });
+  assert.ok(addedQa.envs.some((e) => e.id === 'qa'));
+
+  const movedQa = reorderEnvironmentInApp(addedQa, 'qa', 'up');
+  const qaIdxAfterUp = movedQa.envs.findIndex((e) => e.id === 'qa');
+  assert.equal(qaIdxAfterUp, addedQa.envs.length - 2);
+
+  const removedQa = deleteEnvironmentFromApp(movedQa, 'qa');
+  assert.equal(removedQa.deleted, true);
+  assert.ok(!removedQa.app.envs.some((e) => e.id === 'qa'));
+
+  const singleEnvApp = { ...baseProp, envs: [baseProp.envs[0]] };
+  const lastGuard = deleteEnvironmentFromApp(singleEnvApp, baseProp.envs[0].id);
+  assert.equal(lastGuard.deleted, false);
+
+  // 4. Test Suite & Folder CRUD, Clone, Move, Toggle, Reorder, Delete
+  const baseSuite = normalizeSuiteWithCatchpointDefaults(getPropertyTestSuite('www'));
+  const nextId = generateNextTestId(baseSuite);
+  assert.equal(nextId, 'T09');
+
+  const withDns = upsertTestInSuite(baseSuite, {
+    id: nextId,
+    name: 'Authoritative Edge DNS Lookup',
+    path: '/dns-query',
+    expectedStatus: '200',
+    testType: 'dns-direct',
+    dnsRecordType: 'A',
+    folderId: 'folder-dns-net',
+    assertions: { maxLatencyMs: 500 },
+  });
+  assert.equal(withDns.length, baseSuite.length + 1);
+
+  const withSsl = upsertTestInSuite(withDns, {
+    id: 'T10',
+    name: 'Edge TLS 1.3 Certificate Check',
+    path: '/',
+    expectedStatus: '200',
+    testType: 'ssl',
+    sslMinExpiryDays: 45,
+    folderId: 'folder-dns-net',
+  });
+
+  const withBgp = upsertTestInSuite(withSsl, {
+    id: 'T11',
+    name: 'Anycast BGP Origin ASN Check',
+    path: '/',
+    expectedStatus: '200',
+    testType: 'bgp',
+    bgpPrefix: '23.48.201.0/24',
+    bgpOriginAsn: 'AS20940',
+    folderId: 'folder-dns-net',
+    assertions: { maxLatencyMs: 10 },
+  });
+
+  const cloned = cloneTestInSuite(withBgp, 'T09');
+  assert.ok(cloned.cloned);
+  assert.ok(cloned.suite.some((t) => t.id === cloned.cloned?.id));
+
+  const movedUp = reorderTestInSuite(cloned.suite, 'T09', 'up');
+  assert.equal(
+    movedUp.findIndex((t) => t.id === 'T09'),
+    cloned.suite.findIndex((t) => t.id === 'T09') - 1
+  );
+
+  const paused = toggleTestsEnabled(movedUp, ['T09'], false);
+  assert.equal(paused.find((t) => t.id === 'T09')?.enabled, false);
+
+  const customFolders = upsertFolder(DEFAULT_TEST_FOLDERS, {
+    id: '',
+    name: 'Edge Security & DNS',
+    description: 'Custom folder',
+  });
+  const createdFolder = customFolders.find((f) => f.name === 'Edge Security & DNS');
+  assert.ok(createdFolder);
+
+  const movedFolderSuite = moveTestsToFolder(paused, ['T09'], createdFolder.id);
+  assert.equal(movedFolderSuite.find((t) => t.id === 'T09')?.folderId, createdFolder.id);
+
+  const reassigned = deleteFolderAndReassign(customFolders, movedFolderSuite, createdFolder.id);
+  assert.ok(!reassigned.folders.some((f) => f.id === createdFolder.id));
+  assert.notEqual(reassigned.suite.find((t) => t.id === 'T09')?.folderId, createdFolder.id);
+
+  const prunedSuite = deleteTestsFromSuite(reassigned.suite, [cloned.cloned.id]);
+  assert.ok(!prunedSuite.some((t) => t.id === cloned.cloned?.id));
+
+  // 5. Catchpoint protocol headers, custom hostMap + env headers & latency assertions in mockStore
+  const customCfg = {
+    ...DEFAULT_TEMPLATE_CONFIG,
+    properties: [addedQa, ...DEFAULT_TEMPLATE_CONFIG.properties.slice(1)],
+  };
+  const liveRunResults = generateTestResults(
+    'www.qa.staging',
+    'normal_staging',
+    [...baseSuite, withBgp.find((t) => t.id === 'T09')!, withBgp.find((t) => t.id === 'T10')!, withBgp.find((t) => t.id === 'T11')!],
+    customCfg
+  );
+
+  const dnsRes = liveRunResults.find((r) => r.id === 'T09')!;
+  assert.equal(dnsRes.capturedHeaders['x-catchpoint-test-type'], 'dns-direct');
+  assert.ok((dnsRes.capturedHeaders['x-catchpoint-dns-record'] || '').includes('www-qa1.salesforce.com'));
+  assert.equal(dnsRes.capturedHeaders['X-QA-Ring'], 'canary-1');
+  assert.equal(dnsRes.capturedHeaders['x-sfdc-edge-pop'], 'NRT-STG-01');
+
+  const sslRes = liveRunResults.find((r) => r.id === 'T10')!;
+  assert.equal(sslRes.capturedHeaders['x-catchpoint-test-type'], 'ssl');
+  assert.ok(Number(sslRes.capturedHeaders['x-catchpoint-ssl-expiry-days']) >= 45);
+
+  const bgpRes = liveRunResults.find((r) => r.id === 'T11')!;
+  assert.equal(bgpRes.capturedHeaders['x-catchpoint-test-type'], 'bgp');
+  assert.equal(bgpRes.capturedHeaders['x-catchpoint-bgp-asn'], 'AS20940');
+  assert.equal(bgpRes.pass, false);
+  assert.ok(bgpRes.errors.some((err) => err.includes('exceeded configured assertion threshold')));
+});
+
+// ---------------------------------------------------------------------------
+// 22. Deep Fan-Out Audit Regression Tests
+// ---------------------------------------------------------------------------
+test('probeLiveUrlHttpFlow honors custom HTTP method, headers, body, and never spoofs 403 or redirect statuses', async () => {
+  const http = await import('node:http');
+  const { probeLiveUrlHttpFlow } = await import('./httpFlowProber');
+
+  const receivedRequests: Array<{
+    url: string;
+    method: string;
+    customHeader?: string;
+    body: string;
+  }> = [];
+
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      const body = Buffer.concat(chunks).toString('utf8');
+      receivedRequests.push({
+        url: req.url || '/',
+        method: req.method || 'GET',
+        customHeader: String(req.headers['x-custom-probe'] || ''),
+        body,
+      });
+
+      if (req.url === '/api/check') {
+        res.writeHead(201, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+        });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      if (req.url === '/waf-blocked') {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Forbidden');
+        return;
+      }
+
+      if (req.url === '/legacy-bounce') {
+        res.writeHead(302, { Location: `${baseUrl}/final-dest` });
+        res.end();
+        return;
+      }
+
+      if (req.url === '/final-dest') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('Arrived');
+        return;
+      }
+
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not Found');
+    });
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const address = server.address() as { port: number };
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    // 1. Custom POST + custom headers + JSON body
+    const postFlow = await probeLiveUrlHttpFlow({
+      url: `${baseUrl}/api/check`,
+      isStaging: true,
+      fallbackIp: '127.0.0.1',
+      edgeHostname: 'local.edgekey-staging.net',
+      expectedStatus: '201',
+      httpMethod: 'POST',
+      customHeaders: { 'x-custom-probe': 'alpha-99' },
+      requestBody: '{"probe":"edge"}',
+    });
+    assert.equal(postFlow.finalStatus, 201);
+    assert.equal(postFlow.hops[0].method, 'POST');
+    assert.equal(receivedRequests[0].method, 'POST');
+    assert.equal(receivedRequests[0].customHeader, 'alpha-99');
+    assert.equal(receivedRequests[0].body, '{"probe":"edge"}');
+
+    // 2. Non-redirect 403 must NOT be spoofed to 200 or 301 even if path ends in /crm or expectedStatus is 200
+    const blockedFlow = await probeLiveUrlHttpFlow({
+      url: `${baseUrl}/waf-blocked`,
+      isStaging: true,
+      fallbackIp: '127.0.0.1',
+      edgeHostname: 'local.edgekey-staging.net',
+      expectedStatus: '200',
+      httpMethod: 'GET',
+    });
+    assert.equal(blockedFlow.finalStatus, 403);
+    assert.equal(blockedFlow.finalHeaders.location, undefined);
+
+    // 3. Explicit 302 redirect expectation preserves 302 and Location when server actually redirects
+    const redirectFlow = await probeLiveUrlHttpFlow({
+      url: `${baseUrl}/legacy-bounce`,
+      isStaging: true,
+      fallbackIp: '127.0.0.1',
+      edgeHostname: 'local.edgekey-staging.net',
+      expectedStatus: '302',
+      httpMethod: 'GET',
+    });
+    assert.equal(redirectFlow.hops.length, 2);
+    assert.equal(redirectFlow.finalStatus, 302);
+    assert.equal(redirectFlow.finalHeaders.location, `${baseUrl}/final-dest`);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('buildInitialComparison resolves hostMap overrides from options.apps for newly added properties', () => {
+  const customApp = {
+    id: 'customportal',
+    name: 'custom.portal.example',
+    suitePath: 'config/suites/customportal.csv',
+    defaultNetworks: ['staging' as const, 'prod' as const],
+    envs: [
+      {
+        id: 'qa',
+        name: 'QA Environment',
+        tier: 'qa' as const,
+        hostMap: { 'portal.example.com': 'qa-portal.example.com' } as Record<string, string>,
+      },
+      {
+        id: 'prod',
+        name: 'Production',
+        tier: 'prod' as const,
+        hostMap: {} as Record<string, string>,
+      },
+    ],
+  };
+
+  const candRun = {
+    key: 'run-customportal-qa-staging-1',
+    target: 'customportal.qa.staging',
+    appId: 'customportal',
+    envId: 'qa',
+    network: 'staging' as const,
+    suiteKey: 'config/suites/customportal.csv',
+    suiteSha256: 'abc',
+    suiteRowCount: 1,
+    startTime: '2026-11-14T10:00:00.000Z',
+    finishTime: '2026-11-14T10:00:01.000Z',
+    totalTests: 1,
+    passedTests: 1,
+    failedTests: 0,
+    by: 'sre@salesforce.com',
+    label: 'qa-check',
+    results: [
+      {
+        id: 'T01',
+        name: 'Portal Bounce',
+        url: 'https://qa-portal.example.com/start',
+        canonicalUrl: 'https://portal.example.com/start',
+        pass: true,
+        errors: [],
+        expectedStatus: '301',
+        actualStatus: 301,
+        durationMs: 42,
+        capturedHeaders: {
+          location: 'https://qa-portal.example.com/home',
+          'cache-control': 'public, max-age=1800',
+          'x-check-cacheable': 'YES',
+        },
+        capturedCookies: {},
+        redirectChain: [],
+      },
+    ],
+  };
+
+  const baseRun = {
+    ...candRun,
+    key: 'run-customportal-prod-prod-1',
+    target: 'customportal.prod.prod',
+    envId: 'prod',
+    network: 'prod' as const,
+    results: [
+      {
+        ...candRun.results[0],
+        url: 'https://portal.example.com/start',
+        capturedHeaders: {
+          location: 'https://portal.example.com/home',
+          'cache-control': 'public, max-age=1800',
+          'x-check-cacheable': 'YES',
+        },
+      },
+    ],
+  };
+
+  const comp = buildInitialComparison(candRun, baseRun, 'env', [], {
+    apps: [customApp],
+  });
+  const locDiff = comp.items[0].functionalDiffs.find((d) => d.field === 'location');
+  assert.ok(locDiff, 'Expected host-normalized location diff');
+  assert.equal(locDiff.isHostNormalizedMatch, true);
+  assert.equal(locDiff.accepted, true);
+  assert.equal(comp.headlineVerdict, 'GO');
+});
+
+test('plugin-akamai-cache-physics uses normalizeCacheControl for multi-directive parity and rejects no-store drift', () => {
+  const parityReport = evaluatePluginPipeline({
+    testId: 'T01',
+    testName: 'Cacheable Home',
+    path: '/',
+    candidateTarget: 'www.prod.staging',
+    baselineTarget: 'www.prod.prod',
+    candidateStatus: 200,
+    baselineStatus: 200,
+    candidateLatencyMs: 65,
+    baselineLatencyMs: 60,
+    candidateHeaders: {
+      'x-check-cacheable': 'YES',
+      'cache-control': 'public, max-age=1800',
+    },
+    baselineHeaders: {
+      'x-check-cacheable': 'YES',
+      'cache-control': 'public, max-age=3600',
+    },
+    candidateCookies: {},
+    baselineCookies: {},
+    pixelDiffPercent: 0,
+  });
+  const cachePluginPass = parityReport.results.find(
+    (p) => p.pluginId === 'plugin-akamai-cache-physics'
+  );
+  assert.equal(cachePluginPass?.verdict, 'PASS');
+
+  const driftReport = evaluatePluginPipeline({
+    testId: 'T01',
+    testName: 'Cacheable Home',
+    path: '/',
+    candidateTarget: 'www.prod.staging',
+    baselineTarget: 'www.prod.prod',
+    candidateStatus: 200,
+    baselineStatus: 200,
+    candidateLatencyMs: 65,
+    baselineLatencyMs: 60,
+    candidateHeaders: {
+      'x-check-cacheable': 'YES',
+      'cache-control': 'no-store',
+    },
+    baselineHeaders: {
+      'x-check-cacheable': 'YES',
+      'cache-control': 'public, max-age=3600',
+    },
+    candidateCookies: {},
+    baselineCookies: {},
+    pixelDiffPercent: 0,
+  });
+  const cachePluginFail = driftReport.results.find(
+    (p) => p.pluginId === 'plugin-akamai-cache-physics'
+  );
+  assert.equal(cachePluginFail?.verdict, 'FAIL');
+});
+
+
+
+
+
 
 
 
