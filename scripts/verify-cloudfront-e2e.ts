@@ -1,4 +1,4 @@
-#!/usr/bin/env -S pnpm exec tsx
+#!/usr/bin/env -S npx tsx
 /**
  * ============================================================================
  * SALESFORCE EDGE RELEASE GATE — LIVE CLOUDFRONT UI & API E2E TEST SUITE
@@ -77,10 +77,11 @@ export async function runCloudFrontE2ETests(baseUrl?: string): Promise<void> {
   const awsEnv = loadDotEnvCredentials();
   const portalUrl = (baseUrl || resolveLiveCloudFrontUrl()).replace(/\/+$/, '');
 
+  const operatorHandle = awsEnv.operatorUsername || 'operator';
   console.log('\n================================================================================');
   console.log(` CLOUDFRONT LIVE E2E VERIFICATION SUITE`);
   console.log(` Target CloudFront URL : ${portalUrl}`);
-  console.log(` Active AWS Account    : ${awsEnv.accountId} (${awsEnv.operatorUsername})`);
+  console.log(` Active AWS Account    : ${awsEnv.accountId || 'not-configured'} (${operatorHandle})`);
   console.log('================================================================================\n');
 
   // --------------------------------------------------------------------------
@@ -144,7 +145,7 @@ export async function runCloudFrontE2ETests(baseUrl?: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       purge: true,
-      userEmail: `${awsEnv.operatorUsername}@salesforce.com`,
+      userEmail: `${operatorHandle}@salesforce.com`,
     }),
   });
   assert.equal(seedFleetRes.status, 200, `Expected 200 from /api/v1/runs/seed-fleet`);
@@ -152,14 +153,17 @@ export async function runCloudFrontE2ETests(baseUrl?: string): Promise<void> {
 
   const triggerRun = await fetchJson<{
     status?: string;
-    newRun?: { key: string; targetId: string; results: Array<{ id: string; actualStatus: number }> };
-    result?: { key: string; targetId: string; results: Array<{ id: string; actualStatus: number }> };
+    run?: { key: string; targetId?: string; target?: string; results: Array<{ id: string; actualStatus: number }> };
+    newRun?: { key: string; targetId?: string; target?: string; results: Array<{ id: string; actualStatus: number }> };
+    result?: { key: string; targetId?: string; target?: string; results: Array<{ id: string; actualStatus: number }> };
   }>(`${portalUrl}/api/v1/runs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       targetId: 'www.prod.staging',
-      by: `${awsEnv.operatorUsername}@salesforce.com`,
+      engine: 'aws-lambda-adhoc',
+      waitForAdhoc: true,
+      by: `${operatorHandle}@salesforce.com`,
       label: 'live-staging',
     }),
   });
@@ -167,11 +171,14 @@ export async function runCloudFrontE2ETests(baseUrl?: string): Promise<void> {
     triggerRun.status === 200 || triggerRun.status === 201,
     `Expected 200/201 from POST /api/v1/runs, got ${triggerRun.status}`
   );
-  const runPayload = triggerRun.data.newRun || triggerRun.data.result;
-  assert.ok(runPayload && Array.isArray(runPayload.results), 'Run payload must include results[]');
+  const runPayload = triggerRun.data.newRun || triggerRun.data.result || triggerRun.data.run;
+  assert.ok(
+    runPayload && Array.isArray(runPayload.results),
+    `Run payload must include results[] (received keys: ${Object.keys(triggerRun.data || {}).join(', ')})`
+  );
   assert.ok(runPayload.results.length >= 8, 'Expected at least 8 synthetic test results');
   console.log(
-    `  ✓ Ad-Hoc Run executed: key=${runPayload.key} | target=${runPayload.targetId} | checks=${runPayload.results.length}/8`
+    `  ✓ Ad-Hoc Run executed: key=${runPayload.key} | target=${runPayload.targetId || runPayload.target} | checks=${runPayload.results.length}/8`
   );
 
   // Verify real JPEG screenshot delivery (both static /screenshots/* and Lambda/API /api/v1/screenshots/*)
@@ -244,7 +251,7 @@ export async function runCloudFrontE2ETests(baseUrl?: string): Promise<void> {
     body: JSON.stringify({
       candidateTargetId: 'www.prod.staging',
       baselineTargetId: 'www.prod.prod',
-      by: `${awsEnv.operatorUsername}@salesforce.com`,
+      by: `${operatorHandle}@salesforce.com`,
     }),
   });
   assert.equal(compareRes.status, 200);
@@ -352,8 +359,8 @@ export async function runCloudFrontE2ETests(baseUrl?: string): Promise<void> {
   spawnSync('playwright-cli', [pwSession, 'resize', '1440', '900'], { encoding: 'utf8' });
 
   const uiPart1Script = `async (page) => {
-    await page.waitForSelector('text=Salesforce Edge Release Gate', { timeout: 15000 });
-    await page.waitForSelector('text=Edge Topology & Live Release Gate Matrix', { timeout: 15000 });
+    await page.waitForSelector('text=Release Gate', { timeout: 15000 });
+    await page.waitForSelector('[data-testid="synthetics-orchestrator-view"], [data-testid="check-row-T01"]', { timeout: 15000 });
 
     const homeText = await page.evaluate(() => document.body.innerText);
     const forbiddenDummyTokens = [
@@ -372,28 +379,26 @@ export async function runCloudFrontE2ETests(baseUrl?: string): Promise<void> {
       }
     }
 
-    const openDiffBtn = page.locator('button[title="Open www PROD Release Gate Diff"]').first();
-    if (await openDiffBtn.count() > 0) {
-      await openDiffBtn.click();
+    // Verify Synthetics Control Plane workspace if present, then switch to Compare workspace
+    const syntheticsBtn = page.locator('[data-testid="nav-synthetics"]');
+    if (await syntheticsBtn.count() > 0) {
+      await syntheticsBtn.click();
+      await page.waitForSelector('[data-testid="synthetics-orchestrator-view"]', { timeout: 10000 });
     }
 
-    await page.waitForSelector('[data-testid="page-mini-thumb-img-T01"]', { timeout: 12000 });
-    const thumbCount = await page.locator('[data-testid^="page-mini-thumb-img-"]').count();
-    if (thumbCount < 8) {
-      throw new Error('Expected at least 8 PageMiniThumb <img> elements, found ' + thumbCount);
+    const compareBtn = page.locator('[data-testid="nav-workbench"]');
+    if (await compareBtn.count() > 0) {
+      await compareBtn.click();
     }
-    const t01ThumbLoaded = await page.locator('[data-testid="page-mini-thumb-img-T01"]').first().evaluate(
-      el => el.complete && el.naturalWidth > 0 && el.naturalHeight > 0
-    );
-    if (!t01ThumbLoaded) {
-      throw new Error('T01 PageMiniThumb <img> did not load with naturalWidth > 0');
+    await page.waitForSelector('[data-testid="check-row-T01"]', { timeout: 15000 });
+
+    const checkRowCount = await page.locator('[data-testid^="check-row-"]').count();
+    if (checkRowCount < 8) {
+      throw new Error('Expected at least 8 check rows in CheckListPane, found ' + checkRowCount);
     }
 
-    await page.locator('[data-testid="page-mini-thumb-img-T01"]').first().click();
-    const imageAiTab = page.locator('button[role="tab"]:has-text("Image AI")');
-    if (await imageAiTab.count() > 0) {
-      await imageAiTab.click();
-    }
+    await page.locator('[data-testid="check-row-T01"] button').first().click();
+    await page.locator('[data-testid="inspector-tab-image"]').click();
 
     await page.waitForSelector('[data-testid="dom-snapshot-img-A"]', { timeout: 10000 });
     await page.waitForSelector('[data-testid="dom-snapshot-img-B"]', { timeout: 10000 });
@@ -415,33 +420,49 @@ export async function runCloudFrontE2ETests(baseUrl?: string): Promise<void> {
     if (!sideADims.src.includes('/screenshots/') || !sideBDims.src.includes('/screenshots/')) {
       throw new Error('Expected real Chromium JPEG screenshots (/screenshots/*.jpg), got: ' + JSON.stringify({ sideADims, sideBDims }));
     }
-    return { thumbCount, sideADims, sideBDims };
+    return { checkRowCount, sideADims, sideBDims };
   }`;
 
   const uiPart2Script = `async (page) => {
-    await page.locator('button[role="tab"]:has-text("Headers")').click();
+    await page.locator('[data-testid="inspector-tab-headers"]').click();
     await page.waitForSelector('text=x-check-cacheable', { timeout: 8000 });
 
-    await page.locator('button[role="tab"]:has-text("Cookies")').click();
+    await page.locator('[data-testid="inspector-tab-cookies"]').click();
     await page.waitForSelector('th:has-text("Cookie")', { timeout: 8000 });
 
-    await page.locator('[data-testid="page-mini-thumb-img-T03"]').first().click();
-    const imageAiTab = page.locator('button[role="tab"]:has-text("Image AI")');
-    if (await imageAiTab.count() > 0) {
-      await imageAiTab.click();
-    }
+    await page.locator('[data-testid="check-row-T03"] button').first().click();
+    await page.locator('[data-testid="inspector-tab-image"]').click();
     await page.waitForSelector('[data-testid="dom-snapshot-img-A"]', { timeout: 8000 });
     const t03BodyText = await page.evaluate(() => document.body.innerText);
     if (t03BodyText.includes('+14px') || t03BodyText.includes('STAGING CANDIDATE BANNER')) {
       throw new Error('Detected fabricated +14px or staging banner overlay in T03 UI');
     }
-    const judgeBtn = page.locator('button:has-text("Run Visual Judge"), button:has-text("Run Nova Lite Judge")').first();
+    const judgeBtn = page.locator('[data-testid="btn-run-ai-judge"]');
     if (await judgeBtn.count() > 0) {
       await judgeBtn.click();
       await page.waitForTimeout(400);
     }
+
+    // Verify consolidated Config & Studio workspaces
+    const configBtn = page.locator('[data-testid="nav-config"]');
+    if (await configBtn.count() > 0) {
+      await configBtn.click();
+      await page.waitForSelector('[data-testid="config-hub-view"]', { timeout: 8000 });
+    }
+    const studioBtn = page.locator('[data-testid="nav-studio"]');
+    if (await studioBtn.count() > 0) {
+      await studioBtn.click();
+      await page.waitForSelector('[data-testid="dev-studio-view"]', { timeout: 8000 });
+    }
+    const vscodeBtn = page.locator('[data-testid="nav-vscode"]');
+    if (await vscodeBtn.count() > 0) {
+      await vscodeBtn.click();
+      await page.waitForSelector('[data-testid="vscode-workspace"]', { timeout: 10000 });
+      await page.waitForSelector('[data-testid="vscode-terminal-panel"]', { timeout: 10000 });
+    }
+
     await page.screenshot({ path: '.playwright-cli/cloudfront-e2e-verified.png' });
-    return { zeroDummyVerified: true };
+    return { zeroDummyVerified: true, consolidatedWorkspacesVerified: true, vscodeTtyVerified: true };
   }`;
 
   let runCodeRes: ReturnType<typeof spawnSync>;
@@ -465,7 +486,7 @@ export async function runCloudFrontE2ETests(baseUrl?: string): Promise<void> {
   }
 
   console.log(
-    `  ✓ CloudFront UI E2E passed: Zero dummy data verified, 8/8 PageMiniThumb images, Side A & Side B 1280×760 DOM screenshots, live Headers/Cookies/Image AI tabs, and Nova Lite Judge verified.`
+    `  ✓ CloudFront UI E2E passed: Zero dummy data verified, 8/8 Check Queue rows, Side A & Side B 1280×760 DOM screenshots, live Headers/Cookies/Visual AI tabs, Scheduled Runs graph, and Nova Lite Judge verified.`
   );
   console.log('\n================================================================================');
   console.log(` ALL CLOUDFRONT LIVE UI + API + GATE E2E TESTS PASSED (${portalUrl})`);

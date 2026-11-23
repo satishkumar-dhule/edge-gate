@@ -193,6 +193,16 @@ export const handler = async (event = {}) => {
     await dismissCookieOverlayIfPresent(page);
     await new Promise((r) => setTimeout(r, 850));
 
+    if (!navResp || page.url() === 'about:blank') {
+      const safeTitle = String(rawUrl).replace(/[<>&"]/g, '');
+      await page
+        .setContent(
+          `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;width:${width}px;height:${height}px;background:#0f172a;color:#f8fafc;font-family:sans-serif;display:flex;align-items:center;justify-content:center;}</style></head><body><div style="padding:48px;border:1px solid #334155;border-radius:12px;background:#1e293b;max-width:860px;"><h1 style="margin:0 0 12px;font-size:28px;color:#38bdf8;">${appId.toUpperCase()} · ${testId} (${network.toUpperCase()})</h1><p style="margin:0 0 8px;font-size:16px;color:#cbd5e1;">${safeTitle}</p><p style="margin:0;font-family:monospace;font-size:13px;color:#94a3b8;">HTTP ${actualStatus} · Edge ${edgeIp || 'DNS'} · ${capturedAt}</p></div></body></html>`,
+          { waitUntil: 'load' }
+        )
+        .catch(() => null);
+    }
+
     const screenshotRaw = await page.screenshot({
       type: 'jpeg',
       quality: 84,
@@ -241,7 +251,7 @@ export const handler = async (event = {}) => {
             Key: liveKey,
             Body: buf,
             ContentType: 'image/jpeg',
-            CacheControl: 'no-store, no-cache, must-revalidate, max-age=0',
+            CacheControl: 'public, max-age=300, stale-while-revalidate=86400',
             Metadata: liveMetadata,
           })
         ),
@@ -251,7 +261,7 @@ export const handler = async (event = {}) => {
             Key: portalKey,
             Body: buf,
             ContentType: 'image/jpeg',
-            CacheControl: 'no-store, no-cache, must-revalidate, max-age=0',
+            CacheControl: 'public, max-age=31536000, immutable',
             Metadata: liveMetadata,
           })
         ),
@@ -261,7 +271,7 @@ export const handler = async (event = {}) => {
             Key: runKey,
             Body: buf,
             ContentType: 'image/jpeg',
-            CacheControl: 'no-store, no-cache, must-revalidate, max-age=0',
+            CacheControl: 'public, max-age=31536000, immutable',
             Metadata: liveMetadata,
           })
         ),

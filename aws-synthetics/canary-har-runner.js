@@ -245,7 +245,7 @@ exports.handler = async () => {
                 Key: liveScreenshotKey,
                 Body: jpegBuf,
                 ContentType: 'image/jpeg',
-                CacheControl: 'no-store, no-cache, must-revalidate, max-age=0',
+                CacheControl: 'public, max-age=300, stale-while-revalidate=86400',
                 Metadata: liveMetadata,
               })
             ),
@@ -255,7 +255,7 @@ exports.handler = async () => {
                 Key: portalScreenshotKey,
                 Body: jpegBuf,
                 ContentType: 'image/jpeg',
-                CacheControl: 'no-store, no-cache, must-revalidate, max-age=0',
+                CacheControl: 'public, max-age=31536000, immutable',
                 Metadata: liveMetadata,
               })
             ),
@@ -265,7 +265,7 @@ exports.handler = async () => {
                 Key: runScreenshotKey,
                 Body: jpegBuf,
                 ContentType: 'image/jpeg',
-                CacheControl: 'no-store, no-cache, must-revalidate, max-age=0',
+                CacheControl: 'public, max-age=31536000, immutable',
                 Metadata: liveMetadata,
               })
             ),

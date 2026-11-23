@@ -1,4 +1,4 @@
-#!/usr/bin/env -S pnpm exec tsx
+#!/usr/bin/env -S npx tsx
 /**
  * ============================================================================
  * SALESFORCE EDGE RELEASE GATE — UNIFIED PNPM + TERRAFORM + S3 SPA DEPLOYER
@@ -158,7 +158,8 @@ export function verifyCompiledSpaBundle(
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const fullPath = path.join(dir, entry.name);
       const rel = path.relative(distDir, fullPath).replace(/\\/g, '/');
-      if (rel.startsWith('assets/aistudio/') || rel.startsWith('screenshots/')) continue;
+      if (rel.startsWith('assets/aistudio/')) continue;
+      if (rel.startsWith('screenshots/') && !/\.(jpg|jpeg|png|webp)$/i.test(rel) && entry.isFile()) continue;
       if (entry.isDirectory()) {
         walk(fullPath);
       } else if (entry.isFile()) {
@@ -215,16 +216,42 @@ export function verifyCompiledSpaBundle(
 }
 
 function runCmd(cmd: string, args: string[], cwd: string = ROOT_DIR): number {
-  console.log(`\n$ ${cmd} ${args.join(' ')}`);
-  const res = spawnSync(cmd, args, {
+  let effectiveCmd = cmd;
+  let effectiveArgs = args;
+  const envWithTmp = {
+    ...process.env,
+    PATH: `/tmp/bin:${process.env.PATH || ''}`,
+    AWS_REGION: process.env.AWS_REGION || 'us-east-1',
+    AWS_DEFAULT_REGION: process.env.AWS_REGION || 'us-east-1',
+  };
+  if (cmd === 'pnpm') {
+    const cleanPath = (process.env.PATH || '')
+      .split(':')
+      .filter((p) => p && p !== '/tmp/bin')
+      .join(':');
+    const hasRealPnpm =
+      spawnSync('which', ['pnpm'], { env: { ...envWithTmp, PATH: cleanPath } }).status === 0;
+    if (!hasRealPnpm) {
+      if (args[0] === 'exec') {
+        const localBin = path.join(ROOT_DIR, 'node_modules', '.bin', args[1] || '');
+        if (args[1] && fs.existsSync(localBin)) {
+          effectiveCmd = localBin;
+          effectiveArgs = args.slice(2);
+        } else {
+          effectiveCmd = 'npx';
+          effectiveArgs = ['--yes', ...args.slice(1)];
+        }
+      } else {
+        effectiveCmd = 'npm';
+        effectiveArgs = args;
+      }
+    }
+  }
+  console.log(`\n$ ${effectiveCmd} ${effectiveArgs.join(' ')}`);
+  const res = spawnSync(effectiveCmd, effectiveArgs, {
     cwd,
     stdio: 'inherit',
-    env: {
-      ...process.env,
-      PATH: `/tmp/bin:${process.env.PATH || ''}`,
-      AWS_REGION: process.env.AWS_REGION || 'us-east-1',
-      AWS_DEFAULT_REGION: process.env.AWS_REGION || 'us-east-1',
-    },
+    env: envWithTmp,
   });
   return res.status ?? 1;
 }
@@ -298,10 +325,12 @@ async function putS3ObjectSigV4(params: {
   key: string;
   body: Buffer;
   contentType: string;
+  cacheControl?: string;
+  metadata?: Record<string, string>;
   accessKeyId: string;
   secretAccessKey: string;
 }): Promise<{ ok: boolean; status: number; message?: string }> {
-  const { bucket, region, key, body, contentType, accessKeyId, secretAccessKey } = params;
+  const { bucket, region, key, body, contentType, cacheControl, metadata, accessKeyId, secretAccessKey } = params;
   const host = `${bucket}.s3.${region}.amazonaws.com`;
   const now = new Date();
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
@@ -312,12 +341,27 @@ async function putS3ObjectSigV4(params: {
     .map((seg) => encodeURIComponent(seg))
     .join('/');
   const canonicalUri = `/${encodedKey}`;
-  const canonicalHeaders =
-    `content-type:${contentType}\n` +
-    `host:${host}\n` +
-    `x-amz-content-sha256:${payloadHash}\n` +
-    `x-amz-date:${amzDate}\n`;
-  const signedHeaders = 'content-type;host;x-amz-content-sha256;x-amz-date';
+
+  const headersToSign: Record<string, string> = {
+    'content-type': contentType,
+    host,
+    'x-amz-content-sha256': payloadHash,
+    'x-amz-date': amzDate,
+  };
+  if (cacheControl) {
+    headersToSign['cache-control'] = cacheControl;
+  }
+  if (metadata) {
+    for (const [mk, mv] of Object.entries(metadata)) {
+      const cleanK = mk.toLowerCase().replace(/[^a-z0-9-]/g, '');
+      if (cleanK && mv !== undefined && mv !== null) {
+        headersToSign[`x-amz-meta-${cleanK}`] = String(mv).trim();
+      }
+    }
+  }
+  const sortedKeys = Object.keys(headersToSign).sort();
+  const canonicalHeaders = sortedKeys.map((k) => `${k}:${headersToSign[k]}\n`).join('');
+  const signedHeaders = sortedKeys.join(';');
   const canonicalRequest = `PUT\n${canonicalUri}\n\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`;
   const credentialScope = `${dateStamp}/${region}/s3/aws4_request`;
   const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${credentialScope}\n${sha256Hex(canonicalRequest)}`;
@@ -328,19 +372,32 @@ async function putS3ObjectSigV4(params: {
   const signature = crypto.createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex');
   const authorization = `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
 
+  const reqHeaders: Record<string, string | number> = {
+    'Content-Type': contentType,
+    'Content-Length': body.length,
+    'X-Amz-Content-Sha256': payloadHash,
+    'X-Amz-Date': amzDate,
+    Authorization: authorization,
+  };
+  if (cacheControl) {
+    reqHeaders['Cache-Control'] = cacheControl;
+  }
+  if (metadata) {
+    for (const [mk, mv] of Object.entries(metadata)) {
+      const cleanK = mk.toLowerCase().replace(/[^a-z0-9-]/g, '');
+      if (cleanK && mv !== undefined && mv !== null) {
+        reqHeaders[`x-amz-meta-${cleanK}`] = String(mv).trim();
+      }
+    }
+  }
+
   return new Promise((resolve) => {
     const req = https.request(
       {
         host,
         path: canonicalUri,
         method: 'PUT',
-        headers: {
-          'Content-Type': contentType,
-          'Content-Length': body.length,
-          'X-Amz-Content-Sha256': payloadHash,
-          'X-Amz-Date': amzDate,
-          Authorization: authorization,
-        },
+        headers: reqHeaders,
       },
       (res) => {
         let respText = '';
@@ -892,12 +949,26 @@ export async function syncUiBundleToS3(params: {
     maxAttempts: params.maxAttempts ?? DEFAULT_S3_SYNC_MAX_ATTEMPTS,
     worker: async (f) => {
       const body = fs.readFileSync(path.join(DIST_DIR, f.relativePath));
+      const isIndexHtml = f.relativePath === 'index.html';
+      const isScreenshot = f.relativePath.startsWith('screenshots/');
+      const cacheControl = isIndexHtml
+        ? 'no-cache, max-age=0, must-revalidate'
+        : 'public, max-age=31536000, immutable';
+      const metadata = isScreenshot
+        ? {
+            'live-capture': 'true',
+            capturedby: 'aws-lambda-sparticuz-chromium',
+            sha256: f.sha256.slice(0, 16),
+          }
+        : undefined;
       const res = await putS3ObjectSigV4({
         bucket,
         region,
         key: f.s3Key,
         body,
         contentType: f.contentType,
+        cacheControl,
+        metadata,
         accessKeyId,
         secretAccessKey,
       });
@@ -1090,6 +1161,80 @@ export async function verifyAwsStsSession(params: {
   });
 }
 
+/**
+ * Probes whether the active AWS account/IAM principal is allowed to call
+ * CloudWatch Synthetics (`synthetics:DescribeCanaries`) or is blocked by an
+ * AWS Organizations Service Control Policy (SCP).
+ */
+export async function probeSyntheticsScpPermission(params: {
+  accessKeyId: string;
+  secretAccessKey: string;
+  region: string;
+}): Promise<{ allowed: boolean; scpDenied: boolean; reason?: string }> {
+  const { accessKeyId, secretAccessKey, region } = params;
+  if (!accessKeyId || !secretAccessKey) {
+    return { allowed: false, scpDenied: false, reason: 'Missing AWS credentials' };
+  }
+  const host = `synthetics.${region}.amazonaws.com`;
+  const reqPath = '/canaries';
+  const body = JSON.stringify({ MaxResults: 1 });
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const dateStamp = amzDate.slice(0, 8);
+  const payloadHash = sha256Hex(body);
+  const canonicalHeaders = `content-type:application/json\nhost:${host}\nx-amz-date:${amzDate}\n`;
+  const signedHeaders = 'content-type;host;x-amz-date';
+  const canonicalRequest = `POST\n${reqPath}\n\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`;
+  const credentialScope = `${dateStamp}/${region}/synthetics/aws4_request`;
+  const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${credentialScope}\n${sha256Hex(canonicalRequest)}`;
+  const kDate = hmac(`AWS4${secretAccessKey}`, dateStamp);
+  const kRegion = hmac(kDate, region);
+  const kService = hmac(kRegion, 'synthetics');
+  const kSigning = hmac(kService, 'aws4_request');
+  const signature = crypto.createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex');
+  const authorization = `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        host,
+        path: reqPath,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'X-Amz-Date': amzDate,
+          Authorization: authorization,
+        },
+      },
+      (res) => {
+        let raw = '';
+        res.on('data', (c) => (raw += c));
+        res.on('end', () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve({ allowed: true, scpDenied: false });
+          } else {
+            const lower = raw.toLowerCase();
+            const isScpOrAccessDenied =
+              res.statusCode === 403 &&
+              (lower.includes('service control policy') ||
+                lower.includes('explicit deny') ||
+                lower.includes('accessdenied'));
+            resolve({
+              allowed: false,
+              scpDenied: isScpOrAccessDenied,
+              reason: raw.slice(0, 260) || `HTTP ${res.statusCode}`,
+            });
+          }
+        });
+      }
+    );
+    req.on('error', (err) => resolve({ allowed: true, scpDenied: false, reason: err.message }));
+    req.write(body);
+    req.end();
+  });
+}
+
 async function main() {
   const rawAction = process.argv[2] || 'deploy-all';
   const action = rawAction === 'deply' || rawAction === 'deploy' ? 'deploy-all' : rawAction;
@@ -1189,12 +1334,21 @@ async function main() {
     }
     const tf = resolveTerraformBin();
     runCmd(tf, [`-chdir=${TF_DIR}`, 'init', '-input=false']);
-    const applyCode = runCmd(tf, [
-      `-chdir=${TF_DIR}`,
-      'apply',
-      '-auto-approve',
-      '-input=false',
-    ]);
+    const tfApplyArgs = [`-chdir=${TF_DIR}`, 'apply', '-auto-approve', '-input=false'];
+    if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+      const syntheticsProbe = await probeSyntheticsScpPermission({
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        region,
+      });
+      if (syntheticsProbe.scpDenied) {
+        console.warn(
+          `[AWS SCP NOTICE] CloudWatch Synthetics API denied by AWS Organizations SCP (${syntheticsProbe.reason}) — overriding -var=deploy_synthetics_canaries=false so CloudFront, S3, DynamoDB & Lambda deploy cleanly.`
+        );
+        tfApplyArgs.push('-var=deploy_synthetics_canaries=false');
+      }
+    }
+    const applyCode = runCmd(tf, tfApplyArgs);
     if (applyCode !== 0) {
       console.error('[TERRAFORM APPLY FAILED] Terraform exited with non-zero status:', applyCode);
       process.exit(applyCode);
@@ -1209,6 +1363,21 @@ async function main() {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
       });
+    }
+    let uploadedFilesCount = check.files.length;
+    if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+      const syncStats = await syncUiBundleToS3({
+        bucket: cfInfo.s3Bucket,
+        region,
+        check,
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      });
+      uploadedFilesCount = syncStats.uploadedCount;
+      if (syncStats.failedCount > 0) {
+        console.error(`[TF-APPLY SYNC FAILED] ${syncStats.failedCount} S3 assets failed:`, syncStats.errors.slice(0, 5));
+        process.exit(1);
+      }
     }
     let invRes: { ok: boolean; status: number } = { ok: false, status: 0 };
     if (cfInfo.distributionId && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
@@ -1228,7 +1397,7 @@ async function main() {
         apiEndpoint: cfInfo.apiEndpoint,
         s3Bucket: cfInfo.s3Bucket,
         totalFiles: check.files.length,
-        uploadedFiles: check.files.length,
+        uploadedFiles: uploadedFilesCount,
         invalidationOk: invRes.ok,
         invalidationStatus: invRes.status,
       })
@@ -1359,7 +1528,19 @@ async function main() {
 
     if (sts.valid) {
       console.log(`[AWS STS ACTIVE] Verified caller ${sts.arn} (Account ${sts.accountId})`);
-      const applyCode = runCmd(tf, [`-chdir=${TF_DIR}`, 'apply', '-auto-approve', '-input=false']);
+      const tfApplyArgs = [`-chdir=${TF_DIR}`, 'apply', '-auto-approve', '-input=false'];
+      const syntheticsProbe = await probeSyntheticsScpPermission({
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+        region,
+      });
+      if (syntheticsProbe.scpDenied) {
+        console.warn(
+          `[AWS SCP NOTICE] CloudWatch Synthetics API denied by AWS Organizations SCP (${syntheticsProbe.reason}) — overriding -var=deploy_synthetics_canaries=false so CloudFront, S3, DynamoDB & Lambda deploy cleanly.`
+        );
+        tfApplyArgs.push('-var=deploy_synthetics_canaries=false');
+      }
+      const applyCode = runCmd(tf, tfApplyArgs);
       if (applyCode !== 0) {
         console.error('[TERRAFORM APPLY FAILED] Aborting CloudFront sync.');
         process.exit(applyCode);

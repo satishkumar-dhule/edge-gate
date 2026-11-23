@@ -55,10 +55,8 @@ if [ "$1" = "exec" ]; then
   else
     exec "$CMD" "$@"
   fi
-elif [ "$1" = "run" ] && [ "$2" = "lint" ]; then
-  exec "${workspaceRoot}/node_modules/.bin/tsc" --noEmit
-elif [ "$1" = "run" ] && [ "$2" = "build" ]; then
-  exec "${workspaceRoot}/node_modules/.bin/vite" build
+elif [ "$1" = "install" ] || [ "$1" = "test" ] || [ "$1" = "run" ]; then
+  exec npm "$@"
 else
   exec "${workspaceRoot}/node_modules/.bin/tsx" "$@"
 fi

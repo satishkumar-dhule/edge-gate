@@ -9,6 +9,7 @@
  */
 
 import { AcceptedRule, AppConfig, RunRecord, TestFolder } from '../engine/types';
+import { type SchedulePolicyConfig } from '../engine/scheduledRunsEngine';
 import {
   DEFAULT_TEMPLATE_CONFIG,
   PROPERTY_TEST_SUITES,
@@ -38,14 +39,25 @@ export interface PersistedPortalState {
   customTopologyEdited?: boolean;
   testSuite: TestCaseDefinition[];
   suitesByAppId?: Record<string, TestCaseDefinition[]>;
+  schedulePoliciesByAppId?: Record<string, SchedulePolicyConfig>;
   folders?: TestFolder[];
   runs: RunRecord[];
   readyReports: ReadyReportDefinition[];
   acceptedRules: AcceptedRule[];
   acceptedCookies: string[];
   acceptedVisualTests: string[];
+  acceptedVisualParams?: Record<string, string[]>;
   ignoreAcceptedDiffs: boolean;
   viewMode:
+    | 'synthetics'
+    | 'workbench'
+    | 'config'
+    | 'studio'
+    | 'schedules'
+    | 'fleet'
+    | 'policies'
+    | 'setup'
+    | 'vscode'
     | 'property'
     | 'suites'
     | 'diff'
@@ -65,8 +77,8 @@ export interface PersistedPortalState {
   inspectorTab: 'flow' | 'headers' | 'cookies' | 'image';
 }
 
-export const STORAGE_KEY = 'salesforce-gate-portal-state-v13-live';
-export const CURRENT_VERSION = 13;
+export const STORAGE_KEY = 'salesforce-gate-portal-state-v15-consolidated';
+export const CURRENT_VERSION = 15;
 
 export function isDummySeededRun(r: Partial<RunRecord>): boolean {
   if (!r) return true;
@@ -125,8 +137,9 @@ export function getInitialPortalState(): PersistedPortalState {
       'edge_region',
     ],
     acceptedVisualTests: [],
+    acceptedVisualParams: {},
     ignoreAcceptedDiffs: true,
-    viewMode: 'property',
+    viewMode: 'synthetics',
     activeAppId: DEFAULT_TEMPLATE_CONFIG.properties[0]?.id || 'www',
     focusedTargetId: 'www.prod.staging',
     candidateTarget: 'www.prod.staging',
@@ -157,6 +170,7 @@ export function loadPersistedPortalState(): PersistedPortalState {
     window.localStorage.removeItem('salesforce-gate-portal-state-v10-live');
     window.localStorage.removeItem('salesforce-gate-portal-state-v11-live');
     window.localStorage.removeItem('salesforce-gate-portal-state-v12-live');
+    window.localStorage.removeItem('salesforce-gate-portal-state-v13-live');
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<PersistedPortalState>;
@@ -190,6 +204,10 @@ export function loadPersistedPortalState(): PersistedPortalState {
     return {
       ...fallback,
       ...parsed,
+      acceptedVisualParams:
+        parsed.acceptedVisualParams && typeof parsed.acceptedVisualParams === 'object'
+          ? parsed.acceptedVisualParams
+          : {},
       apps: mergedApps,
       suitesByAppId: mergedSuitesByAppId,
       folders: mergedFolders,

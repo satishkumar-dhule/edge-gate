@@ -532,12 +532,24 @@ resource "aws_iam_role_policy" "synthetics_bedrock_s3_policy" {
         Sid    = "CloudWatchSyntheticsOnDemandTrigger"
         Effect = "Allow"
         Action = [
+          "synthetics:CreateCanary",
+          "synthetics:UpdateCanary",
+          "synthetics:DeleteCanary",
           "synthetics:StartCanary",
+          "synthetics:StopCanary",
           "synthetics:GetCanary",
           "synthetics:GetCanaryRuns",
-          "synthetics:DescribeCanaries"
+          "synthetics:DescribeCanaries",
+          "synthetics:DescribeCanariesLastRun",
+          "synthetics:TagResource"
         ]
         Resource = "*"
+      },
+      {
+        Sid      = "PassSyntheticsExecutionRole"
+        Effect   = "Allow"
+        Action   = ["iam:PassRole"]
+        Resource = [aws_iam_role.synthetics_canary_role.arn]
       }
     ]
   })
@@ -985,6 +997,39 @@ resource "aws_cloudfront_origin_access_control" "portal_oac" {
 }
 
 
+resource "aws_cloudfront_response_headers_policy" "screenshots_cors_cache" {
+  count   = var.deploy_cloudfront_distribution ? 1 : 0
+  name    = "${var.project_name}-screenshots-cors-${var.environment}-${var.aws_region}"
+  comment = "CORS + edge caching headers for instant CloudFront screenshot delivery and canvas pixel-diff heatmaps"
+
+  cors_config {
+    access_control_allow_credentials = false
+    access_control_allow_headers {
+      items = ["*"]
+    }
+    access_control_allow_methods {
+      items = ["GET", "HEAD", "OPTIONS"]
+    }
+    access_control_allow_origins {
+      items = ["*"]
+    }
+    access_control_max_age_sec = 86400
+    origin_override            = true
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "synthetics_cors" {
+  bucket = aws_s3_bucket.synthetics_artifacts.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET", "HEAD"]
+    allowed_origins = ["*"]
+    expose_headers  = ["ETag", "Content-Length", "Content-Type", "Cache-Control"]
+    max_age_seconds = 86400
+  }
+}
+
 resource "aws_cloudfront_distribution" "portal_cdn" {
   count               = var.deploy_cloudfront_distribution && var.deploy_serverless_lambda && var.enable_apigateway_http_api ? 1 : 0
   enabled             = true
@@ -994,7 +1039,7 @@ resource "aws_cloudfront_distribution" "portal_cdn" {
   price_class         = var.cloudfront_price_class
   http_version        = "http2and3"
 
-  # Origin 1: S3 Bucket (React SPA static assets under /portal-ui)
+  # Origin 1: S3 Bucket (React SPA static assets + pre-captured & live Chromium screenshots under /portal-ui)
   origin {
     domain_name              = aws_s3_bucket.synthetics_artifacts.bucket_regional_domain_name
     origin_id                = "S3PortalSpaOrigin"
@@ -1015,7 +1060,7 @@ resource "aws_cloudfront_distribution" "portal_cdn" {
     }
   }
 
-  # Default Behavior: Serve React SPA from S3 with OAC (static screenshots are excluded; live screenshots route to Lambda)
+  # Default Behavior: Serve React SPA from S3 with OAC
   default_cache_behavior {
     allowed_methods        = ["GET", "HEAD", "OPTIONS"]
     cached_methods         = ["GET", "HEAD"]
@@ -1034,28 +1079,29 @@ resource "aws_cloudfront_distribution" "portal_cdn" {
     }
   }
 
-  # Ordered Behavior: Route all /screenshots/* requests directly to Control Plane Lambda (zero CloudFront caching, always live Chromium / verified live S3)
+  # Ordered Behavior: Serve /screenshots/* directly from CloudFront Edge + S3 OAC (instant <50ms edge delivery, CORS enabled, revision-aware via ?v & ?r)
   ordered_cache_behavior {
-    path_pattern           = "/screenshots/*"
-    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
-    cached_methods         = ["GET", "HEAD"]
-    target_origin_id       = "ControlPlaneApiOrigin"
-    viewer_protocol_policy = "redirect-to-https"
-    compress               = true
-    min_ttl                = 0
-    default_ttl            = 0
-    max_ttl                = 0
+    path_pattern               = "/screenshots/*"
+    allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+    cached_methods             = ["GET", "HEAD"]
+    target_origin_id           = "S3PortalSpaOrigin"
+    viewer_protocol_policy     = "redirect-to-https"
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.screenshots_cors_cache[0].id
+    compress                   = false
+    min_ttl                    = 60
+    default_ttl                = 86400
+    max_ttl                    = 31536000
 
     forwarded_values {
-      query_string = true
-      headers      = ["Accept", "Authorization", "Origin"]
+      query_string            = true
+      query_string_cache_keys = ["v", "r"]
       cookies {
         forward = "none"
       }
     }
   }
 
-  # Ordered Behavior: Route all /api/* requests (REST, OpenAPI, MCP, Synthetics, Users) to Lambda
+  # Ordered Behavior: Route all /api/* requests (REST, OpenAPI, MCP, Synthetics, live on-demand /api/v1/screenshots/*) to Lambda
   ordered_cache_behavior {
     path_pattern           = "/api/*"
     allowed_methods        = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]

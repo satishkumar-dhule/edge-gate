@@ -1,6 +1,12 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
+  --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: "Plus Jakarta Sans", "DM Sans", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
   --color-background: var(--bg-background);
   --color-foreground: var(--bg-foreground);
   --color-card: var(--bg-card);
@@ -18,40 +24,72 @@
 }
 
 :root {
-  --bg-background: #f8fafc;
-  --bg-foreground: #09090b;
+  --bg-background: #f5f7fa;
+  --bg-foreground: #0f172a;
   --bg-card: #ffffff;
-  --bg-card-foreground: #09090b;
+  --bg-card-foreground: #0f172a;
   --bg-popover: #ffffff;
-  --bg-popover-foreground: #09090b;
-  --bg-muted: #f1f5f9;
-  --bg-muted-foreground: #52525b;
-  --bg-accent: #f1f5f9;
-  --bg-accent-foreground: #09090b;
-  --bg-border: #e2e8f0;
+  --bg-popover-foreground: #0f172a;
+  --bg-muted: #eef2f6;
+  --bg-muted-foreground: #475569;
+  --bg-accent: #eff6ff;
+  --bg-accent-foreground: #1d4ed8;
+  --bg-border: #dde3ec;
   --bg-input: #cbd5e1;
-  --bg-primary: #09090b;
+  --bg-primary: #1d4ed8;
   --bg-primary-foreground: #ffffff;
 }
 
 .dark {
-  --bg-background: #09090b;
-  --bg-foreground: #f4f4f5;
-  --bg-card: #111113;
-  --bg-card-foreground: #f4f4f5;
-  --bg-popover: #111113;
-  --bg-popover-foreground: #f4f4f5;
-  --bg-muted: #18181b;
-  --bg-muted-foreground: #a1a1aa;
-  --bg-accent: #18181b;
-  --bg-accent-foreground: #f4f4f5;
-  --bg-border: #27272a;
-  --bg-input: #3f3f46;
-  --bg-primary: #f4f4f5;
-  --bg-primary-foreground: #09090b;
+  --bg-background: #090d14;
+  --bg-foreground: #f1f5f9;
+  --bg-card: #0f1622;
+  --bg-card-foreground: #f1f5f9;
+  --bg-popover: #141d2b;
+  --bg-popover-foreground: #f1f5f9;
+  --bg-muted: #182233;
+  --bg-muted-foreground: #94a3b8;
+  --bg-accent: #132847;
+  --bg-accent-foreground: #38bdf8;
+  --bg-border: #1e293b;
+  --bg-input: #334155;
+  --bg-primary: #38bdf8;
+  --bg-primary-foreground: #090d14;
 }
 
-body {
-  background-color: var(--bg-background);
-  color: var(--bg-foreground);
+@layer base {
+  body {
+    background-color: var(--bg-background);
+    color: var(--bg-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  .dark body {
+    letter-spacing: 0.005em;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid var(--bg-primary);
+    outline-offset: 2px;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

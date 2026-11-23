@@ -1,0 +1,564 @@
+{
+  "canarySyncState": {
+    "ak-www-prod-prd": {
+      "canaryName": "ak-www-prod-prd",
+      "targetId": "www.prod.prod",
+      "suiteHash": "928981e1",
+      "syncStatus": "AWS_SPEC_STAGED",
+      "runtimeState": "READY",
+      "lastSyncedAt": "2026-11-19T17:57:17.655Z",
+      "lastAwsMessage": "AWS Synthetics API HTTP 403: User: arn:aws:iam::735234585484:user/user-ujhaeuktkgif is not authorized to perform: synthetics:GetCanary on resource: arn:aws:synthetics:us-east-1:735234585484:canary:ak-www-prod-prd with an explicit deny in a service control policy: arn:aws:organizations::381134089987:policy/o-ddkcxdbdz1/service_control_policy/p-czkwmpoi; Canary spec staged for AWS deploy"
+    },
+    "ak-www-prod-stg": {
+      "canaryName": "ak-www-prod-stg",
+      "targetId": "www.prod.staging",
+      "suiteHash": "928981e1",
+      "syncStatus": "AWS_SPEC_STAGED",
+      "runtimeState": "READY",
+      "lastSyncedAt": "2026-11-19T17:57:19.158Z",
+      "lastAwsMessage": "AWS Synthetics API HTTP 403: User: arn:aws:iam::735234585484:user/user-ujhaeuktkgif is not authorized to perform: synthetics:GetCanary on resource: arn:aws:synthetics:us-east-1:735234585484:canary:ak-www-prod-stg with an explicit deny in a service control policy: arn:aws:organizations::381134089987:policy/o-ddkcxdbdz1/service_control_policy/p-czkwmpoi; Canary spec staged for AWS deploy"
+    },
+    "ak-www-uat-prd": {
+      "canaryName": "ak-www-uat-prd",
+      "targetId": "www.uat.prod",
+      "suiteHash": "928981e1",
+      "syncStatus": "AWS_SPEC_STAGED",
+      "runtimeState": "READY",
+      "lastSyncedAt": "2026-11-19T17:57:19.667Z",
+      "lastAwsMessage": "AWS Synthetics API HTTP 403: User: arn:aws:iam::735234585484:user/user-ujhaeuktkgif is not authorized to perform: synthetics:GetCanary on resource: arn:aws:synthetics:us-east-1:735234585484:canary:ak-www-uat-prd with an explicit deny in a service control policy: arn:aws:organizations::381134089987:policy/o-ddkcxdbdz1/service_control_policy/p-czkwmpoi; Canary spec staged for AWS deploy"
+    },
+    "ak-www-uat-stg": {
+      "canaryName": "ak-www-uat-stg",
+      "targetId": "www.uat.staging",
+      "suiteHash": "928981e1",
+      "syncStatus": "AWS_SPEC_STAGED",
+      "runtimeState": "READY",
+      "lastSyncedAt": "2026-11-19T17:57:20.164Z",
+      "lastAwsMessage": "AWS Synthetics API HTTP 403: User: arn:aws:iam::735234585484:user/user-ujhaeuktkgif is not authorized to perform: synthetics:GetCanary on resource: arn:aws:synthetics:us-east-1:735234585484:canary:ak-www-uat-stg with an explicit deny in a service control policy: arn:aws:organizations::381134089987:policy/o-ddkcxdbdz1/service_control_policy/p-czkwmpoi; Canary spec staged for AWS deploy"
+    },
+    "ak-americas-prod-stg": {
+      "canaryName": "ak-americas-prod-stg",
+      "targetId": "americas.prod.staging",
+      "suiteHash": "0614a079",
+      "syncStatus": "AWS_SPEC_STAGED",
+      "runtimeState": "READY",
+      "lastSyncedAt": "2026-11-22T02:35:49.687Z",
+      "lastAwsMessage": "AWS StartCanary(ak-americas-prod-stg) HTTP 0: getaddrinfo ENOTFOUND synthetics.dummy.amazonaws.com"
+    }
+  },
+  "fanOutBatches": [
+    {
+      "batchId": "fanout-1795316370332-4608d1",
+      "scope": "property-pair",
+      "triggeredBy": "user-tcchhlxprfng@salesforce.com",
+      "startedAt": "2026-11-22T02:59:30.332Z",
+      "completedAt": "2026-11-22T02:59:33.838Z",
+      "status": "COMPLETED",
+      "concurrency": 2,
+      "totalCanaries": 2,
+      "completedCanaries": 2,
+      "failedCanaries": 0,
+      "affectedAppIds": [
+        "www"
+      ],
+      "results": [
+        {
+          "canaryName": "ak-www-prod-prd",
+          "targetId": "www.prod.prod",
+          "appId": "www",
+          "envId": "prod",
+          "network": "prod",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-www-prod-prd) HTTP 0: getaddrinfo ENOTFOUND synthetics.dummy.amazonaws.com",
+          "runKey": "run-www-prod-prod-3-3830",
+          "s3ManifestKey": "runs/www.prod.prod/run-www-prod-prod-3-3830/manifest.json",
+          "passedTests": 7,
+          "failedTests": 5,
+          "totalTests": 12,
+          "durationMs": 3497,
+          "startedAt": "2026-11-22T02:59:30.333Z",
+          "completedAt": "2026-11-22T02:59:33.830Z"
+        },
+        {
+          "canaryName": "ak-www-prod-stg",
+          "targetId": "www.prod.staging",
+          "appId": "www",
+          "envId": "prod",
+          "network": "staging",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-www-prod-stg) HTTP 0: getaddrinfo ENOTFOUND synthetics.dummy.amazonaws.com",
+          "runKey": "run-www-prod-staging-3-3688",
+          "s3ManifestKey": "runs/www.prod.staging/run-www-prod-staging-3-3688/manifest.json",
+          "passedTests": 7,
+          "failedTests": 5,
+          "totalTests": 12,
+          "durationMs": 3339,
+          "startedAt": "2026-11-22T02:59:30.349Z",
+          "completedAt": "2026-11-22T02:59:33.688Z"
+        }
+      ],
+      "propertyVerdicts": [
+        {
+          "appId": "www",
+          "verdict": "NO-GO",
+          "headerDiffs": 1,
+          "cookieDiffs": 13,
+          "visualDiffs": 1,
+          "firstDiffTestId": "T01",
+          "firstDiffTab": "headers"
+        }
+      ]
+    },
+    {
+      "batchId": "fanout-1795316142751-5f6515",
+      "scope": "property-pair",
+      "triggeredBy": "user-tcchhlxprfng@salesforce.com",
+      "startedAt": "2026-11-22T02:55:42.751Z",
+      "completedAt": "2026-11-22T02:55:45.085Z",
+      "status": "COMPLETED",
+      "concurrency": 2,
+      "totalCanaries": 2,
+      "completedCanaries": 2,
+      "failedCanaries": 0,
+      "affectedAppIds": [
+        "help"
+      ],
+      "results": [
+        {
+          "canaryName": "ak-help-prod-prd",
+          "targetId": "help.prod.prod",
+          "appId": "help",
+          "envId": "prod",
+          "network": "prod",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-help-prod-prd) HTTP 0: getaddrinfo ENOTFOUND synthetics.dummy.amazonaws.com",
+          "runKey": "run-help-prod-prod-3-4998",
+          "s3ManifestKey": "runs/help.prod.prod/run-help-prod-prod-3-4998/manifest.json",
+          "passedTests": 3,
+          "failedTests": 5,
+          "totalTests": 8,
+          "durationMs": 2247,
+          "startedAt": "2026-11-22T02:55:42.751Z",
+          "completedAt": "2026-11-22T02:55:44.998Z"
+        },
+        {
+          "canaryName": "ak-help-prod-stg",
+          "targetId": "help.prod.staging",
+          "appId": "help",
+          "envId": "prod",
+          "network": "staging",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-help-prod-stg) HTTP 0: getaddrinfo ENOTFOUND synthetics.dummy.amazonaws.com",
+          "runKey": "run-help-prod-staging-3-5073",
+          "s3ManifestKey": "runs/help.prod.staging/run-help-prod-staging-3-5073/manifest.json",
+          "passedTests": 3,
+          "failedTests": 5,
+          "totalTests": 8,
+          "durationMs": 2321,
+          "startedAt": "2026-11-22T02:55:42.753Z",
+          "completedAt": "2026-11-22T02:55:45.074Z"
+        }
+      ],
+      "propertyVerdicts": [
+        {
+          "appId": "help",
+          "verdict": "NO-GO",
+          "headerDiffs": 0,
+          "cookieDiffs": 2,
+          "visualDiffs": 2,
+          "firstDiffTestId": "T01",
+          "firstDiffTab": "image"
+        }
+      ]
+    },
+    {
+      "batchId": "fanout-1795315833167-54259d",
+      "scope": "property-pair",
+      "triggeredBy": "user-tcchhlxprfng@salesforce.com",
+      "startedAt": "2026-11-22T02:50:33.167Z",
+      "completedAt": "2026-11-22T02:50:34.408Z",
+      "status": "COMPLETED",
+      "concurrency": 2,
+      "totalCanaries": 2,
+      "completedCanaries": 2,
+      "failedCanaries": 0,
+      "affectedAppIds": [
+        "americas"
+      ],
+      "results": [
+        {
+          "canaryName": "ak-americas-prod-prd",
+          "targetId": "americas.prod.prod",
+          "appId": "americas",
+          "envId": "prod",
+          "network": "prod",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-americas-prod-prd) HTTP 0: getaddrinfo ENOTFOUND synthetics.dummy.amazonaws.com",
+          "runKey": "run-americas-prod-prod-4-4280",
+          "s3ManifestKey": "runs/americas.prod.prod/run-americas-prod-prod-4-4280/manifest.json",
+          "passedTests": 8,
+          "failedTests": 0,
+          "totalTests": 8,
+          "durationMs": 1113,
+          "startedAt": "2026-11-22T02:50:33.167Z",
+          "completedAt": "2026-11-22T02:50:34.280Z"
+        },
+        {
+          "canaryName": "ak-americas-prod-stg",
+          "targetId": "americas.prod.staging",
+          "appId": "americas",
+          "envId": "prod",
+          "network": "staging",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-americas-prod-stg) HTTP 0: getaddrinfo ENOTFOUND synthetics.dummy.amazonaws.com",
+          "runKey": "run-americas-prod-staging-5-4398",
+          "s3ManifestKey": "runs/americas.prod.staging/run-americas-prod-staging-5-4398/manifest.json",
+          "passedTests": 8,
+          "failedTests": 0,
+          "totalTests": 8,
+          "durationMs": 1231,
+          "startedAt": "2026-11-22T02:50:33.168Z",
+          "completedAt": "2026-11-22T02:50:34.399Z"
+        }
+      ],
+      "propertyVerdicts": [
+        {
+          "appId": "americas",
+          "verdict": "NO-GO",
+          "headerDiffs": 1,
+          "cookieDiffs": 16,
+          "visualDiffs": 1,
+          "firstDiffTestId": "T01",
+          "firstDiffTab": "headers"
+        }
+      ]
+    },
+    {
+      "batchId": "fanout-1795315829533-c40524",
+      "scope": "property-pair",
+      "triggeredBy": "user-tcchhlxprfng@salesforce.com",
+      "startedAt": "2026-11-22T02:50:29.533Z",
+      "completedAt": "2026-11-22T02:50:31.709Z",
+      "status": "COMPLETED",
+      "concurrency": 2,
+      "totalCanaries": 2,
+      "completedCanaries": 2,
+      "failedCanaries": 0,
+      "affectedAppIds": [
+        "partners"
+      ],
+      "results": [
+        {
+          "canaryName": "ak-partners-prod-prd",
+          "targetId": "partners.prod.prod",
+          "appId": "partners",
+          "envId": "prod",
+          "network": "prod",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-partners-prod-prd) HTTP 0: getaddrinfo ENOTFOUND synthetics.dummy.amazonaws.com",
+          "runKey": "run-partners-prod-prod-4-1553",
+          "s3ManifestKey": "runs/partners.prod.prod/run-partners-prod-prod-4-1553/manifest.json",
+          "passedTests": 1,
+          "failedTests": 7,
+          "totalTests": 8,
+          "durationMs": 2020,
+          "startedAt": "2026-11-22T02:50:29.533Z",
+          "completedAt": "2026-11-22T02:50:31.553Z"
+        },
+        {
+          "canaryName": "ak-partners-prod-stg",
+          "targetId": "partners.prod.staging",
+          "appId": "partners",
+          "envId": "prod",
+          "network": "staging",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-partners-prod-stg) HTTP 0: getaddrinfo ENOTFOUND synthetics.dummy.amazonaws.com",
+          "runKey": "run-partners-prod-staging-4-1698",
+          "s3ManifestKey": "runs/partners.prod.staging/run-partners-prod-staging-4-1698/manifest.json",
+          "passedTests": 1,
+          "failedTests": 7,
+          "totalTests": 8,
+          "durationMs": 2163,
+          "startedAt": "2026-11-22T02:50:29.535Z",
+          "completedAt": "2026-11-22T02:50:31.698Z"
+        }
+      ],
+      "propertyVerdicts": [
+        {
+          "appId": "partners",
+          "verdict": "NO-GO",
+          "headerDiffs": 1,
+          "cookieDiffs": 2,
+          "visualDiffs": 1,
+          "firstDiffTestId": "T01",
+          "firstDiffTab": "headers"
+        }
+      ]
+    },
+    {
+      "batchId": "fanout-1795314236627-de67f4",
+      "scope": "property-pair",
+      "triggeredBy": "user-tcchhlxprfng@salesforce.com",
+      "startedAt": "2026-11-22T02:23:56.627Z",
+      "completedAt": "2026-11-22T02:23:58.344Z",
+      "status": "COMPLETED",
+      "concurrency": 2,
+      "totalCanaries": 2,
+      "completedCanaries": 2,
+      "failedCanaries": 0,
+      "affectedAppIds": [
+        "americas"
+      ],
+      "results": [
+        {
+          "canaryName": "ak-americas-prod-prd",
+          "targetId": "americas.prod.prod",
+          "appId": "americas",
+          "envId": "prod",
+          "network": "prod",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-americas-prod-prd) HTTP 0: getaddrinfo ENOTFOUND synthetics.dummy.amazonaws.com",
+          "runKey": "run-americas-prod-prod-3-8318",
+          "s3ManifestKey": "runs/americas.prod.prod/run-americas-prod-prod-3-8318/manifest.json",
+          "passedTests": 8,
+          "failedTests": 0,
+          "totalTests": 8,
+          "durationMs": 1691,
+          "startedAt": "2026-11-22T02:23:56.627Z",
+          "completedAt": "2026-11-22T02:23:58.318Z"
+        },
+        {
+          "canaryName": "ak-americas-prod-stg",
+          "targetId": "americas.prod.staging",
+          "appId": "americas",
+          "envId": "prod",
+          "network": "staging",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-americas-prod-stg) HTTP 0: getaddrinfo ENOTFOUND synthetics.dummy.amazonaws.com",
+          "runKey": "run-americas-prod-staging-3-8333",
+          "s3ManifestKey": "runs/americas.prod.staging/run-americas-prod-staging-3-8333/manifest.json",
+          "passedTests": 8,
+          "failedTests": 0,
+          "totalTests": 8,
+          "durationMs": 1704,
+          "startedAt": "2026-11-22T02:23:56.629Z",
+          "completedAt": "2026-11-22T02:23:58.333Z"
+        }
+      ],
+      "propertyVerdicts": [
+        {
+          "appId": "americas",
+          "verdict": "NO-GO",
+          "headerDiffs": 1,
+          "cookieDiffs": 12,
+          "visualDiffs": 1,
+          "firstDiffTestId": "T01",
+          "firstDiffTab": "headers"
+        }
+      ]
+    },
+    {
+      "batchId": "fanout-1795314013614-0cbeca",
+      "scope": "property-pair",
+      "triggeredBy": "user-tcchhlxprfng@salesforce.com",
+      "startedAt": "2026-11-22T02:20:13.614Z",
+      "completedAt": "2026-11-22T02:20:15.738Z",
+      "status": "COMPLETED",
+      "concurrency": 2,
+      "totalCanaries": 2,
+      "completedCanaries": 2,
+      "failedCanaries": 0,
+      "affectedAppIds": [
+        "partners"
+      ],
+      "results": [
+        {
+          "canaryName": "ak-partners-prod-prd",
+          "targetId": "partners.prod.prod",
+          "appId": "partners",
+          "envId": "prod",
+          "network": "prod",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-partners-prod-prd) HTTP 0: getaddrinfo ENOTFOUND synthetics.dummy.amazonaws.com",
+          "runKey": "run-partners-prod-prod-3-5576",
+          "s3ManifestKey": "runs/partners.prod.prod/run-partners-prod-prod-3-5576/manifest.json",
+          "passedTests": 1,
+          "failedTests": 7,
+          "totalTests": 8,
+          "durationMs": 1961,
+          "startedAt": "2026-11-22T02:20:13.615Z",
+          "completedAt": "2026-11-22T02:20:15.576Z"
+        },
+        {
+          "canaryName": "ak-partners-prod-stg",
+          "targetId": "partners.prod.staging",
+          "appId": "partners",
+          "envId": "prod",
+          "network": "staging",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-partners-prod-stg) HTTP 0: getaddrinfo ENOTFOUND synthetics.dummy.amazonaws.com",
+          "runKey": "run-partners-prod-staging-3-5726",
+          "s3ManifestKey": "runs/partners.prod.staging/run-partners-prod-staging-3-5726/manifest.json",
+          "passedTests": 1,
+          "failedTests": 7,
+          "totalTests": 8,
+          "durationMs": 2107,
+          "startedAt": "2026-11-22T02:20:13.619Z",
+          "completedAt": "2026-11-22T02:20:15.726Z"
+        }
+      ],
+      "propertyVerdicts": [
+        {
+          "appId": "partners",
+          "verdict": "NO-GO",
+          "headerDiffs": 1,
+          "cookieDiffs": 2,
+          "visualDiffs": 1,
+          "firstDiffTestId": "T01",
+          "firstDiffTab": "headers"
+        }
+      ]
+    },
+    {
+      "batchId": "fanout-1795111203156-6c6e79",
+      "scope": "property-pair",
+      "triggeredBy": "user-ujhaeuktkgif@salesforce.com",
+      "startedAt": "2026-11-19T18:00:03.156Z",
+      "completedAt": "2026-11-19T18:00:07.410Z",
+      "status": "COMPLETED",
+      "concurrency": 2,
+      "totalCanaries": 2,
+      "completedCanaries": 2,
+      "failedCanaries": 0,
+      "affectedAppIds": [
+        "www"
+      ],
+      "results": [
+        {
+          "canaryName": "ak-www-prod-prd",
+          "targetId": "www.prod.prod",
+          "appId": "www",
+          "envId": "prod",
+          "network": "prod",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-www-prod-prd) HTTP 403: User: arn:aws:iam::735234585484:user/user-ujhaeuktkgif is not authorized to perform: synthetics:StartCanary on resource: arn:aws:synthetics:us-east-1:735234585484:canary:ak-www-prod-prd with an explicit deny in a service control policy: arn:aws:organizations::381134089987:policy/o-ddkcxdbdz1/service_control_policy/p-czkwmpoi",
+          "runKey": "run-www-prod-prod-4-7402",
+          "s3ManifestKey": "runs/www.prod.prod/run-www-prod-prod-4-7402/manifest.json",
+          "passedTests": 7,
+          "failedTests": 5,
+          "totalTests": 12,
+          "durationMs": 4246,
+          "startedAt": "2026-11-19T18:00:03.156Z",
+          "completedAt": "2026-11-19T18:00:07.402Z"
+        },
+        {
+          "canaryName": "ak-www-prod-stg",
+          "targetId": "www.prod.staging",
+          "appId": "www",
+          "envId": "prod",
+          "network": "staging",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-www-prod-stg) HTTP 403: User: arn:aws:iam::735234585484:user/user-ujhaeuktkgif is not authorized to perform: synthetics:StartCanary on resource: arn:aws:synthetics:us-east-1:735234585484:canary:ak-www-prod-stg with an explicit deny in a service control policy: arn:aws:organizations::381134089987:policy/o-ddkcxdbdz1/service_control_policy/p-czkwmpoi",
+          "runKey": "run-www-prod-staging-4-7179",
+          "s3ManifestKey": "runs/www.prod.staging/run-www-prod-staging-4-7179/manifest.json",
+          "passedTests": 7,
+          "failedTests": 5,
+          "totalTests": 12,
+          "durationMs": 4021,
+          "startedAt": "2026-11-19T18:00:03.158Z",
+          "completedAt": "2026-11-19T18:00:07.179Z"
+        }
+      ],
+      "propertyVerdicts": [
+        {
+          "appId": "www",
+          "verdict": "NO-GO",
+          "headerDiffs": 1,
+          "cookieDiffs": 11,
+          "visualDiffs": 1,
+          "firstDiffTestId": "T01",
+          "firstDiffTab": "headers"
+        }
+      ]
+    },
+    {
+      "batchId": "fanout-1795110975563-2c237c",
+      "scope": "property-pair",
+      "triggeredBy": "user-ujhaeuktkgif@salesforce.com",
+      "startedAt": "2026-11-19T17:56:15.563Z",
+      "completedAt": "2026-11-19T17:56:18.671Z",
+      "status": "COMPLETED",
+      "concurrency": 2,
+      "totalCanaries": 2,
+      "completedCanaries": 2,
+      "failedCanaries": 0,
+      "affectedAppIds": [
+        "www"
+      ],
+      "results": [
+        {
+          "canaryName": "ak-www-prod-prd",
+          "targetId": "www.prod.prod",
+          "appId": "www",
+          "envId": "prod",
+          "network": "prod",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-www-prod-prd) HTTP 403: User: arn:aws:iam::735234585484:user/user-ujhaeuktkgif is not authorized to perform: synthetics:StartCanary on resource: arn:aws:synthetics:us-east-1:735234585484:canary:ak-www-prod-prd with an explicit deny in a service control policy: arn:aws:organizations::381134089987:policy/o-ddkcxdbdz1/service_control_policy/p-czkwmpoi",
+          "runKey": "run-www-prod-prod-3-8651",
+          "s3ManifestKey": "runs/www.prod.prod/run-www-prod-prod-3-8651/manifest.json",
+          "passedTests": 7,
+          "failedTests": 5,
+          "totalTests": 12,
+          "durationMs": 3088,
+          "startedAt": "2026-11-19T17:56:15.563Z",
+          "completedAt": "2026-11-19T17:56:18.651Z"
+        },
+        {
+          "canaryName": "ak-www-prod-stg",
+          "targetId": "www.prod.staging",
+          "appId": "www",
+          "envId": "prod",
+          "network": "staging",
+          "status": "COMPLETED",
+          "awsStartDispatched": false,
+          "awsMessage": "AWS StartCanary(ak-www-prod-stg) HTTP 403: User: arn:aws:iam::735234585484:user/user-ujhaeuktkgif is not authorized to perform: synthetics:StartCanary on resource: arn:aws:synthetics:us-east-1:735234585484:canary:ak-www-prod-stg with an explicit deny in a service control policy: arn:aws:organizations::381134089987:policy/o-ddkcxdbdz1/service_control_policy/p-czkwmpoi",
+          "runKey": "run-www-prod-staging-3-8631",
+          "s3ManifestKey": "runs/www.prod.staging/run-www-prod-staging-3-8631/manifest.json",
+          "passedTests": 7,
+          "failedTests": 5,
+          "totalTests": 12,
+          "durationMs": 3067,
+          "startedAt": "2026-11-19T17:56:15.565Z",
+          "completedAt": "2026-11-19T17:56:18.632Z"
+        }
+      ],
+      "propertyVerdicts": [
+        {
+          "appId": "www",
+          "verdict": "NO-GO",
+          "headerDiffs": 1,
+          "cookieDiffs": 12,
+          "visualDiffs": 1,
+          "firstDiffTestId": "T01",
+          "firstDiffTab": "headers"
+        }
+      ]
+    }
+  ],
+  "updatedAt": "2026-11-22T02:59:33.838Z"
+}

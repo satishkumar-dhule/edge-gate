@@ -10,6 +10,7 @@ import {
   TestCaseDefinition,
   resolvePropertyHostname,
 } from '../config/template.config';
+import { validateScriptSyntaxQuick } from './scriptTemplates';
 
 export interface CatchpointTestTypeMeta {
   type: CatchpointTestType;
@@ -32,6 +33,7 @@ export interface CatchpointTestTypeMeta {
     | 'port'
     | 'bgp'
     | 'transaction'
+    | 'script'
     | 'assertions'
   >;
   description: string;
@@ -66,7 +68,7 @@ export const CATCHPOINT_TEST_TYPES: CatchpointTestTypeMeta[] = [
     defaultPort: 443,
     defaultExpectedStatus: '200',
     supportsVisualScreenshot: true,
-    configSections: ['http', 'headers', 'assertions'],
+    configSections: ['http', 'headers', 'script', 'assertions'],
     description:
       'Full headless Chromium page load with DOM rendering, Core Web Vitals (LCP/INP/CLS), waterfall, headers, cookies, and 1280×760 visual capture.',
   },
@@ -82,7 +84,7 @@ export const CATCHPOINT_TEST_TYPES: CatchpointTestTypeMeta[] = [
     defaultPort: 443,
     defaultExpectedStatus: '200',
     supportsVisualScreenshot: true,
-    configSections: ['http', 'headers', 'assertions'],
+    configSections: ['http', 'headers', 'script', 'assertions'],
     description:
       'Responsive mobile viewport synthetic check with touch User-Agent, mobile LCP/CLS thresholds, and layout screenshot.',
   },
@@ -98,7 +100,7 @@ export const CATCHPOINT_TEST_TYPES: CatchpointTestTypeMeta[] = [
     defaultPort: 443,
     defaultExpectedStatus: '200',
     supportsVisualScreenshot: true,
-    configSections: ['http', 'headers', 'body', 'assertions'],
+    configSections: ['http', 'headers', 'body', 'script', 'assertions'],
     description:
       'Single-request HTTP(S) probe measuring DNS, TCP, TLS, TTFB, redirect hops, cacheability headers, and Set-Cookie parity without JS overhead.',
   },
@@ -114,7 +116,7 @@ export const CATCHPOINT_TEST_TYPES: CatchpointTestTypeMeta[] = [
     defaultPort: 443,
     defaultExpectedStatus: '200',
     supportsVisualScreenshot: true,
-    configSections: ['http', 'transaction', 'assertions'],
+    configSections: ['http', 'transaction', 'script', 'assertions'],
     description:
       'Recorded browser journey playback with frame capture, layout shift validation, and Bedrock AI visual diff.',
   },
@@ -146,9 +148,9 @@ export const CATCHPOINT_TEST_TYPES: CatchpointTestTypeMeta[] = [
     defaultPort: 443,
     defaultExpectedStatus: '200',
     supportsVisualScreenshot: true,
-    configSections: ['http', 'headers', 'transaction', 'assertions'],
+    configSections: ['http', 'headers', 'transaction', 'script', 'assertions'],
     description:
-      'Multi-step scripted browser user flow (open, type, click, waitForSelector, assertText) for login, checkout, and lead forms.',
+      'Multi-step scripted browser user flow (open, type, click, waitForSelector, assertText) or custom Playwright Chromium JS/TS script.',
   },
   {
     type: 'transaction-selenium',
@@ -162,7 +164,7 @@ export const CATCHPOINT_TEST_TYPES: CatchpointTestTypeMeta[] = [
     defaultPort: 443,
     defaultExpectedStatus: '200',
     supportsVisualScreenshot: true,
-    configSections: ['http', 'headers', 'transaction', 'assertions'],
+    configSections: ['http', 'headers', 'transaction', 'script', 'assertions'],
     description:
       'Catchpoint Selenium/WebDriver multi-step script for authenticated customer journeys and form submissions.',
   },
@@ -178,9 +180,9 @@ export const CATCHPOINT_TEST_TYPES: CatchpointTestTypeMeta[] = [
     defaultPort: 443,
     defaultExpectedStatus: '200',
     supportsVisualScreenshot: true,
-    configSections: ['http', 'headers', 'body', 'transaction', 'assertions'],
+    configSections: ['http', 'headers', 'body', 'transaction', 'script', 'assertions'],
     description:
-      'HTTP REST, GraphQL, or SOAP XML endpoint monitor with custom method, headers, payload body, and response assertions.',
+      'HTTP REST, GraphQL, or SOAP XML endpoint monitor with custom method, headers, payload body, script checks, and assertions.',
   },
   {
     type: 'grpc',
@@ -440,19 +442,19 @@ export const CATCHPOINT_TEST_TYPES: CatchpointTestTypeMeta[] = [
   },
   {
     type: 'custom',
-    label: 'Custom Monitor / Node Script',
+    label: 'Custom Monitor / Node & Playwright Script',
     shortLabel: 'Custom Script',
     family: 'infra',
     familyLabel: 'Infra, Mail & RUM',
-    defaultProtocol: 'Node / HTTP',
+    defaultProtocol: 'Playwright / Node',
     defaultMethod: 'GET',
-    defaultMonitor: 'Custom Prober',
+    defaultMonitor: 'Scriptable Runner',
     defaultPort: 443,
     defaultExpectedStatus: '200',
     supportsVisualScreenshot: true,
-    configSections: ['http', 'headers', 'body', 'assertions'],
+    configSections: ['http', 'headers', 'body', 'transaction', 'script', 'assertions'],
     description:
-      'Flexible synthetic endpoint or custom Node script test integrated with HTTP flow, cookies, and visual gate.',
+      'Custom Playwright, Puppeteer, Catchpoint, k6, Selenium, or Node/Fetch test script integrated with HTTP flow and visual gate.',
   },
 ];
 
@@ -651,6 +653,13 @@ export function validateTestDraft(draft: Partial<TestCaseDefinition>): {
     draft.slaWarningMs > draft.slaCriticalMs
   ) {
     errors.slaCriticalMs = 'Critical SLA threshold must be ≥ Warning threshold';
+  }
+
+  if (draft.customScript?.trim()) {
+    const scriptCheck = validateScriptSyntaxQuick(draft.customScript);
+    if (!scriptCheck.valid && scriptCheck.error) {
+      errors.customScript = scriptCheck.error;
+    }
   }
 
   return {

@@ -191,6 +191,26 @@ export function writeWorkspaceFile(
   };
 }
 
+export function deleteWorkspaceFile(
+  rootDir: string,
+  rawPath: string
+): { deleted: boolean; path: string } {
+  const check = sanitizeWorkspacePath(rawPath);
+  if (!check.valid) {
+    throw new Error(check.reason || 'Invalid workspace path');
+  }
+  const absPath = resolveWithinRoot(rootDir, check.normalized);
+  if (!fs.existsSync(absPath)) {
+    throw new Error(`File not found: ${check.normalized}`);
+  }
+  const stat = fs.statSync(absPath);
+  if (!stat.isFile()) {
+    throw new Error(`Only files can be deleted from the editor: ${check.normalized}`);
+  }
+  fs.unlinkSync(absPath);
+  return { deleted: true, path: check.normalized };
+}
+
 export function searchWorkspaceFiles(
   rootDir: string,
   rawQuery: string

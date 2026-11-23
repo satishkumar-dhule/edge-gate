@@ -425,15 +425,18 @@ export function applyRulesToItem(
       };
     });
 
-    // Recompute visual verdict based on remaining unaccepted differences
+    // Recompute visual verdict based on remaining unaccepted differences (excluding 'match' informational zones)
+    const actionableDifferences = updatedDifferences.filter(
+      (d) => d.severity !== 'match'
+    );
     const unaccepted = ignoreAccepted
-      ? updatedDifferences.filter((d) => !d.accepted)
-      : updatedDifferences;
+      ? actionableDifferences.filter((d) => !d.accepted)
+      : actionableDifferences;
     let newVerdict = updatedVisual.verdict;
     if (updatedVisual.verdict !== 'error') {
       if (isVisualTestAccepted && ignoreAccepted) {
         newVerdict = 'same';
-      } else if (updatedDifferences.length > 0) {
+      } else if (actionableDifferences.length > 0) {
         if (unaccepted.length === 0) {
           newVerdict = 'same';
         } else {
@@ -448,8 +451,8 @@ export function applyRulesToItem(
       differences: updatedDifferences,
       verdict: newVerdict,
       acceptedRulesAppliedCount:
-        updatedDifferences.filter((d) => d.accepted).length +
-        (isVisualTestAccepted && updatedDifferences.length === 0 ? 1 : 0),
+        actionableDifferences.filter((d) => d.accepted).length +
+        (isVisualTestAccepted && actionableDifferences.length === 0 ? 1 : 0),
     };
   }
 
@@ -754,6 +757,8 @@ export interface CurlOptions {
 export function generateReproduceCurl(result: TestResult, options: CurlOptions = {}): string {
   const lines: string[] = [];
   const edgeIp = options.stagingEdgeIp || result.stagingEdgeIp;
+  const method = String(result.httpMethod || 'GET').toUpperCase();
+  const safeMethod = method === 'QUERY' ? 'GET' : method;
 
   let host = options.resolvedHost;
   let port = '443';
@@ -767,6 +772,9 @@ export function generateReproduceCurl(result: TestResult, options: CurlOptions =
 
   lines.push('# -------------------------------------------------------------------');
   lines.push(`# Reproduce check for: ${result.name} (ID: ${result.id})`);
+  if (result.testType) {
+    lines.push(`# Monitor Type: ${result.testType} (${safeMethod})`);
+  }
   if (result.stagingEdgeIp) {
     lines.push(`# Staging Edge IP: ${result.stagingEdgeIp}`);
   }
@@ -778,7 +786,7 @@ export function generateReproduceCurl(result: TestResult, options: CurlOptions =
   }
   lines.push('# -------------------------------------------------------------------');
 
-  const curlParts: string[] = ['curl -sS -v -X GET'];
+  const curlParts: string[] = [`curl -sS -v -X ${safeMethod}`];
 
   // Add --resolve if staging edge IP is available
   if (edgeIp && host) {
@@ -788,6 +796,30 @@ export function generateReproduceCurl(result: TestResult, options: CurlOptions =
   // Akamai Pragma headers (FR-EXEC-4)
   curlParts.push('-H "Pragma: akamai-x-cache-on, akamai-x-cache-remote-on, akamai-x-check-cacheable, akamai-x-get-cache-key, akamai-x-get-true-cache-key, akamai-x-get-request-id"');
   curlParts.push('-H "User-Agent: Akamai-Synthetics-Runner/2.4 (ReleaseGate; StagingCheck)"');
+
+  // Include non-secret custom headers (never leak Authorization, Cookie, x-api-key, or tokens)
+  const secretKeys = new Set([
+    'authorization',
+    'proxy-authorization',
+    'cookie',
+    'set-cookie',
+    'x-api-key',
+    'x-auth-token',
+    'x-access-token',
+  ]);
+  if (result.requestHeadersSent) {
+    for (const [hKey, hVal] of Object.entries(result.requestHeadersSent)) {
+      if (secretKeys.has(hKey.toLowerCase())) continue;
+      if (hVal === '***REDACTED***') continue;
+      const safeVal = String(hVal).replace(/"/g, '\\"');
+      curlParts.push(`-H "${hKey}: ${safeVal}"`);
+    }
+  }
+
+  if (result.requestBodySent && safeMethod !== 'GET' && safeMethod !== 'HEAD') {
+    const escapedBody = result.requestBodySent.replace(/'/g, `'\\''`).replace(/\n/g, ' ');
+    curlParts.push(`-d '${escapedBody}'`);
+  }
 
   // URL (escaped)
   curlParts.push(`"${result.url}"`);

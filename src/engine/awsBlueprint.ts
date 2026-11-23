@@ -18,6 +18,7 @@ import {
   resolvePropertyHostname,
 } from '../config/template.config';
 import {
+  buildItemizedVisualAnalysis,
   describeVisualDiffLogically,
   type VisualZoneMetrics,
 } from './pixelDiff';
@@ -66,9 +67,15 @@ export interface NovaLiteJudgeResponse {
   affectedArea?: string;
   shortCallout?: string;
   differences: {
+    id?: string;
     region: string;
     description: string;
-    severity: 'minor' | 'different';
+    severity: 'minor' | 'different' | 'major' | 'match';
+    stagingObservation?: string;
+    prodObservation?: string;
+    impact?: string;
+    zoneDeltaPct?: number;
+    box?: { x: number; y: number; w: number; h: number };
   }[];
   evaluatedAt: string;
 }
@@ -83,9 +90,9 @@ export function evaluateNovaLiteVisualDiff(
   req: NovaLiteJudgeRequest,
   config: TemplateConfig = DEFAULT_TEMPLATE_CONFIG
 ): NovaLiteJudgeResponse {
-  const hasHttpError =
-    (typeof req.candidateStatus === 'number' && req.candidateStatus >= 400) ||
-    (typeof req.baselineStatus === 'number' && req.baselineStatus >= 400);
+  const candCode = typeof req.candidateStatus === 'number' ? req.candidateStatus : 200;
+  const baseCode = typeof req.baselineStatus === 'number' ? req.baselineStatus : 200;
+  const hasHttpError = (candCode >= 400 || baseCode >= 400) && candCode !== baseCode;
   const deltaPct =
     req.pixelDiffPercent !== undefined
       ? hasHttpError
@@ -94,7 +101,7 @@ export function evaluateNovaLiteVisualDiff(
       : hasHttpError
       ? 94.8
       : 0.0;
-  const logical = describeVisualDiffLogically({
+  const logicalInput = {
     pixelDiffPercent: deltaPct,
     changedBox: req.changedBox ?? (hasHttpError ? { x: 0, y: 0, w: 100, h: 100 } : null),
     zones: req.zones ?? null,
@@ -104,7 +111,9 @@ export function evaluateNovaLiteVisualDiff(
     url: req.url,
     candidateStatus: req.candidateStatus,
     baselineStatus: req.baselineStatus,
-  });
+  };
+  const logical = describeVisualDiffLogically(logicalInput);
+  const itemized = buildItemizedVisualAnalysis(logicalInput);
 
   if (deltaPct > 0.1 || hasHttpError) {
     return {
@@ -118,13 +127,22 @@ export function evaluateNovaLiteVisualDiff(
       summary: `AWS Bedrock ${config.infrastructure.visualJudgeModel}: ${logical.summary}`,
       affectedArea: logical.affectedArea,
       shortCallout: logical.shortCallout,
-      differences: [
-        {
-          region: logical.affectedArea,
-          description: logical.shortCallout,
-          severity: deltaPct > 5.0 || hasHttpError ? 'different' : 'minor',
-        },
-      ],
+      differences: itemized.map((item) => ({
+        id: item.id,
+        region: item.region,
+        description: item.description,
+        severity:
+          item.severity === 'major'
+            ? 'different'
+            : item.severity === 'minor'
+            ? 'minor'
+            : 'match',
+        stagingObservation: item.stagingObservation,
+        prodObservation: item.prodObservation,
+        impact: item.impact,
+        zoneDeltaPct: item.zoneDeltaPct,
+        box: item.box,
+      })),
       evaluatedAt: new Date().toISOString(),
     };
   }
@@ -240,20 +258,20 @@ export function getOpenApiEndpointCatalog(
       method: 'POST',
       path: '/api/v1/mcp/rpc',
       tag: 'MCP JSON-RPC',
-      summary: 'Execute MCP Server JSON-RPC 2.0 Tool Call',
+      summary: 'Execute MCP 2025-03-26 JSON-RPC 2.0 Server Request',
       description:
-        'Executes Model Context Protocol tools (`list_akamai_properties`, `run_aws_synthetics_suite`, `compare_akamai_runs`, `evaluate_visual_diff_nova_lite`, `get_user_stats`).',
+        'Primary Model Context Protocol (2025-03-26) endpoint supporting `initialize`, `tools/list`, `tools/call` (`get_fleet_status`, `get_property_gate`, `inspect_check_evidence`, `get_curl_reproduction`, `rerun_check`, `run_live_gate`, `evaluate_visual_diff_nova_lite`, `run_gate_plugin_pipeline`, `manage_test_suite`), `resources/read`, and `prompts/get`.',
       sampleBody: {
         jsonrpc: '2.0',
         id: 101,
         method: 'tools/call',
         params: {
-          name: 'evaluate_visual_diff_nova_lite',
+          name: 'get_property_gate',
           arguments: {
-            testId: 'T03',
-            model: config.infrastructure.visualJudgeModel,
+            appId: firstApp,
             candidateTarget: `${firstApp}.prod.staging`,
             baselineTarget: `${firstApp}.prod.prod`,
+            ignoreAcceptedDiffs: true,
           },
         },
       },
@@ -928,6 +946,21 @@ resource "aws_cloudfront_origin_access_control" "portal_oac" {
 }
 
 
+resource "aws_cloudfront_response_headers_policy" "screenshots_cors_cache" {
+  count   = var.deploy_cloudfront_distribution ? 1 : 0
+  name    = "akamai-gate-screenshots-cors-\${var.environment}"
+  comment = "CORS + edge caching headers for instant CloudFront screenshot delivery"
+
+  cors_config {
+    access_control_allow_credentials = false
+    access_control_allow_headers { items = ["*"] }
+    access_control_allow_methods { items = ["GET", "HEAD", "OPTIONS"] }
+    access_control_allow_origins { items = ["*"] }
+    access_control_max_age_sec = 86400
+    origin_override            = true
+  }
+}
+
 resource "aws_cloudfront_distribution" "portal_cdn" {
   count               = var.deploy_cloudfront_distribution && var.deploy_serverless_lambda ? 1 : 0
   enabled             = true
@@ -964,17 +997,19 @@ resource "aws_cloudfront_distribution" "portal_cdn" {
   }
 
   ordered_cache_behavior {
-    path_pattern           = "/screenshots/*"
-    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
-    cached_methods         = ["GET", "HEAD"]
-    target_origin_id       = "ControlPlaneApiOrigin"
-    viewer_protocol_policy = "redirect-to-https"
-    min_ttl                = 0
-    default_ttl            = 0
-    max_ttl                = 0
+    path_pattern               = "/screenshots/*"
+    allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+    cached_methods             = ["GET", "HEAD"]
+    target_origin_id           = "S3PortalSpaOrigin"
+    viewer_protocol_policy     = "redirect-to-https"
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.screenshots_cors_cache[0].id
+    compress                   = false
+    min_ttl                    = 60
+    default_ttl                = 86400
+    max_ttl                    = 31536000
     forwarded_values {
-      query_string = true
-      headers      = ["Accept", "Authorization", "Origin"]
+      query_string            = true
+      query_string_cache_keys = ["v", "r"]
       cookies { forward = "none" }
     }
   }

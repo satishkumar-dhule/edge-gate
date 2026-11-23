@@ -22,14 +22,78 @@ export interface ComputeCommandPreset {
   category: 'deploy' | 'verify' | 'aws' | 'utility';
 }
 
+export interface ComputeHostInfo {
+  hostname: string;
+  user: string;
+  platform: string;
+  arch: string;
+  release: string;
+  cwd: string;
+  rootCwd: string;
+  shell: string;
+  nodeVersion: string;
+  cpus: number;
+  cpuModel: string;
+  totalMemMb: number;
+  freeMemMb: number;
+  uptimeSec: number;
+  pid: number;
+  hasMake: boolean;
+  hasPnpm: boolean;
+  hasTerraform: boolean;
+  hasGit: boolean;
+  activeSessions: number;
+  targets: MakefileTargetInfo[];
+}
+
+export interface ComputeShellTab {
+  id: string;
+  label: string;
+  cwd: string;
+  output: string;
+  running: boolean;
+  runningSessionId: string | null;
+  pid: number | null;
+  lastExitCode: number | null;
+  history: string[];
+  historyIndex: number;
+}
+
 export const COMPUTE_PRESET_COMMANDS: ComputeCommandPreset[] = [
   {
-    id: 'make-deploy',
-    label: 'make deploy',
-    command: 'make deploy',
-    description:
-      'Run pnpm test + lint + build, terraform apply, S3 sync, print CloudFront URL & E2E verification',
-    category: 'deploy',
+    id: 'compute-uname',
+    label: 'Compute Host Info',
+    command: 'uname -a && id && node -v',
+    description: 'Inspect underlying Linux kernel, user identity, and Node.js runtime',
+    category: 'utility',
+  },
+  {
+    id: 'compute-ls',
+    label: 'pwd && ls -la',
+    command: 'pwd && ls -la',
+    description: 'List current working directory and full file permissions on compute',
+    category: 'utility',
+  },
+  {
+    id: 'unit-tests',
+    label: 'Unit Tests',
+    command: 'pnpm test',
+    description: 'Execute all node:test unit suites on the compute container',
+    category: 'verify',
+  },
+  {
+    id: 'typecheck',
+    label: 'Typecheck',
+    command: 'pnpm run lint',
+    description: 'Run tsc --noEmit across the workspace',
+    category: 'verify',
+  },
+  {
+    id: 'mcp-manifest',
+    label: 'MCP Discovery',
+    command: 'curl -s http://localhost:3000/.well-known/mcp.json | head -c 600',
+    description: 'Query local MCP JSON-RPC 2.0 discovery manifest',
+    category: 'utility',
   },
   {
     id: 'make-verify',
@@ -39,32 +103,12 @@ export const COMPUTE_PRESET_COMMANDS: ComputeCommandPreset[] = [
     category: 'verify',
   },
   {
-    id: 'make-sync-ui',
-    label: 'make sync-ui',
-    command: 'make sync-ui',
-    description: 'Build dist/ SPA bundle, upload to S3 /portal-ui/ & invalidate CloudFront',
-    category: 'aws',
-  },
-  {
-    id: 'make-invalidate',
-    label: 'make invalidate-cloudfront',
-    command: 'make invalidate-cloudfront',
-    description: 'Create CloudFront /* cache invalidation via AWS SigV4',
-    category: 'aws',
-  },
-  {
-    id: 'make-test-e2e',
-    label: 'make test-e2e',
-    command: 'make test-e2e',
-    description: 'Run Playwright E2E suite against CloudFront / localhost:3000',
-    category: 'verify',
-  },
-  {
-    id: 'capture-screenshots',
-    label: 'Capture Live Screenshots',
-    command: 'pnpm exec tsx scripts/capture-live-screenshots.ts www',
-    description: 'Capture genuine unmodified 1280x760 Chromium screenshots for www',
-    category: 'utility',
+    id: 'make-deploy',
+    label: 'make deploy',
+    command: 'make deploy',
+    description:
+      'Run pnpm test + lint + build, terraform apply, S3 sync, print CloudFront URL & E2E verification',
+    category: 'deploy',
   },
   {
     id: 'make-help',
@@ -74,6 +118,135 @@ export const COMPUTE_PRESET_COMMANDS: ComputeCommandPreset[] = [
     category: 'utility',
   },
 ];
+
+export const COMPUTE_CWD_SENTINEL_PREFIX = '__COMPUTE_CWD__:';
+export const COMPUTE_CWD_SENTINEL_SUFFIX = '__';
+
+/**
+ * Formats a canonical shell prompt reflecting the active user, hostname, and live working directory.
+ */
+export function formatComputeShellPrompt(
+  user: string,
+  hostname: string,
+  cwd: string,
+  rootCwd?: string
+): string {
+  const cleanUser = (user || 'operator').trim() || 'operator';
+  const cleanHost = (hostname || 'compute').trim() || 'compute';
+  const cleanCwd = (cwd || '/app/applet').trim() || '/app/applet';
+  let displayPath = cleanCwd;
+  if (rootCwd && cleanCwd === rootCwd) {
+    displayPath = '~';
+  } else if (rootCwd && cleanCwd.startsWith(`${rootCwd}/`)) {
+    displayPath = `~/${cleanCwd.slice(rootCwd.length + 1)}`;
+  }
+  return `${cleanUser}@${cleanHost}:${displayPath}$`;
+}
+
+/**
+ * Wraps a resolved bash command so that directory changes (`cd ...`) emit a trailing
+ * sentinel with the physical working directory while preserving the command's exit code.
+ */
+export function buildStatefulBashPayload(resolvedCommand: string): string {
+  return `${resolvedCommand}\n__COMPUTE_EC=$?\nprintf "\\n${COMPUTE_CWD_SENTINEL_PREFIX}%s${COMPUTE_CWD_SENTINEL_SUFFIX}\\n" "$(pwd -P 2>/dev/null || pwd)"\nexit $__COMPUTE_EC`;
+}
+
+/**
+ * Extracts and strips any `__COMPUTE_CWD__:<path>__` sentinel from a stdout/stderr chunk.
+ */
+export function extractStatefulCwdSentinel(chunk: string): {
+  cleanedChunk: string;
+  detectedCwd: string | null;
+} {
+  if (!chunk) {
+    return { cleanedChunk: '', detectedCwd: null };
+  }
+  let detectedCwd: string | null = null;
+  const regex = /\r?\n?__COMPUTE_CWD__:([^\r\n]+)__\r?\n?/g;
+  const cleanedChunk = chunk.replace(regex, (_match, capturedPath: string) => {
+    if (capturedPath && capturedPath.trim()) {
+      detectedCwd = capturedPath.trim();
+    }
+    return '\n';
+  });
+  return { cleanedChunk, detectedCwd };
+}
+
+/**
+ * Strips ANSI CSI/OSC escape codes from terminal output for clean readable display in DOM views.
+ */
+export function stripAnsiEscapeCodes(input: string): string {
+  if (!input) return '';
+  return input
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
+}
+
+export interface PtySessionDescriptor {
+  sessionId: string;
+  pid: number | null;
+  tty: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+  shell: string;
+  exited?: boolean;
+  exitCode?: number | null;
+}
+
+export type PtyBridgeEvent =
+  | { type: 'ready'; pid: number; tty: string; cwd: string; cols: number; rows: number }
+  | { type: 'data'; b64: string }
+  | { type: 'exit'; code: number };
+
+/**
+ * Clamps PTY terminal grid dimensions to safe bounds for ioctl(TIOCSWINSZ).
+ */
+export function clampPtyDimensions(
+  cols: unknown,
+  rows: unknown
+): { cols: number; rows: number } {
+  const parsedCols = Number(cols);
+  const parsedRows = Number(rows);
+  return {
+    cols: Number.isFinite(parsedCols) ? Math.max(20, Math.min(400, Math.round(parsedCols))) : 120,
+    rows: Number.isFinite(parsedRows) ? Math.max(5, Math.min(200, Math.round(parsedRows))) : 30,
+  };
+}
+
+/**
+ * Parses a single JSON line emitted by scripts/pty-bridge.py.
+ */
+export function parsePtyBridgeLine(line: string): PtyBridgeEvent | null {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return null;
+  try {
+    const obj = JSON.parse(trimmed) as Record<string, unknown>;
+    if (obj.type === 'ready' && typeof obj.tty === 'string') {
+      return {
+        type: 'ready',
+        pid: typeof obj.pid === 'number' ? obj.pid : 0,
+        tty: obj.tty,
+        cwd: typeof obj.cwd === 'string' ? obj.cwd : '',
+        cols: typeof obj.cols === 'number' ? obj.cols : 120,
+        rows: typeof obj.rows === 'number' ? obj.rows : 30,
+      };
+    }
+    if (obj.type === 'data' && typeof obj.b64 === 'string') {
+      return { type: 'data', b64: obj.b64 };
+    }
+    if (obj.type === 'exit') {
+      return { type: 'exit', code: typeof obj.code === 'number' ? obj.code : 0 };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 const MAKEFILE_TARGET_TRANSLATIONS: Record<string, string> = {
   all: 'pnpm exec tsx scripts/deploy-aws-portal.ts deploy-all',

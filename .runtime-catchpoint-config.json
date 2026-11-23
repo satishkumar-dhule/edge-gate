@@ -1,0 +1,2470 @@
+{
+  "properties": [
+    {
+      "id": "www",
+      "name": "Salesforce Global Marketing & Digital Experience (www.salesforce.com)",
+      "suitePath": "config/suites/www.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "www.salesforce.com": "www.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ],
+          "order": 1
+        },
+        {
+          "id": "uat",
+          "name": "UAT",
+          "hostMap": {
+            "www.salesforce.com": "www-uat1.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ],
+          "order": 2
+        }
+      ]
+    },
+    {
+      "id": "login",
+      "name": "Salesforce Core Identity & OAuth Gateway (login.salesforce.com)",
+      "suitePath": "config/suites/login.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "login.salesforce.com": "login.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        },
+        {
+          "id": "uat",
+          "name": "UAT",
+          "hostMap": {
+            "login.salesforce.com": "test.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "developer",
+      "name": "Salesforce Developers & API Portal (developer.salesforce.com)",
+      "suitePath": "config/suites/developer.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "developer.salesforce.com": "developer.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        },
+        {
+          "id": "uat",
+          "name": "UAT",
+          "hostMap": {
+            "developer.salesforce.com": "developer-uat.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "help",
+      "name": "Salesforce Help & Customer Trailblazer Support (help.salesforce.com)",
+      "suitePath": "config/suites/help.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "help.salesforce.com": "help.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        },
+        {
+          "id": "uat",
+          "name": "UAT",
+          "hostMap": {
+            "help.salesforce.com": "help-uat.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "trailhead",
+      "name": "Salesforce Trailhead Learning & Certification (trailhead.salesforce.com)",
+      "suitePath": "config/suites/trailhead.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "trailhead.salesforce.com": "trailhead.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        },
+        {
+          "id": "uat",
+          "name": "UAT",
+          "hostMap": {
+            "trailhead.salesforce.com": "trailhead-uat.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "status",
+      "name": "Salesforce Trust & Real-Time Cloud Status (status.salesforce.com)",
+      "suitePath": "config/suites/status.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "status.salesforce.com": "status.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "appexchange",
+      "name": "Salesforce AppExchange Enterprise Marketplace (appexchange.salesforce.com)",
+      "suitePath": "config/suites/appexchange.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "appexchange.salesforce.com": "appexchange.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        },
+        {
+          "id": "uat",
+          "name": "UAT",
+          "hostMap": {
+            "appexchange.salesforce.com": "appexchange-uat.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "partners",
+      "name": "Salesforce Partner Community & Ecosystem (partners.salesforce.com)",
+      "suitePath": "config/suites/partners.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "partners.salesforce.com": "partners.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        },
+        {
+          "id": "uat",
+          "name": "UAT",
+          "hostMap": {
+            "partners.salesforce.com": "partners-uat.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apac",
+      "name": "Salesforce Asia-Pacific Regional Hub (www.salesforce.com/ap/ · SIN Edge PoP)",
+      "suitePath": "config/suites/apac.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "apac.salesforce.com": "www.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "emea",
+      "name": "Salesforce EMEA Regional Hub (www.salesforce.com/eu/ · AMS Edge PoP)",
+      "suitePath": "config/suites/emea.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "emea.salesforce.com": "www.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "americas",
+      "name": "Salesforce Americas Regional Hub (www.salesforce.com/mx/ · /br/ · /ca/ · GRU Edge PoP)",
+      "suitePath": "config/suites/americas.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "americas.salesforce.com": "www.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "japan",
+      "name": "Salesforce Japan Regional Hub (www.salesforce.com/jp/ · Tokyo NRT Edge PoP)",
+      "suitePath": "config/suites/japan.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "japan.salesforce.com": "www.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "uk",
+      "name": "Salesforce United Kingdom Regional Hub (www.salesforce.com/uk/ · London LHR Edge PoP)",
+      "suitePath": "config/suites/uk.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "uk.salesforce.com": "www.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "germany",
+      "name": "Salesforce Deutschland DACH Regional Hub (www.salesforce.com/de/ · Frankfurt FRA Edge PoP)",
+      "suitePath": "config/suites/germany.csv",
+      "defaultNetworks": [
+        "prod",
+        "staging"
+      ],
+      "envs": [
+        {
+          "id": "prod",
+          "name": "PROD",
+          "hostMap": {
+            "germany.salesforce.com": "www.salesforce.com"
+          },
+          "networks": [
+            "prod",
+            "staging"
+          ]
+        }
+      ]
+    }
+  ],
+  "suitesByAppId": {
+    "www": [
+      {
+        "id": "T01",
+        "name": "Salesforce Global Home & Hero Experience",
+        "path": "/",
+        "expectedStatus": "200",
+        "category": "Core Experience",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "Sales Cloud & Agentforce Product Overview",
+        "path": "/sales/",
+        "expectedStatus": "200",
+        "category": "Product Catalog",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "Agentforce AI & Einstein Platform Landing",
+        "path": "/artificial-intelligence/",
+        "expectedStatus": "200",
+        "category": "AI & Platform",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "Legacy CRM Redirect Normalization (/crm -> /crm/)",
+        "path": "/crm",
+        "expectedStatus": "301",
+        "category": "Edge Redirect",
+        "testType": "http-object",
+        "monitorEngine": "Edge HTTP Prober",
+        "folderId": "folder-identity",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "Salesforce Free Trial & Lead Capture Flow",
+        "path": "/form/signup/freetrial-sales/",
+        "expectedStatus": "200",
+        "category": "Conversion Flow",
+        "testType": "transaction-playwright",
+        "monitorEngine": "Playwright Chromium",
+        "folderId": "folder-conversion",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5,
+        "transactionSteps": [
+          {
+            "step": 1,
+            "action": "open",
+            "target": "/form/signup/freetrial-sales/"
+          },
+          {
+            "step": 2,
+            "action": "waitForSelector",
+            "target": "main, form, h1"
+          },
+          {
+            "step": 3,
+            "action": "assertStatus",
+            "target": "/form/signup/freetrial-sales/",
+            "value": "200"
+          },
+          {
+            "step": 4,
+            "action": "screenshot",
+            "target": "1280x760"
+          }
+        ]
+      },
+      {
+        "id": "T06",
+        "name": "Enterprise Editions & Pricing Matrix",
+        "path": "/editions-pricing/sales-cloud/",
+        "expectedStatus": "200",
+        "category": "Commerce & Pricing",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6
+      },
+      {
+        "id": "T07",
+        "name": "Customer 360 & Small Business Solutions",
+        "path": "/small-business/",
+        "expectedStatus": "200",
+        "category": "Solutions",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "Company Overview & Global Trust Center Entry",
+        "path": "/company/",
+        "expectedStatus": "200",
+        "category": "Trust & Corporate",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-identity",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      },
+      {
+        "id": "T09",
+        "name": "Synthetic Monitor (/contact-us/)",
+        "path": "https://www.salesforce.com/contact-us",
+        "expectedStatus": "200",
+        "category": "Edge",
+        "httpMethod": "GET",
+        "enabled": true,
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "order": 9
+      },
+      {
+        "id": "T10",
+        "name": "Synthetic Monitor (/contact-us/)",
+        "path": "/contact-us",
+        "expectedStatus": "200",
+        "category": "Edge",
+        "httpMethod": "GET",
+        "enabled": true,
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "order": 10
+      },
+      {
+        "id": "T11",
+        "name": "Synthetic Monitor (/contact-us/)",
+        "path": "/contact-us",
+        "expectedStatus": "200",
+        "category": "Edge",
+        "httpMethod": "GET",
+        "enabled": true,
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "order": 11
+      },
+      {
+        "id": "T12",
+        "name": "Synthetic Monitor (/contact-us/)",
+        "path": "/contact-us",
+        "expectedStatus": "200",
+        "category": "Edge",
+        "httpMethod": "GET",
+        "enabled": true,
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "order": 12
+      }
+    ],
+    "login": [
+      {
+        "id": "T01",
+        "name": "Salesforce Enterprise Sign-In Gateway",
+        "path": "/",
+        "expectedStatus": "200",
+        "category": "Identity",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-identity",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "OAuth 2.0 PKCE Authorization Endpoint",
+        "path": "/services/oauth2/authorize",
+        "expectedStatus": "200",
+        "category": "OAuth Protocol",
+        "testType": "api",
+        "monitorEngine": "Catchpoint API Engine",
+        "folderId": "folder-network",
+        "httpMethod": "POST",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "OIDC Discovery & Identity Configuration",
+        "path": "/.well-known/idp-configuration",
+        "expectedStatus": "200",
+        "category": "OpenID Connect",
+        "testType": "api",
+        "monitorEngine": "Catchpoint API Engine",
+        "folderId": "folder-network",
+        "httpMethod": "POST",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "My Domain Discovery & Redirection",
+        "path": "/services/auth/idp",
+        "expectedStatus": "302",
+        "category": "Edge Routing",
+        "testType": "http-object",
+        "monitorEngine": "Edge HTTP Prober",
+        "folderId": "folder-identity",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "Multi-Factor Authentication (MFA) & FIDO2",
+        "path": "/setup/secur/mfa",
+        "expectedStatus": "200",
+        "category": "Zero Trust",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-identity",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5
+      },
+      {
+        "id": "T06",
+        "name": "Password Recovery & Security Verification",
+        "path": "/secur/forgotpassword.jsp",
+        "expectedStatus": "200",
+        "category": "Account Recovery",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6
+      },
+      {
+        "id": "T07",
+        "name": "SAML Single Sign-On ACS Gateway",
+        "path": "/services/auth/sso",
+        "expectedStatus": "200",
+        "category": "Enterprise Federation",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "Identity Session Inspection & Health",
+        "path": "/id/health",
+        "expectedStatus": "200",
+        "category": "Session Telemetry",
+        "testType": "http-object",
+        "monitorEngine": "Edge HTTP Prober",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      }
+    ],
+    "developer": [
+      {
+        "id": "T01",
+        "name": "Salesforce Developers & Einstein 1 Hub",
+        "path": "/",
+        "expectedStatus": "200",
+        "category": "Developer Hub",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "REST & GraphQL API Reference Matrix",
+        "path": "/docs/apis",
+        "expectedStatus": "200",
+        "category": "API Specs",
+        "testType": "api",
+        "monitorEngine": "Catchpoint API Engine",
+        "folderId": "folder-network",
+        "httpMethod": "POST",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "Lightning Web Components Playground",
+        "path": "/tools/lwc",
+        "expectedStatus": "200",
+        "category": "Frontend SDK",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "Apex Reference Guide & Syntax Tree",
+        "path": "/docs/atlas.en-us.apexref.meta/apexref/",
+        "expectedStatus": "200",
+        "category": "Backend Language",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "Agentforce Prompt & SDK CLI Tools",
+        "path": "/tools/vscode/agentforce",
+        "expectedStatus": "200",
+        "category": "Autonomous AI",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5
+      },
+      {
+        "id": "T06",
+        "name": "Developer Edition Free Org Signup",
+        "path": "/signup",
+        "expectedStatus": "200",
+        "category": "Sandbox Provisioning",
+        "testType": "transaction-playwright",
+        "monitorEngine": "Playwright Chromium",
+        "folderId": "folder-conversion",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6,
+        "transactionSteps": [
+          {
+            "step": 1,
+            "action": "open",
+            "target": "/signup"
+          },
+          {
+            "step": 2,
+            "action": "waitForSelector",
+            "target": "main, form, h1"
+          },
+          {
+            "step": 3,
+            "action": "assertStatus",
+            "target": "/signup",
+            "value": "200"
+          },
+          {
+            "step": 4,
+            "action": "screenshot",
+            "target": "1280x760"
+          }
+        ]
+      },
+      {
+        "id": "T07",
+        "name": "Data Cloud Ingestion SDK Reference",
+        "path": "/docs/atlas.en-us.c360a_api.meta",
+        "expectedStatus": "200",
+        "category": "Zero-Copy Ingestion",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "Developer Forums & Code Discussions",
+        "path": "/forums",
+        "expectedStatus": "200",
+        "category": "Ecosystem",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      }
+    ],
+    "help": [
+      {
+        "id": "T01",
+        "name": "Salesforce Help & Agentforce Concierge",
+        "path": "/s/",
+        "expectedStatus": "200",
+        "category": "Support Hub",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "Knowledge Article Search & Docs",
+        "path": "/s/articleView",
+        "expectedStatus": "200",
+        "category": "Knowledge Base",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "Premier Support Case Management",
+        "path": "/s/cases",
+        "expectedStatus": "200",
+        "category": "Case Management",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "Spring ’26 Release Readiness Matrix",
+        "path": "/s/release-notes",
+        "expectedStatus": "200",
+        "category": "Release Notes",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "Trust & Known Issues Catalog",
+        "path": "/s/known-issues",
+        "expectedStatus": "200",
+        "category": "Issue Tracking",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5
+      },
+      {
+        "id": "T06",
+        "name": "System Architecture & Implementation Guides",
+        "path": "/s/guides",
+        "expectedStatus": "200",
+        "category": "Architecture",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6
+      },
+      {
+        "id": "T07",
+        "name": "Contact Support & Escalation Concierge",
+        "path": "/s/contactsupport",
+        "expectedStatus": "200",
+        "category": "Escalations",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "Customer Success Community Groups",
+        "path": "/s/groups",
+        "expectedStatus": "200",
+        "category": "Best Practices",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      }
+    ],
+    "trailhead": [
+      {
+        "id": "T01",
+        "name": "Trailhead Global Learning Home & Feed",
+        "path": "/",
+        "expectedStatus": "200",
+        "category": "Learning Hub",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "Agentforce Specialist Superbadge & Trails",
+        "path": "/en/credentials/agentforcespecialist",
+        "expectedStatus": "200",
+        "category": "Certifications",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "Trailhead Modules & AI Badges Catalog",
+        "path": "/en/modules",
+        "expectedStatus": "200",
+        "category": "AI Skills",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "Career Paths & Architect Credentials",
+        "path": "/en/career-paths",
+        "expectedStatus": "200",
+        "category": "Career",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "Trailblazer Community & Mentorship",
+        "path": "/en/community",
+        "expectedStatus": "200",
+        "category": "Community",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5
+      },
+      {
+        "id": "T06",
+        "name": "Hands-On Orgs & Playground Manager",
+        "path": "/en/trailhead-playground",
+        "expectedStatus": "200",
+        "category": "Hands-On",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6
+      },
+      {
+        "id": "T07",
+        "name": "Certifications & Verification Portal",
+        "path": "/en/credentials/administrator",
+        "expectedStatus": "200",
+        "category": "Verification",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "Salesforce Ranger Leaderboard & Ranks",
+        "path": "/en/ranks",
+        "expectedStatus": "200",
+        "category": "Gamification",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      }
+    ],
+    "status": [
+      {
+        "id": "T01",
+        "name": "Trust Status Global System Overview",
+        "path": "/",
+        "expectedStatus": "200",
+        "category": "Trust & Health",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-identity",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "Hyperforce NA & EMEA Core Instances",
+        "path": "/instances",
+        "expectedStatus": "200",
+        "category": "Instance Status",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "Live Maintenance Windows & Schedules",
+        "path": "/maintenance",
+        "expectedStatus": "200",
+        "category": "Maintenance",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "Security & Compliance Transparency Center",
+        "path": "/compliance",
+        "expectedStatus": "200",
+        "category": "Compliance",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "Real-Time Incident History & Post-Mortems",
+        "path": "/incidents",
+        "expectedStatus": "200",
+        "category": "Incident Response",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5
+      },
+      {
+        "id": "T06",
+        "name": "API Status & Webhook Feeds",
+        "path": "/api/v1/status",
+        "expectedStatus": "200",
+        "category": "Realtime Feeds",
+        "testType": "api",
+        "monitorEngine": "Catchpoint API Engine",
+        "folderId": "folder-network",
+        "httpMethod": "POST",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6
+      },
+      {
+        "id": "T07",
+        "name": "Status Subscription & Alert Notification",
+        "path": "/subscribe",
+        "expectedStatus": "200",
+        "category": "Alerting",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "Anycast Edge Latency & PoP Telemetry",
+        "path": "/edge-telemetry",
+        "expectedStatus": "200",
+        "category": "Network Telemetry",
+        "testType": "http-object",
+        "monitorEngine": "Edge HTTP Prober",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      }
+    ],
+    "appexchange": [
+      {
+        "id": "T01",
+        "name": "AppExchange Enterprise Cloud Marketplace",
+        "path": "/",
+        "expectedStatus": "200",
+        "category": "Marketplace Hub",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "Agentforce Autonomous Apps & Agents",
+        "path": "/category/agentforce",
+        "expectedStatus": "200",
+        "category": "AI Apps",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "Top Enterprise CRM Integrations",
+        "path": "/top-apps",
+        "expectedStatus": "200",
+        "category": "Popular Solutions",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "Industry-Specific Solutions & Clouds",
+        "path": "/industries",
+        "expectedStatus": "200",
+        "category": "Vertical Clouds",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "Consulting Partners & SI Directory",
+        "path": "/consultants",
+        "expectedStatus": "200",
+        "category": "System Integrators",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5
+      },
+      {
+        "id": "T06",
+        "name": "Security Review & App Verification",
+        "path": "/security-review",
+        "expectedStatus": "200",
+        "category": "Security Audits",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6
+      },
+      {
+        "id": "T07",
+        "name": "Free Lightning Components & Actions",
+        "path": "/components",
+        "expectedStatus": "200",
+        "category": "UI Components",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "Publisher Portal & App Analytics",
+        "path": "/publishers",
+        "expectedStatus": "200",
+        "category": "Partner Commerce",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      }
+    ],
+    "partners": [
+      {
+        "id": "T01",
+        "name": "Salesforce Partner Community Home",
+        "path": "/",
+        "expectedStatus": "200",
+        "category": "Partner Portal",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "Consulting Partner Program Tiering",
+        "path": "/program",
+        "expectedStatus": "200",
+        "category": "Partner Tiers",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "ISV AppExchange Partner Portal",
+        "path": "/isv",
+        "expectedStatus": "200",
+        "category": "ISV Monetization",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "Partner Learning Camp & Accreditations",
+        "path": "/learning",
+        "expectedStatus": "200",
+        "category": "Accreditations",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "Lead Registration & Deal Support",
+        "path": "/leads",
+        "expectedStatus": "200",
+        "category": "Deal Registration",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5
+      },
+      {
+        "id": "T06",
+        "name": "Partner Navigator & Expertise Badges",
+        "path": "/navigator",
+        "expectedStatus": "200",
+        "category": "Expertise Badges",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6
+      },
+      {
+        "id": "T07",
+        "name": "Marketing Co-Op & Asset Library",
+        "path": "/marketing",
+        "expectedStatus": "200",
+        "category": "Marketing Assets",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "Partner Operations & API Governance",
+        "path": "/governance",
+        "expectedStatus": "200",
+        "category": "Operations",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      }
+    ],
+    "apac": [
+      {
+        "id": "T01",
+        "name": "Salesforce APAC Regional Home (Singapore / ASEAN)",
+        "path": "/ap/",
+        "expectedStatus": "200",
+        "category": "APAC Home",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "APAC Sales Cloud & Agentforce Overview",
+        "path": "/ap/sales/",
+        "expectedStatus": "200",
+        "category": "APAC Sales",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "APAC Agentforce AI & Autonomous Agents",
+        "path": "/ap/artificial-intelligence/",
+        "expectedStatus": "200",
+        "category": "APAC AI",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "APAC Customer Success Stories & Trailblazers",
+        "path": "/ap/customer-stories/",
+        "expectedStatus": "200",
+        "category": "APAC Success",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "Salesforce Australia & New Zealand (ANZ) Hub",
+        "path": "/au/",
+        "expectedStatus": "200",
+        "category": "ANZ Hub",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5
+      },
+      {
+        "id": "T06",
+        "name": "Salesforce India Regional Experience (/in/)",
+        "path": "/in/",
+        "expectedStatus": "200",
+        "category": "India Hub",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6
+      },
+      {
+        "id": "T07",
+        "name": "APAC CRM Platform & Customer 360 Guide",
+        "path": "/ap/crm/",
+        "expectedStatus": "200",
+        "category": "APAC CRM",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "APAC Corporate Overview & Our Story",
+        "path": "/ap/company/our-story/",
+        "expectedStatus": "200",
+        "category": "APAC Trust",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-identity",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      }
+    ],
+    "emea": [
+      {
+        "id": "T01",
+        "name": "Salesforce EMEA Pan-European Home (/eu/)",
+        "path": "/eu/",
+        "expectedStatus": "200",
+        "category": "EMEA Home",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "EMEA Sales Cloud & Revenue Intelligence",
+        "path": "/eu/sales/",
+        "expectedStatus": "200",
+        "category": "EMEA Sales",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "EMEA Agentforce AI & GDPR-Compliant Copilot",
+        "path": "/eu/artificial-intelligence/",
+        "expectedStatus": "200",
+        "category": "EMEA AI",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "Salesforce France (Français) Regional Hub (/fr/)",
+        "path": "/fr/",
+        "expectedStatus": "200",
+        "category": "France Hub",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "Salesforce España (Español) Regional Hub (/es/)",
+        "path": "/es/",
+        "expectedStatus": "200",
+        "category": "Spain Hub",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5
+      },
+      {
+        "id": "T06",
+        "name": "Salesforce Italia (Italiano) Regional Hub (/it/)",
+        "path": "/it/",
+        "expectedStatus": "200",
+        "category": "Italy Hub",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6
+      },
+      {
+        "id": "T07",
+        "name": "Salesforce Nederland (Benelux) Regional Hub (/nl/)",
+        "path": "/nl/",
+        "expectedStatus": "200",
+        "category": "Benelux Hub",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "EMEA Corporate Overview & Trust Story",
+        "path": "/eu/company/our-story/",
+        "expectedStatus": "200",
+        "category": "EMEA Trust",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-identity",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      }
+    ],
+    "americas": [
+      {
+        "id": "T01",
+        "name": "Salesforce Latin America (México · Español) Home",
+        "path": "/mx/",
+        "expectedStatus": "200",
+        "category": "LATAM Home",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "LATAM Sales Cloud & Agentforce (Español)",
+        "path": "/mx/sales/",
+        "expectedStatus": "200",
+        "category": "LATAM Sales",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "Salesforce Brasil (Português) Regional Home",
+        "path": "/br/",
+        "expectedStatus": "200",
+        "category": "Brazil Home",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "Brasil Sales Cloud & CRM (Português)",
+        "path": "/br/sales/",
+        "expectedStatus": "200",
+        "category": "Brazil Sales",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "Salesforce Canada (English) Regional Home",
+        "path": "/ca/",
+        "expectedStatus": "200",
+        "category": "Canada EN",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5
+      },
+      {
+        "id": "T06",
+        "name": "Salesforce Canada (Français) Regional Home",
+        "path": "/fr-ca/",
+        "expectedStatus": "200",
+        "category": "Canada FR",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6
+      },
+      {
+        "id": "T07",
+        "name": "LATAM ¿Qué es CRM? Customer 360 (Español)",
+        "path": "/mx/crm/",
+        "expectedStatus": "200",
+        "category": "LATAM CRM",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "Brasil O que é CRM? Customer 360 (Português)",
+        "path": "/br/crm/",
+        "expectedStatus": "200",
+        "category": "Brazil CRM",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      }
+    ],
+    "japan": [
+      {
+        "id": "T01",
+        "name": "Salesforce Japan Home (株式会社セールスフォース・ジャパン)",
+        "path": "/jp/",
+        "expectedStatus": "200",
+        "category": "Japan Home",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "Sales Cloud 営業支援・SFA/CRM (セールスフォース・ジャパン)",
+        "path": "/jp/sales/",
+        "expectedStatus": "200",
+        "category": "Japan Sales",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "Agentforce AI & 自律型AIエージェント (/jp/artificial-intelligence/)",
+        "path": "/jp/artificial-intelligence/",
+        "expectedStatus": "200",
+        "category": "Japan AI",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "日本のお客様導入事例190選 (Japan Customer Stories)",
+        "path": "/jp/customer-stories/",
+        "expectedStatus": "200",
+        "category": "Japan Success",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "CRMとは？ 顧客管理システム (What is CRM Japan)",
+        "path": "/jp/crm/",
+        "expectedStatus": "200",
+        "category": "Japan CRM",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5
+      },
+      {
+        "id": "T06",
+        "name": "Sales Cloud 価格・エディション比較 (Japan Pricing)",
+        "path": "/jp/sales/pricing/",
+        "expectedStatus": "200",
+        "category": "Japan Pricing",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6
+      },
+      {
+        "id": "T07",
+        "name": "Service Cloud カスタマーサービス支援 (/jp/service/)",
+        "path": "/jp/service/",
+        "expectedStatus": "200",
+        "category": "Japan Service",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "セールスフォース・ジャパン 企業情報 (Japan Our Story)",
+        "path": "/jp/company/our-story/",
+        "expectedStatus": "200",
+        "category": "Japan Corporate",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      }
+    ],
+    "uk": [
+      {
+        "id": "T01",
+        "name": "Salesforce United Kingdom & Ireland Home (/uk/)",
+        "path": "/uk/",
+        "expectedStatus": "200",
+        "category": "UK Home",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "UK Sales Cloud & Agentforce Revenue Platform",
+        "path": "/uk/sales/",
+        "expectedStatus": "200",
+        "category": "UK Sales",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "UK Agentforce AI & Autonomous Enterprise Agents",
+        "path": "/uk/artificial-intelligence/",
+        "expectedStatus": "200",
+        "category": "UK AI",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "UK Customer Success Stories & Case Studies",
+        "path": "/uk/customer-stories/",
+        "expectedStatus": "200",
+        "category": "UK Success",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "UK What is CRM? Customer 360 Architecture",
+        "path": "/uk/crm/",
+        "expectedStatus": "200",
+        "category": "UK CRM",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5
+      },
+      {
+        "id": "T06",
+        "name": "UK Sales Cloud Pricing & GBP Editions",
+        "path": "/uk/sales/pricing/",
+        "expectedStatus": "200",
+        "category": "UK Pricing",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6
+      },
+      {
+        "id": "T07",
+        "name": "UK Service Cloud & Contact Centre AI",
+        "path": "/uk/service/",
+        "expectedStatus": "200",
+        "category": "UK Service",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "Salesforce UK Corporate Overview & Our Story",
+        "path": "/uk/company/our-story/",
+        "expectedStatus": "200",
+        "category": "UK Corporate",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      }
+    ],
+    "germany": [
+      {
+        "id": "T01",
+        "name": "Salesforce Deutschland (DACH) Startseite (/de/)",
+        "path": "/de/",
+        "expectedStatus": "200",
+        "category": "DACH Home",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 1
+      },
+      {
+        "id": "T02",
+        "name": "Deutschland Sales Cloud & Vertriebssoftware (/de/sales/)",
+        "path": "/de/sales/",
+        "expectedStatus": "200",
+        "category": "DACH Sales",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 2
+      },
+      {
+        "id": "T03",
+        "name": "Agentforce KI & Autonome KI-Agenten (/de/artificial-intelligence/)",
+        "path": "/de/artificial-intelligence/",
+        "expectedStatus": "200",
+        "category": "DACH AI",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 3
+      },
+      {
+        "id": "T04",
+        "name": "Deutschland Kundenreferenzen & Erfolgsgeschichten",
+        "path": "/de/customer-stories/",
+        "expectedStatus": "200",
+        "category": "DACH Success",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 4
+      },
+      {
+        "id": "T05",
+        "name": "Was ist CRM? Kundenbeziehungsmanagement (/de/crm/)",
+        "path": "/de/crm/",
+        "expectedStatus": "200",
+        "category": "DACH CRM",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 5
+      },
+      {
+        "id": "T06",
+        "name": "Deutschland Sales Cloud Preise & Editionen (EUR)",
+        "path": "/de/sales/pricing/",
+        "expectedStatus": "200",
+        "category": "DACH Pricing",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 6
+      },
+      {
+        "id": "T07",
+        "name": "Deutschland Service Cloud & Kundenservice (/de/service/)",
+        "path": "/de/service/",
+        "expectedStatus": "200",
+        "category": "DACH Service",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 7
+      },
+      {
+        "id": "T08",
+        "name": "Über Salesforce Deutschland & Unsere Geschichte",
+        "path": "/de/company/our-story/",
+        "expectedStatus": "200",
+        "category": "DACH Corporate",
+        "testType": "web-chrome",
+        "monitorEngine": "Chrome 130 Desktop",
+        "folderId": "folder-core",
+        "httpMethod": "GET",
+        "port": 443,
+        "scheduleIntervalMin": 5,
+        "slaWarningMs": 800,
+        "slaCriticalMs": 2000,
+        "enabled": true,
+        "order": 8
+      }
+    ]
+  },
+  "folders": [
+    {
+      "id": "folder-core",
+      "name": "Core Experience & Edge Caching",
+      "description": "Primary customer-facing web pages and CDN cache parity checks",
+      "color": "sky",
+      "order": 1
+    },
+    {
+      "id": "folder-identity",
+      "name": "Identity, Redirects & SSL",
+      "description": "Edge redirects, auth gateways, SSL certificates, and DNSSEC checks",
+      "color": "emerald",
+      "order": 2
+    },
+    {
+      "id": "folder-conversion",
+      "name": "Transactions & Conversion Flows",
+      "description": "Multi-step Playwright/Selenium lead capture, forms, and pricing journeys",
+      "color": "amber",
+      "order": 3
+    },
+    {
+      "id": "folder-network",
+      "name": "APIs, DNS & Network Protocols",
+      "description": "REST/GraphQL/gRPC APIs, DNS Direct, Ping, Traceroute, BGP, and RUM tags",
+      "color": "violet",
+      "order": 4
+    }
+  ],
+  "updatedAt": "2026-11-16T13:16:07.867Z"
+}

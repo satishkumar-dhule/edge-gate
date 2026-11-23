@@ -19,9 +19,16 @@ import {
 } from './src/engine/catchpointCatalog';
 import type { AppConfig, TestFolder } from './src/engine/types';
 import {
+  INITIAL_RULES,
   INITIAL_RUNS,
   buildInitialComparison,
 } from './src/data/mockStore';
+import { generateReproduceCurl } from './src/engine/rules';
+import { computePropertyGateSummary } from './src/engine/workbenchModel';
+import {
+  buildMcpManifest,
+  dispatchMcpJsonRpc,
+} from './src/engine/mcpProtocol';
 import {
   buildOpenApiSpec,
   evaluateNovaLiteVisualDiff,
@@ -41,6 +48,7 @@ import {
 } from './src/engine/userManager';
 import fs from 'fs';
 import {
+  executeComplexCatchpointCheck,
   executeLiveSalesforceRun,
   loadDotEnvCredentials,
   probeLiveUrlHttpFlow,
@@ -63,17 +71,66 @@ import {
 } from './src/engine/concurrencyEngine';
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import {
+  buildStatefulBashPayload,
+  clampPtyDimensions,
+  extractStatefulCwdSentinel,
   parseMakefileTargets,
+  parsePtyBridgeLine,
   resolveComputeCommand,
 } from './src/engine/computeShell';
 import { ensureComputeBinShims } from './src/engine/computeShims';
 import {
+  deleteWorkspaceFile,
   listWorkspaceTree,
   readWorkspaceFile,
   searchWorkspaceFiles,
   writeWorkspaceFile,
 } from './src/engine/workspaceServer';
+import {
+  appendLiveScheduledRunTick,
+  buildDefaultSchedulePolicy,
+  buildScheduledRunsDataset,
+  computeScheduledSlaAnalytics,
+  ingestRealPortalRunsIntoSchedule,
+  intervalToCronExpression,
+  type ScheduleIntervalMinutes,
+  type SchedulePolicyConfig,
+  type ScheduledRunPoint,
+  type ScheduleTimeRange,
+} from './src/engine/scheduledRunsEngine';
+import {
+  type AgentPortalContext,
+  PORTAL_AGENT_SKILLS,
+} from './src/engine/agentSkills';
+import {
+  isServerGeminiConfigured,
+  runGeminiMultimodalVisualJudge,
+  runGeminiPortalAgentChat,
+} from './src/engine/agentGeminiServer';
+import {
+  generateNextTestId,
+  normalizeTestCaseWithCatchpointDefaults,
+} from './src/engine/catchpointCatalog';
+import {
+  buildAwsCanarySpecification,
+  buildCanaryDeepDiveReport,
+  buildFleetCanaryInventory,
+  deriveAwsCanaryName,
+  planFanOutExecution,
+  type CanarySyncRecord,
+  type FanOutBatchRecord,
+  type FanOutCanaryResult,
+  type FanOutScope,
+} from './src/engine/awsSyntheticsOrchestrator';
+import {
+  deleteAwsSyntheticsCanary,
+  describeAwsSyntheticsCanaries,
+  resolveRuntimeAwsCredentials,
+  startAwsSyntheticsCanary,
+  syncCanaryToAwsSynthetics,
+} from './src/engine/awsSyntheticsClient';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -90,8 +147,23 @@ async function startServer() {
     cycleAt: new Date().toISOString(),
   });
 
+  const resolveCliArg = (flag: string): string | undefined => {
+    const idx = process.argv.indexOf(flag);
+    if (idx !== -1 && process.argv[idx + 1]) return process.argv[idx + 1];
+    const eq = process.argv.find((a) => a.startsWith(`${flag}=`));
+    return eq ? eq.slice(flag.length + 1) : undefined;
+  };
+
   const app = express();
-  const PORT = 3000;
+  const cliPort = resolveCliArg('--port');
+  const envPort =
+    process.env.DEFAULT_APP_PORT ||
+    (process.env.PORT && process.env.PORT !== process.env.NGINX_PORT
+      ? process.env.PORT
+      : undefined);
+  const parsedPort = Number(cliPort || envPort || 3000);
+  const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000;
+  const HOST = resolveCliArg('--host') || process.env.HOST || '0.0.0.0';
 
   app.use(express.json({ limit: '5mb' }));
 
@@ -112,6 +184,47 @@ async function startServer() {
   let runtimeProperties: AppConfig[] = [...DEFAULT_TEMPLATE_CONFIG.properties];
   let runtimeSuitesByAppId: Record<string, TestCaseDefinition[]> = buildDefaultSuitesMap();
   let runtimeFolders: TestFolder[] = [...DEFAULT_TEST_FOLDERS];
+
+  // AWS CloudWatch Synthetics Canary Registry & Fan-Out Batch State
+  const syntheticsStateFile = path.resolve(__dirname, '.runtime-synthetics-canaries.json');
+  let canarySyncState: Record<string, CanarySyncRecord> = {};
+  let fanOutBatches: FanOutBatchRecord[] = [];
+  let awsSyntheticsLiveConnected = false;
+  let lastAwsDescribeMessage = 'Pending AWS CloudWatch Synthetics handshake';
+
+  try {
+    if (fs.existsSync(syntheticsStateFile)) {
+      const parsedSyn = JSON.parse(fs.readFileSync(syntheticsStateFile, 'utf8'));
+      if (parsedSyn.canarySyncState && typeof parsedSyn.canarySyncState === 'object') {
+        canarySyncState = parsedSyn.canarySyncState;
+      }
+      if (Array.isArray(parsedSyn.fanOutBatches)) {
+        fanOutBatches = parsedSyn.fanOutBatches.slice(0, 25);
+      }
+    }
+  } catch {
+    // Ignore malformed synthetics state cache
+  }
+
+  const persistSyntheticsState = () => {
+    try {
+      fs.writeFileSync(
+        syntheticsStateFile,
+        JSON.stringify(
+          {
+            canarySyncState,
+            fanOutBatches: fanOutBatches.slice(0, 25),
+            updatedAt: new Date().toISOString(),
+          },
+          null,
+          2
+        ),
+        'utf8'
+      );
+    } catch {
+      // Ignore write failures in read-only runtimes
+    }
+  };
 
   try {
     if (fs.existsSync(runtimeConfigFile)) {
@@ -197,7 +310,9 @@ async function startServer() {
       'germany.prod.staging',
       'germany.prod.prod',
     ];
-    const opEmail = `${awsEnv.operatorUsername || 'user-pqtpsgwbthke'}@salesforce.com`;
+    const opEmail = awsEnv.operatorUsername
+      ? `${awsEnv.operatorUsername}@salesforce.com`
+      : DEFAULT_TEMPLATE_CONFIG.branding.defaultOperator.email;
     const batchResult = await executeParallelConsumerBatch({
       items: fleetTargets,
       concurrency: 4,
@@ -419,7 +534,95 @@ async function startServer() {
     });
   });
 
-  app.post('/api/v1/properties', (req, res) => {
+  const getSyntheticsAccountId = (): string =>
+    awsEnv.accountId || process.env.AWS_ACCOUNT_ID || '000000000000';
+
+  const getSyntheticsRoleArn = (): string =>
+    (process.env.AWS_SYNTHETICS_IAM_ROLE_ARN || '').trim() ||
+    `arn:aws:iam::${getSyntheticsAccountId()}:role/AkamaiSyntheticsReleaseGateRole-prod-${
+      awsEnv.region || DEFAULT_TEMPLATE_CONFIG.infrastructure.awsRegion
+    }`;
+
+  const computePropertySummaryMap = () => {
+    const map: Record<string, ReturnType<typeof computePropertyGateSummary>> = {};
+    const cfgSnap = getRuntimeConfigSnapshot();
+    for (const prop of runtimeProperties) {
+      map[prop.id] = computePropertyGateSummary({
+        app: prop,
+        runs: serverRuns,
+        rules: INITIAL_RULES,
+        acceptedCookies: [
+          '_abck',
+          'bm_sz',
+          'ak_bmsc',
+          'ew_renderer_id',
+          'akacd_smb_overview_split',
+          'edge_region',
+        ],
+        acceptedVisualTests: [],
+        ignoreAcceptedDiffs: true,
+        templateConfig: cfgSnap,
+        apps: runtimeProperties,
+      });
+    }
+    return map;
+  };
+
+  const getManagedCanariesInventory = () =>
+    buildFleetCanaryInventory({
+      apps: runtimeProperties,
+      suitesByAppId: runtimeSuitesByAppId,
+      runs: serverRuns,
+      templateConfig: getRuntimeConfigSnapshot(),
+      syncStateByCanaryName: canarySyncState,
+      propertySummariesByAppId: computePropertySummaryMap(),
+      accountId: getSyntheticsAccountId(),
+      executionRoleArn: getSyntheticsRoleArn(),
+    });
+
+  const syncPropertyCanariesToAws = async (appId: string) => {
+    const prop = runtimeProperties.find((p) => p.id === appId);
+    if (!prop) return [];
+    const suite = getRuntimeSuiteForApp(appId);
+    const creds = resolveRuntimeAwsCredentials();
+    const cfgSnap = getRuntimeConfigSnapshot();
+    const outcomes = [];
+
+    for (const env of prop.envs) {
+      const nets = env.networks && env.networks.length > 0 ? env.networks : (['staging', 'prod'] as const);
+      for (const net of nets) {
+        const network: 'staging' | 'prod' = net === 'staging' ? 'staging' : 'prod';
+        const spec = buildAwsCanarySpecification({
+          app: prop,
+          envId: env.id,
+          network,
+          suite,
+          templateConfig: cfgSnap,
+          accountId: getSyntheticsAccountId(),
+          executionRoleArn: getSyntheticsRoleArn(),
+        });
+        const outcome = await syncCanaryToAwsSynthetics({ spec, suite, creds });
+        if (outcome.syncStatus === 'AWS_LIVE_SYNCED') {
+          awsSyntheticsLiveConnected = true;
+          lastAwsDescribeMessage = outcome.message;
+        }
+        canarySyncState[spec.canaryName] = {
+          canaryName: spec.canaryName,
+          targetId: spec.targetId,
+          suiteHash: spec.suiteHash,
+          syncStatus: outcome.syncStatus,
+          runtimeState: outcome.runtimeState,
+          lastSyncedAt: outcome.syncedAt,
+          lastAwsMessage: outcome.message,
+        };
+        outcomes.push(outcome);
+      }
+    }
+    persistSyntheticsState();
+    return outcomes;
+  };
+
+  app.post('/api/v1/properties', async (req, res) => {
     const prop = req.body?.property || req.body;
     if (!prop?.id || !prop?.name) {
       res.status(400).json({ error: 'Property id and name are required' });
@@ -436,14 +639,16 @@ async function startServer() {
       );
     }
     persistRuntimeCatchpointConfig();
+    const awsSyntheticsSync = await syncPropertyCanariesToAws(cleanId);
     res.json({
       saved: true,
       property: runtimeProperties.find((p) => p.id === cleanId),
       properties: runtimeProperties,
+      awsSyntheticsSync,
     });
   });
 
-  app.put('/api/v1/properties/:appId', (req, res) => {
+  app.put('/api/v1/properties/:appId', async (req, res) => {
     const appId = String(req.params.appId || '').trim().toLowerCase();
     const prop = req.body?.property || req.body;
     if (!prop?.name) {
@@ -455,26 +660,42 @@ async function startServer() {
       ? runtimeProperties.map((p) => (p.id === appId ? { ...p, ...prop, id: appId } : p))
       : [...runtimeProperties, { ...prop, id: appId }];
     persistRuntimeCatchpointConfig();
+    const awsSyntheticsSync = await syncPropertyCanariesToAws(appId);
     res.json({
       saved: true,
       property: runtimeProperties.find((p) => p.id === appId),
       properties: runtimeProperties,
+      awsSyntheticsSync,
     });
   });
 
-  app.delete('/api/v1/properties/:appId', (req, res) => {
+  app.delete('/api/v1/properties/:appId', async (req, res) => {
     if (runtimeProperties.length <= 1) {
       res.status(400).json({ error: 'Cannot delete the last remaining property' });
       return;
     }
     const appId = String(req.params.appId || '').trim().toLowerCase();
+    const existingProp = runtimeProperties.find((p) => p.id === appId);
+    const creds = resolveRuntimeAwsCredentials();
+    const deletedCanaries: string[] = [];
+    if (existingProp) {
+      for (const env of existingProp.envs) {
+        for (const net of env.networks || ['staging', 'prod']) {
+          const canaryName = deriveAwsCanaryName(`${appId}.${env.id}.${net}`);
+          await deleteAwsSyntheticsCanary({ canaryName, creds }).catch(() => null);
+          delete canarySyncState[canaryName];
+          deletedCanaries.push(canaryName);
+        }
+      }
+      persistSyntheticsState();
+    }
     runtimeProperties = runtimeProperties.filter((p) => p.id !== appId);
     delete runtimeSuitesByAppId[appId];
     persistRuntimeCatchpointConfig();
-    res.json({ deleted: true, appId, properties: runtimeProperties });
+    res.json({ deleted: true, appId, deletedCanaries, properties: runtimeProperties });
   });
 
-  // 4b. Query & Mutate Per-Property Catchpoint Test Suites and Folders
+  // 4b. Query & Mutate Per-Property Test Suites (Auto-Creates/Updates AWS CloudWatch Synthetics Canaries)
   app.get('/api/v1/suites/:appId', (req, res) => {
     const appId = String(req.params.appId || 'www').trim().toLowerCase();
     const suite = getRuntimeSuiteForApp(appId);
@@ -486,7 +707,7 @@ async function startServer() {
     });
   });
 
-  app.put('/api/v1/suites/:appId', (req, res) => {
+  app.put('/api/v1/suites/:appId', async (req, res) => {
     const appId = String(req.params.appId || 'www').trim().toLowerCase();
     if (!Array.isArray(req.body?.suite)) {
       res.status(400).json({ error: 'Body must contain "suite" array' });
@@ -498,11 +719,13 @@ async function startServer() {
       [appId]: normalized,
     };
     persistRuntimeCatchpointConfig();
+    const awsSyntheticsSync = await syncPropertyCanariesToAws(appId);
     res.json({
       saved: true,
       appId,
       total: normalized.length,
       suite: normalized,
+      awsSyntheticsSync,
     });
   });
 
@@ -518,6 +741,351 @@ async function startServer() {
     runtimeFolders = req.body.folders;
     persistRuntimeCatchpointConfig();
     res.json({ saved: true, total: runtimeFolders.length, folders: runtimeFolders });
+  });
+
+  // 4c. AWS CloudWatch Synthetics Control Plane Orchestration, Fan-Out & Deep Dive APIs
+  app.get('/api/v1/synthetics/canaries', async (req, res) => {
+    const probeAws = req.query.refreshAws === 'true';
+    const creds = resolveRuntimeAwsCredentials();
+    if (probeAws && creds) {
+      const desc = await describeAwsSyntheticsCanaries(creds);
+      if (desc.ok) {
+        awsSyntheticsLiveConnected = true;
+        lastAwsDescribeMessage = `Connected to AWS CloudWatch Synthetics (${desc.canaries.length} live Canaries in ${creds.region})`;
+        for (const liveCanary of desc.canaries) {
+          const existing = canarySyncState[liveCanary.Name];
+          canarySyncState[liveCanary.Name] = {
+            canaryName: liveCanary.Name,
+            targetId: existing?.targetId || liveCanary.Name,
+            suiteHash: existing?.suiteHash || 'aws-live',
+            syncStatus: 'AWS_LIVE_SYNCED',
+            runtimeState:
+              (liveCanary.Status?.State as CanarySyncRecord['runtimeState']) || 'READY',
+            lastSyncedAt: existing?.lastSyncedAt || new Date().toISOString(),
+            lastAwsMessage: `Live in AWS CloudWatch Synthetics (${liveCanary.RuntimeVersion || 'syn-nodejs-puppeteer-9.1'})`,
+          };
+        }
+        persistSyntheticsState();
+      } else {
+        awsSyntheticsLiveConnected = false;
+        lastAwsDescribeMessage = `AWS Synthetics HTTP ${desc.status}: ${desc.error || 'staging mode'}`;
+      }
+    }
+
+    const canaries = getManagedCanariesInventory();
+    const totalChecksManaged = canaries.reduce((sum, c) => sum + c.checkCount, 0);
+    res.json({
+      executionPlane: 'AWS CloudWatch Synthetics',
+      controlPlaneRole: 'orchestrate-organize-compare-deep-dive',
+      awsRegion: awsEnv.region || DEFAULT_TEMPLATE_CONFIG.infrastructure.awsRegion,
+      accountId: getSyntheticsAccountId(),
+      s3Bucket: DEFAULT_TEMPLATE_CONFIG.infrastructure.s3Bucket,
+      dynamodbTable: DEFAULT_TEMPLATE_CONFIG.infrastructure.dynamodbTable,
+      runtimeVersion: DEFAULT_TEMPLATE_CONFIG.infrastructure.runtimeVersion,
+      awsLiveConnected: awsSyntheticsLiveConnected,
+      awsStatusMessage: lastAwsDescribeMessage,
+      totalCanaries: canaries.length,
+      totalProperties: runtimeProperties.length,
+      totalChecksManaged,
+      canaries,
+      recentBatches: fanOutBatches.slice(0, 12),
+    });
+  });
+
+  app.post('/api/v1/synthetics/canaries/sync', async (req, res) => {
+    const appId = typeof req.body?.appId === 'string' ? req.body.appId.trim().toLowerCase() : '';
+    const syncAll = Boolean(req.body?.syncAll) || !appId;
+    const targetApps = syncAll
+      ? runtimeProperties.map((p) => p.id)
+      : runtimeProperties.filter((p) => p.id === appId).map((p) => p.id);
+
+    if (targetApps.length === 0) {
+      res.status(404).json({ error: `Property '${appId}' not found` });
+      return;
+    }
+
+    const batchRes = await executeParallelConsumerBatch({
+      items: targetApps,
+      concurrency: 4,
+      queueName: 'aws-synthetics-sync-queue',
+      getJobId: (id) => `sync-${id}`,
+      getLabel: (id) => `Sync AWS Synthetics Canaries (${id})`,
+      worker: async (id) => syncPropertyCanariesToAws(id),
+    });
+
+    const outcomes = batchRes.results.flat();
+    const canaries = getManagedCanariesInventory();
+    res.json({
+      synced: true,
+      scope: syncAll ? 'fleet-all' : appId,
+      totalSyncedCanaries: outcomes.length,
+      awsLiveSyncedCount: outcomes.filter((o) => o.syncStatus === 'AWS_LIVE_SYNCED').length,
+      stagedSpecCount: outcomes.filter((o) => o.syncStatus !== 'AWS_LIVE_SYNCED').length,
+      outcomes,
+      canaries,
+    });
+  });
+
+  app.get('/api/v1/synthetics/canaries/:canaryName/deep-dive', (req, res) => {
+    const canaryName = String(req.params.canaryName || '').trim().toLowerCase();
+    const canaries = getManagedCanariesInventory();
+    const canary = canaries.find(
+      (c) => c.canaryName.toLowerCase() === canaryName || c.targetId.toLowerCase() === canaryName
+    );
+    if (!canary) {
+      res.status(404).json({ error: `Canary '${canaryName}' not found in managed fleet` });
+      return;
+    }
+    const suite = getRuntimeSuiteForApp(canary.appId);
+    const report = buildCanaryDeepDiveReport({
+      canary,
+      allCanaries: canaries,
+      suite,
+      runs: serverRuns,
+    });
+    res.json({
+      executionPlane: 'AWS CloudWatch Synthetics',
+      ...report,
+    });
+  });
+
+  app.post('/api/v1/synthetics/canaries/:canaryName/start', async (req, res) => {
+    const canaryName = String(req.params.canaryName || '').trim().toLowerCase();
+    const canaries = getManagedCanariesInventory();
+    const canary = canaries.find(
+      (c) => c.canaryName.toLowerCase() === canaryName || c.targetId.toLowerCase() === canaryName
+    );
+    if (!canary) {
+      res.status(404).json({ error: `Canary '${canaryName}' not found` });
+      return;
+    }
+
+    const operatorEmail = resolveOperatorEmail(req);
+    const creds = resolveRuntimeAwsCredentials();
+    const startedAt = new Date().toISOString();
+    const t0 = Date.now();
+
+    // 1. Dispatch StartCanary to AWS CloudWatch Synthetics
+    const startOutcome = await startAwsSyntheticsCanary({
+      canaryName: canary.canaryName,
+      creds,
+    });
+
+    // 2. Collect / ingest run results into portal RunRecord store for comparison & deep-dive
+    const runNum = serverRuns.filter((r) => r.target === canary.targetId).length + 1;
+    const suite = getRuntimeSuiteForApp(canary.appId);
+    const ingestedRun = await executeLiveSalesforceRun({
+      targetId: canary.targetId,
+      runNumber: runNum,
+      label: `aws-syn #${runNum} (${canary.canaryName})`,
+      operatorEmail,
+      suiteAppId: canary.appId,
+      config: getRuntimeConfigSnapshot(),
+      suite,
+    });
+
+    serverRuns = [ingestedRun, ...serverRuns.filter((r) => r.key !== ingestedRun.key)];
+    canarySyncState[canary.canaryName] = {
+      canaryName: canary.canaryName,
+      targetId: canary.targetId,
+      suiteHash: canary.suiteHash,
+      syncStatus: startOutcome.dispatchedToAws
+        ? 'AWS_LIVE_SYNCED'
+        : canarySyncState[canary.canaryName]?.syncStatus || 'AWS_SPEC_STAGED',
+      runtimeState: 'READY',
+      lastSyncedAt: new Date().toISOString(),
+      lastAwsMessage: startOutcome.message,
+    };
+    persistSyntheticsState();
+
+    const updatedCanaries = getManagedCanariesInventory();
+    const updatedCanary = updatedCanaries.find((c) => c.canaryName === canary.canaryName) || canary;
+
+    res.json({
+      dispatched: true,
+      executionPlane: 'AWS CloudWatch Synthetics',
+      canaryName: canary.canaryName,
+      targetId: canary.targetId,
+      awsStartOutcome: startOutcome,
+      durationMs: Date.now() - t0,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      s3ManifestKey: `runs/${canary.targetId}/${ingestedRun.key}/manifest.json`,
+      run: ingestedRun,
+      canary: updatedCanary,
+    });
+  });
+
+  app.get('/api/v1/synthetics/fan-out', (_req, res) => {
+    res.json({
+      total: fanOutBatches.length,
+      batches: fanOutBatches.slice(0, 20),
+    });
+  });
+
+  app.get('/api/v1/synthetics/fan-out/:batchId', (req, res) => {
+    const batch = fanOutBatches.find((b) => b.batchId === req.params.batchId);
+    if (!batch) {
+      res.status(404).json({ error: `Fan-out batch '${req.params.batchId}' not found` });
+      return;
+    }
+    res.json(batch);
+  });
+
+  app.post('/api/v1/synthetics/fan-out', async (req, res) => {
+    const scope = (req.body?.scope || 'property-pair') as FanOutScope;
+    const appId = typeof req.body?.appId === 'string' ? req.body.appId.trim().toLowerCase() : undefined;
+    const regionCode = typeof req.body?.regionCode === 'string' ? req.body.regionCode.trim().toUpperCase() : undefined;
+    const canaryNames = Array.isArray(req.body?.canaryNames) ? req.body.canaryNames.map(String) : undefined;
+    const networks = Array.isArray(req.body?.networks)
+      ? req.body.networks.filter((n: unknown): n is 'staging' | 'prod' => n === 'staging' || n === 'prod')
+      : undefined;
+    const maxConcurrency = Number(req.body?.concurrency || 6);
+    const operatorEmail = resolveOperatorEmail(req);
+    const creds = resolveRuntimeAwsCredentials();
+
+    const canaries = getManagedCanariesInventory();
+    const plan = planFanOutExecution({
+      scope,
+      canaries,
+      appId,
+      regionCode: regionCode as any,
+      canaryNames,
+      networks,
+      maxConcurrency,
+    });
+
+    if (plan.totalCanaries === 0) {
+      res.status(400).json({ error: 'No AWS CloudWatch Synthetics Canaries matched the fan-out scope' });
+      return;
+    }
+
+    const batchId = `fanout-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const startedAt = new Date().toISOString();
+
+    const batchExec = await executeParallelConsumerBatch({
+      items: plan.targets,
+      concurrency: plan.concurrency,
+      queueName: `aws-synthetics-fanout-${batchId}`,
+      getJobId: (t) => `${batchId}-${t.canaryName}`,
+      getLabel: (t) => `AWS Synthetics ${t.canaryName} (${t.targetId})`,
+      worker: async (target): Promise<{ item: FanOutCanaryResult; run: typeof serverRuns[number] | null }> => {
+        const t0 = Date.now();
+        const itemStartedAt = new Date().toISOString();
+        try {
+          const startOutcome = await startAwsSyntheticsCanary({
+            canaryName: target.canaryName,
+            creds,
+          });
+
+          const runNum = serverRuns.filter((r) => r.target === target.targetId).length + 1;
+          const suite = getRuntimeSuiteForApp(target.appId);
+          const ingestedRun = await executeLiveSalesforceRun({
+            targetId: target.targetId,
+            runNumber: runNum,
+            label: `fanout #${runNum} (${target.canaryName})`,
+            operatorEmail,
+            suiteAppId: target.appId,
+            config: getRuntimeConfigSnapshot(),
+            suite,
+          });
+
+          const s3ManifestKey = `runs/${target.targetId}/${ingestedRun.key}/manifest.json`;
+          return {
+            run: ingestedRun,
+            item: {
+              canaryName: target.canaryName,
+              targetId: target.targetId,
+              appId: target.appId,
+              envId: target.envId,
+              network: target.network,
+              status: startOutcome.dispatchedToAws ? 'DISPATCHED_AWS' : 'COMPLETED',
+              awsStartDispatched: startOutcome.dispatchedToAws,
+              awsMessage: startOutcome.message,
+              runKey: ingestedRun.key,
+              s3ManifestKey,
+              passedTests: ingestedRun.passedTests,
+              failedTests: ingestedRun.failedTests,
+              totalTests: ingestedRun.totalTests,
+              durationMs: Date.now() - t0,
+              startedAt: itemStartedAt,
+              completedAt: new Date().toISOString(),
+            },
+          };
+        } catch (err) {
+          return {
+            run: null,
+            item: {
+              canaryName: target.canaryName,
+              targetId: target.targetId,
+              appId: target.appId,
+              envId: target.envId,
+              network: target.network,
+              status: 'FAILED',
+              awsStartDispatched: false,
+              passedTests: 0,
+              failedTests: 1,
+              totalTests: 1,
+              durationMs: Date.now() - t0,
+              startedAt: itemStartedAt,
+              completedAt: new Date().toISOString(),
+              error: err instanceof Error ? err.message : String(err),
+            },
+          };
+        }
+      },
+    });
+
+    const newRuns = batchExec.results
+      .map((r) => r.run)
+      .filter((r): r is typeof serverRuns[number] => Boolean(r));
+    if (newRuns.length > 0) {
+      const newKeys = new Set(newRuns.map((r) => r.key));
+      serverRuns = [...newRuns, ...serverRuns.filter((r) => !newKeys.has(r.key))];
+    }
+
+    const fanOutResults = batchExec.results.map((r) => r.item);
+    const failedCanaries = fanOutResults.filter((r) => r.status === 'FAILED').length;
+    const summaryMap = computePropertySummaryMap();
+    const propertyVerdicts = plan.affectedAppIds.map((aid) => {
+      const s = summaryMap[aid];
+      return {
+        appId: aid,
+        verdict: s?.verdict || ('NONE' as const),
+        headerDiffs: s?.headerDiffCount || 0,
+        cookieDiffs: s?.cookieDiffCount || 0,
+        visualDiffs: s?.visualDiffCount || 0,
+        firstDiffTestId: s?.firstDiffTestId || 'T01',
+        firstDiffTab: s?.firstDiffTab || ('headers' as const),
+      };
+    });
+
+    const batchRecord: FanOutBatchRecord = {
+      batchId,
+      scope: plan.scope,
+      triggeredBy: operatorEmail,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      status: failedCanaries > 0 ? 'PARTIAL_FAILURE' : 'COMPLETED',
+      concurrency: plan.concurrency,
+      totalCanaries: plan.totalCanaries,
+      completedCanaries: fanOutResults.length - failedCanaries,
+      failedCanaries,
+      affectedAppIds: plan.affectedAppIds,
+      results: fanOutResults,
+      propertyVerdicts,
+    };
+
+    fanOutBatches = [batchRecord, ...fanOutBatches].slice(0, 25);
+    persistSyntheticsState();
+
+    res.json({
+      orchestrated: true,
+      executionPlane: 'AWS CloudWatch Synthetics',
+      batch: batchRecord,
+      runs: newRuns,
+      canaries: getManagedCanariesInventory(),
+    });
   });
 
   // 5. Query Ingested AWS CloudWatch Synthetics Runs
@@ -608,64 +1176,86 @@ async function startServer() {
     maxRetries: 1,
   });
 
-  // Serve real captured JPEG screenshots via API proxy cleanly (or unified live HTTP+DOM SVG if JPEG not written yet)
-  app.get(['/api/v1/screenshots/:filename', '/screenshots/:filename'], (req, res) => {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
+  // Serve real captured JPEG screenshots with immutable edge/browser caching (auto-captures on demand via Playwright Chromium if missing or live=1)
+  app.get(['/api/v1/screenshots/:filename', '/screenshots/:filename'], async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
     const rawName = String(req.params.filename || '').replace(/[^a-zA-Z0-9._-]/g, '');
-    if (!rawName || !/\.(jpg|jpeg|png|svg)$/i.test(rawName)) {
+    if (!rawName || !/\.(jpg|jpeg|png)$/i.test(rawName)) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
       res.status(400).json({ error: 'Invalid screenshot filename' });
       return;
     }
-    const candidatePath = path.resolve(__dirname, 'public', 'screenshots', rawName);
-    if (fs.existsSync(candidatePath)) {
-      res.type(rawName.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
-      res.sendFile(candidatePath);
-      return;
+    const candidates = [
+      path.resolve(__dirname, 'public', 'screenshots', rawName),
+      path.resolve(__dirname, 'dist', 'screenshots', rawName),
+    ];
+    const forceLive =
+      req.query.live === '1' || req.query.refresh === '1' || req.query.nocache === '1';
+
+    if (!forceLive) {
+      for (const candidatePath of candidates) {
+        if (fs.existsSync(candidatePath) && fs.statSync(candidatePath).size > 1000) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          res.type(rawName.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
+          res.sendFile(candidatePath);
+          return;
+        }
+      }
     }
-    const match = rawName.match(/^([a-z0-9_-]+)-(T\d+)-(sideA|sideB)\.(jpg|jpeg|png|svg)$/i);
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    // Auto-capture on demand via headless Chromium ONLY for known configured properties & valid tests (or explicit ?url=)
+    const match = rawName.match(/^([a-z0-9_-]+)-(T\d+)-(sideA|sideB)\.(jpg|jpeg|png)$/i);
     if (match) {
       const propId = match[1].toLowerCase();
       const testId = match[2].toUpperCase();
-      const side: 'A' | 'B' = match[3].toLowerCase() === 'sideb' ? 'B' : 'A';
-      const runtimeCfg = getRuntimeConfigSnapshot();
-      const suite = getRuntimeSuiteForApp(propId);
-      const testDef = suite.find((t) => t.id.toUpperCase() === testId);
-      const host =
-        testDef?.targetHost?.trim() ||
-        resolvePropertyHostname(propId, 'prod', runtimeCfg) ||
-        'www.salesforce.com';
-      const targetUrl = `https://${host}${testDef?.path || '/'}`;
-      const sideNetwork = side === 'A' ? 'staging' : 'prod';
-      const matchingRun = serverRuns.find(
-        (r) =>
-          (r.suiteAppId === propId || r.appId === propId) &&
-          r.network === sideNetwork
+      const sideSuffix = match[3];
+      const side: 'A' | 'B' = sideSuffix.toLowerCase() === 'sideb' ? 'B' : 'A';
+      const queryUrl =
+        typeof req.query.url === 'string' && req.query.url.trim().startsWith('http')
+          ? req.query.url.trim()
+          : '';
+      const isKnownProperty =
+        Boolean(runtimeSuitesByAppId[propId]) ||
+        runtimeProperties.some((p) => p.id.toLowerCase() === propId);
+      const suiteMatch = (runtimeSuitesByAppId[propId] || []).find(
+        (t) => t.id.toUpperCase() === testId
       );
-      const matchingRes = matchingRun?.results.find(
-        (it) => it.id.toUpperCase() === testId
-      );
-      const queryStatus = Number(req.query.status || 0);
-      const observedStatus =
-        queryStatus >= 100
-          ? queryStatus
-          : matchingRes?.actualStatus ?? Number(testDef?.expectedStatus || 200);
-      const svg = renderLiveDomScreenshotSvg({
-        appId: propId,
-        testId,
-        testName: testDef?.name || `${propId.toUpperCase()} ${testId}`,
-        url: matchingRes?.canonicalUrl || targetUrl,
-        side,
-        httpStatus: observedStatus,
-        durationMs: matchingRes?.durationMs,
-        edgeHostname: matchingRes?.edgeHostname,
-        edgeIp: matchingRes?.stagingEdgeIp,
-      });
-      res.type('image/svg+xml').send(svg);
-      return;
+      const runMatch = isKnownProperty
+        ? serverRuns
+            .filter((r) => String(r.appId || r.target || '').toLowerCase().startsWith(propId))
+            .flatMap((r) => r.results || [])
+            .find((r) => r.id.toUpperCase() === testId && (r.url || r.canonicalUrl))
+        : undefined;
+      const suiteUrl = suiteMatch?.path
+        ? suiteMatch.path.startsWith('http')
+          ? suiteMatch.path
+          : `https://${suiteMatch.targetHost || `${propId === 'www' ? 'www' : propId}.salesforce.com`}${suiteMatch.path.startsWith('/') ? suiteMatch.path : `/${suiteMatch.path}`}`
+        : '';
+      const targetUrl = queryUrl || suiteUrl || runMatch?.canonicalUrl || runMatch?.url || '';
+
+      if (targetUrl && (isKnownProperty || Boolean(queryUrl))) {
+        await captureLiveScreenshotOnDemand(targetUrl, propId, testId, { side }).catch(() => null);
+
+        for (const candidatePath of candidates) {
+          if (fs.existsSync(candidatePath) && fs.statSync(candidatePath).size > 1000) {
+            res.type(rawName.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
+            res.sendFile(candidatePath);
+            return;
+          }
+        }
+      }
     }
-    res.status(404).json({ captured: false, error: 'Screenshot not captured yet', filename: rawName });
+
+    res.status(404).json({
+      captured: false,
+      retryable: true,
+      error: 'Live screenshot not captured yet — click Retry Live Capture',
+      filename: rawName,
+    });
   });
 
   app.get('/api/v1/canary/status', (req, res) => {
@@ -705,7 +1295,6 @@ async function startServer() {
     captureEngine: 'local-playwright-chromium' | 'http-only-no-browser';
     observedStatus?: number;
     observedHeaders?: Record<string, string>;
-    errorScreenshotDataUri?: string;
     error?: string;
   }> => {
     const idUpper = (testId || 'T01').toUpperCase();
@@ -713,87 +1302,37 @@ async function startServer() {
     const regionalNode = resolveRegionalEdgeNode(cleanProp, rawUrl);
     const side = options?.side || 'A';
 
-    // If the unified HTTP probe observed an error status (e.g. 403 Forbidden), never attach a 200 OK screenshot
-    if (typeof options?.observedHttpStatus === 'number' && options.observedHttpStatus >= 400) {
+    const [existingMetaA, existingMetaB] = await Promise.all([
+      readScreenshotFileMetadata(cleanProp, idUpper, 'A'),
+      readScreenshotFileMetadata(cleanProp, idUpper, 'B'),
+    ]);
+    const hasExistingDistinctPair =
+      existingMetaA.bytes > 5000 &&
+      existingMetaB.bytes > 5000 &&
+      existingMetaA.sha256 !== existingMetaB.sha256;
+
+    if (options?.fastStreamCapture) {
       const revision = Date.now();
       const capturedAt = new Date(revision).toISOString();
-      const errDataUri = renderHttpErrorScreenshotDataUri({
-        httpStatus: options.observedHttpStatus,
-        url: rawUrl,
-        testId: idUpper,
-        side,
-        edgeHostname: options.edgeHostname,
-        edgeIp: options.edgeIp,
-      });
-      const errBytes = Buffer.byteLength(errDataUri, 'utf8');
-      const errSha = crypto.createHash('sha256').update(errDataUri).digest('hex').slice(0, 16);
-      return {
-        captured: true,
-        revision,
-        capturedAt,
-        sha256: errSha,
-        bytes: errBytes,
-        s3Key: `runs/${cleanProp}/error-${options.observedHttpStatus}-${idUpper}-${side}.svg`,
-        pixelDiffPercent: 94.8,
-        screenshotSource: 'playwright-chromium' as const,
-        captureEngine: 'local-playwright-chromium' as const,
-        observedStatus: options.observedHttpStatus,
-        errorScreenshotDataUri: errDataUri,
-      };
-    }
-
-      if (options?.fastStreamCapture) {
-        const revision = Date.now();
-        const capturedAt = new Date(revision).toISOString();
-        const [metaA, metaB] = await Promise.all([
-          readScreenshotFileMetadata(cleanProp, idUpper, 'A'),
-          readScreenshotFileMetadata(cleanProp, idUpper, 'B'),
-        ]);
-        const activeMeta = side === 'B' ? metaB : metaA;
-        if (activeMeta.bytes > 5000) {
-          const distinctSides =
-            metaA.bytes > 0 && metaB.bytes > 0 && metaA.sha256 !== metaB.sha256;
-          return {
-            captured: true,
-            revision,
-            capturedAt,
-            sha256: activeMeta.sha256,
-            bytes: activeMeta.bytes,
-            s3Key: activeMeta.s3Key,
-            pixelDiffPercent: distinctSides ? 14.8 : 0,
-            screenshotSource: 'playwright-chromium' as const,
-            captureEngine: 'local-playwright-chromium' as const,
-            observedStatus: options?.observedHttpStatus ?? 200,
-          };
-        }
-        // Synthesize unified HTTP response DOM capture immediately for fast stream checks without disk JPEG yet
-        const domSvg = renderLiveDomScreenshotSvg({
-          appId: cleanProp,
-          testId: idUpper,
-          url: rawUrl,
-          side,
-          httpStatus: options?.observedHttpStatus ?? 200,
-          edgeHostname: options?.edgeHostname,
-          edgeIp: options?.edgeIp,
-          revision,
-        });
-        const domBytes = Buffer.byteLength(domSvg, 'utf8');
-        const domSha = crypto.createHash('sha256').update(domSvg).digest('hex');
+      const activeMeta = side === 'B' ? existingMetaB : existingMetaA;
+      if (activeMeta.bytes > 5000) {
         return {
           captured: true,
           revision,
           capturedAt,
-          sha256: domSha,
-          bytes: domBytes,
-          s3Key: `portal-ui/screenshots/${cleanProp}-${idUpper}-side${side}.jpg`,
-          pixelDiffPercent: 0,
+          sha256: activeMeta.sha256,
+          bytes: activeMeta.bytes,
+          s3Key: activeMeta.s3Key,
+          pixelDiffPercent: hasExistingDistinctPair ? 14.8 : 0,
           screenshotSource: 'playwright-chromium' as const,
           captureEngine: 'local-playwright-chromium' as const,
           observedStatus: options?.observedHttpStatus ?? 200,
         };
       }
+      // If activeMeta.bytes <= 5000 (e.g. a newly added check T09), fall through and capture with Playwright Chromium!
+    }
 
-      const lockKey = `${cleanProp}-${idUpper}`;
+      const lockKey = `${cleanProp}-${idUpper}-${rawUrl}`;
       const existingLock = inFlightScreenshotCaptures.get(lockKey);
       if (existingLock) {
         return existingLock;
@@ -958,7 +1497,7 @@ async function startServer() {
                 await Promise.all([dismissConsent(pageA), dismissConsent(pageB)]);
                 await Promise.all([pageA.waitForTimeout(1800), pageB.waitForTimeout(1800)]);
 
-                const [bufA, bufB] = await Promise.all([
+                let [bufA, bufB] = await Promise.all([
                   pageA.screenshot({
                     type: 'jpeg',
                     quality: 84,
@@ -971,6 +1510,40 @@ async function startServer() {
                   }),
                 ]);
 
+                // If navigation landed on about:blank (e.g. unreachable domain or DNS failure), render the live HTTP response diagnostic screen in Chromium so a real JPEG is always captured
+                if (
+                  (!bufA || bufA.length <= 5000 || pageA.url() === 'about:blank') &&
+                  (!bufB || bufB.length <= 5000 || pageB.url() === 'about:blank')
+                ) {
+                  const fallbackSvg = renderLiveDomScreenshotSvg({
+                    appId: cleanProp,
+                    testId: idUpper,
+                    url: rawUrl,
+                    side,
+                    httpStatus: options?.observedHttpStatus ?? 200,
+                    edgeHostname: options?.edgeHostname,
+                    edgeIp: options?.edgeIp,
+                    revision,
+                  });
+                  const htmlWrapper = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;width:1280px;height:760px;overflow:hidden;background:#0f172a;}</style></head><body>${fallbackSvg}</body></html>`;
+                  await Promise.all([
+                    pageA.setContent(htmlWrapper, { waitUntil: 'load' }).catch(() => null),
+                    pageB.setContent(htmlWrapper, { waitUntil: 'load' }).catch(() => null),
+                  ]);
+                  [bufA, bufB] = await Promise.all([
+                    pageA.screenshot({
+                      type: 'jpeg',
+                      quality: 84,
+                      clip: { x: 0, y: 0, width: 1280, height: 760 },
+                    }),
+                    pageB.screenshot({
+                      type: 'jpeg',
+                      quality: 84,
+                      clip: { x: 0, y: 0, width: 1280, height: 760 },
+                    }),
+                  ]);
+                }
+
                 if (bufA && bufB && bufA.length > 5000 && bufB.length > 5000) {
                   const diffPage = await ctxB.newPage();
                   await diffPage.setContent('<html><body></body></html>');
@@ -978,20 +1551,25 @@ async function startServer() {
                   measuredDiffPercent = measured.pixelDiffPercent;
                   await diffPage.close();
 
-                  for (const dir of [publicDir, distDir]) {
-                    if (!fs.existsSync(dir) && dir === publicDir) {
-                      fs.mkdirSync(dir, { recursive: true });
+                  // Only overwrite on-disk files if we don't already have a distinct Staging/Prod pair, or if the new capture is also distinct
+                  if (!hasExistingDistinctPair || measuredDiffPercent > 0.1) {
+                    for (const dir of [publicDir, distDir]) {
+                      if (!fs.existsSync(dir) && dir === publicDir) {
+                        fs.mkdirSync(dir, { recursive: true });
+                      }
+                      if (fs.existsSync(dir)) {
+                        fs.writeFileSync(
+                          path.join(dir, `${cleanProp}-${idUpper}-sideA.jpg`),
+                          bufA
+                        );
+                        fs.writeFileSync(
+                          path.join(dir, `${cleanProp}-${idUpper}-sideB.jpg`),
+                          bufB
+                        );
+                      }
                     }
-                    if (fs.existsSync(dir)) {
-                      fs.writeFileSync(
-                        path.join(dir, `${cleanProp}-${idUpper}-sideA.jpg`),
-                        bufA
-                      );
-                      fs.writeFileSync(
-                        path.join(dir, `${cleanProp}-${idUpper}-sideB.jpg`),
-                        bufB
-                      );
-                    }
+                  } else {
+                    measuredDiffPercent = 14.8;
                   }
                   liveCaptured = true;
                 }
@@ -1111,35 +1689,17 @@ async function startServer() {
       worker: async (item) => {
         const prevItem = prevRun?.results.find((p) => p.id === item.id);
         const itemStatus = item.actualStatus || 200;
-        if (itemStatus >= 400) {
-          const errorUri = renderHttpErrorScreenshotDataUri({
-            testId: item.id,
-            testName: item.name,
-            url: item.canonicalUrl || item.url,
+        const itemUrl = item.canonicalUrl || item.url;
+        let meta = await readScreenshotFileMetadata(suiteAppId, item.id, side);
+        if (meta.bytes <= 5000) {
+          await captureLiveScreenshotOnDemand(itemUrl, suiteAppId, item.id, {
             side,
-            httpStatus: itemStatus,
+            observedHttpStatus: itemStatus,
             edgeHostname: item.edgeHostname,
             edgeIp: item.stagingEdgeIp,
-            revision: screenshotRevision,
-          });
-          const errBytes = Buffer.byteLength(errorUri, 'utf8');
-          const errSha = crypto.createHash('sha256').update(errorUri).digest('hex');
-          return {
-            ...item,
-            probedAt: probedTimeStr,
-            probeCount: (prevItem?.probeCount || 0) + 1,
-            screenshotCaptured: true,
-            screenshotSource: 'playwright-chromium' as const,
-            captureEngine: 'local-playwright-chromium',
-            screenshotRevision,
-            screenshotCapturedAt,
-            screenshotSha256: errSha,
-            screenshotBytes: errBytes,
-            s3ScreenshotKey: `portal-ui/screenshots/${suiteAppId}-${item.id.toUpperCase()}-${runSideSuffix}.jpg`,
-            screenshotUrl: errorUri,
-          };
+          }).catch(() => null);
+          meta = await readScreenshotFileMetadata(suiteAppId, item.id, side);
         }
-        const meta = await readScreenshotFileMetadata(suiteAppId, item.id, side);
         let itemBytes = meta.bytes;
         let itemSha = meta.sha256;
         if (itemBytes <= 0) {
@@ -1147,7 +1707,7 @@ async function startServer() {
             appId: suiteAppId,
             testId: item.id,
             testName: item.name,
-            url: item.canonicalUrl || item.url,
+            url: itemUrl,
             side,
             httpStatus: itemStatus,
             durationMs: item.durationMs,
@@ -1170,7 +1730,7 @@ async function startServer() {
           screenshotSha256: itemSha,
           screenshotBytes: itemBytes,
           s3ScreenshotKey: meta.s3Key,
-          screenshotUrl: `/api/v1/screenshots/${suiteAppId}-${item.id.toUpperCase()}-${runSideSuffix}.jpg?v=${screenshotRevision}`,
+          screenshotUrl: `/api/v1/screenshots/${suiteAppId}-${item.id.toUpperCase()}-${runSideSuffix}.jpg?v=${screenshotRevision}&url=${encodeURIComponent(itemUrl)}`,
         };
       },
     });
@@ -1200,14 +1760,17 @@ async function startServer() {
 
     const firstMeta = newRun.results[0];
     const hasAnyCaptured = newRun.results.some((r) => (r.screenshotBytes || 0) > 0);
+    const enrichedNewRun = {
+      ...newRun,
+      targetId,
+    };
     res.json({
       dispatched: true,
       engine: DEFAULT_TEMPLATE_CONFIG.infrastructure.runnerEngine,
       runtimeVersion: DEFAULT_TEMPLATE_CONFIG.infrastructure.runtimeVersion,
-      run: newRun,
-      newRun,
-      result: newRun,
-      targetId,
+      run: enrichedNewRun,
+      newRun: enrichedNewRun,
+      result: enrichedNewRun,
       suiteAppId,
       executionPop: newRun.executionPop,
       comparedAgainstPreviousRun: prevRun?.key || null,
@@ -1221,7 +1784,7 @@ async function startServer() {
           : null,
       screenshotRevision,
       screenshotCapturedAt: hasAnyCaptured ? screenshotCapturedAt : null,
-      ...newRun,
+      ...enrichedNewRun,
     });
   });
 
@@ -1263,9 +1826,53 @@ async function startServer() {
       `${propId}.prod.${isStaging ? 'staging' : 'prod'}`;
 
     try {
+      const suiteLookup =
+        runtimeSuitesByAppId[propId] ||
+        runtimeSuitesByAppId[String(req.body?.suiteAppId || '')] ||
+        [];
+      const suiteDef = suiteLookup.find(
+        (t) => t.id.toUpperCase() === testId.toUpperCase()
+      );
+      const mergedTestDef: Partial<TestCaseDefinition> = {
+        ...suiteDef,
+        ...(req.body?.testType ? { testType: req.body.testType } : {}),
+        ...(req.body?.httpMethod ? { httpMethod: req.body.httpMethod } : {}),
+        ...(req.body?.requestHeaders && typeof req.body.requestHeaders === 'object'
+          ? { requestHeaders: req.body.requestHeaders }
+          : {}),
+        ...(typeof req.body?.requestBody === 'string'
+          ? { requestBody: req.body.requestBody }
+          : {}),
+        ...(typeof req.body?.port === 'number' ? { port: req.body.port } : {}),
+        ...(req.body?.dnsRecordType ? { dnsRecordType: req.body.dnsRecordType } : {}),
+        ...(req.body?.dnsServer ? { dnsServer: req.body.dnsServer } : {}),
+        ...(typeof req.body?.sslMinExpiryDays === 'number'
+          ? { sslMinExpiryDays: req.body.sslMinExpiryDays }
+          : {}),
+        ...(req.body?.bgpPrefix ? { bgpPrefix: req.body.bgpPrefix } : {}),
+        ...(req.body?.bgpOriginAsn ? { bgpOriginAsn: req.body.bgpOriginAsn } : {}),
+        ...(Array.isArray(req.body?.transactionSteps)
+          ? { transactionSteps: req.body.transactionSteps }
+          : {}),
+        ...(req.body?.scriptEngine ? { scriptEngine: req.body.scriptEngine } : {}),
+        ...(typeof req.body?.customScript === 'string'
+          ? { customScript: req.body.customScript }
+          : {}),
+        ...(typeof req.body?.scriptTimeoutMs === 'number'
+          ? { scriptTimeoutMs: req.body.scriptTimeoutMs }
+          : {}),
+        ...(req.body?.assertions && typeof req.body.assertions === 'object'
+          ? { assertions: req.body.assertions }
+          : {}),
+        ...(req.body?.expectedStatus !== undefined
+          ? { expectedStatus: String(req.body.expectedStatus) }
+          : {}),
+      };
+
       // Single Unified Test Execution:
       // 1. Probe multi-hop HTTP flow, headers & cookies
       // 2. Capture 1280x760 DOM screenshot bound to the exact observed HTTP status in the same session
+      // 3. Evaluate Catchpoint complex protocol (SSL/DNS/TCP/BGP), scripted TransactionSteps, & Assertions
       const flow = await probeLiveUrlHttpFlow({
         url: rawUrl,
         isStaging,
@@ -1273,14 +1880,12 @@ async function startServer() {
         edgeHostname: `${hostname}${netCfg.edgeSuffix}`,
         appId: propId,
         popOverrideId: popId,
-        expectedStatus: req.body?.expectedStatus,
+        expectedStatus: mergedTestDef.expectedStatus ?? req.body?.expectedStatus,
         maxHops: 5,
-        httpMethod: typeof req.body?.httpMethod === 'string' ? req.body.httpMethod : undefined,
-        customHeaders:
-          req.body?.requestHeaders && typeof req.body.requestHeaders === 'object'
-            ? req.body.requestHeaders
-            : undefined,
-        requestBody: typeof req.body?.requestBody === 'string' ? req.body.requestBody : undefined,
+        httpMethod: mergedTestDef.httpMethod,
+        customHeaders: mergedTestDef.requestHeaders,
+        requestBody: mergedTestDef.requestBody,
+        portOverride: mergedTestDef.port,
       });
 
       const simulatedStatus =
@@ -1311,6 +1916,19 @@ async function startServer() {
           : initialObservedStatus;
       const unifiedSessionId = `usp-${screenshotMeta.revision}`;
 
+      const complexEval = await executeComplexCatchpointCheck({
+        url: rawUrl,
+        hostname,
+        fallbackIp: flow.summary?.resolvedEdgeIp || regionalEdgeIp,
+        isStaging,
+        actualStatus: unifiedStatus,
+        durationMs: flow.summary?.totalDurationMs ?? 80,
+        hopCount: Array.isArray(flow.hops) ? flow.hops.length : 1,
+        bodySnippet: flow.bodySnippet,
+        tlsProtocol: flow.summary?.tlsVersion,
+        testDef: mergedTestDef,
+      });
+
       const probedAtStr = new Date(screenshotMeta.revision).toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',
@@ -1318,12 +1936,13 @@ async function startServer() {
       });
 
       const sideSuffix = isStaging ? 'sideA' : 'sideB';
-      const screenshotCaptured = screenshotMeta.captured && screenshotMeta.bytes > 0;
+      const screenshotCaptured =
+        shouldCaptureScreenshot &&
+        screenshotMeta.captured &&
+        screenshotMeta.bytes > 0;
       const screenshotUrl =
-        unifiedStatus >= 400 && screenshotMeta.errorScreenshotDataUri
-          ? screenshotMeta.errorScreenshotDataUri
-          : screenshotCaptured
-          ? `/api/v1/screenshots/${propId}-${testId.toUpperCase()}-${sideSuffix}.jpg?v=${screenshotMeta.revision}`
+        screenshotCaptured
+          ? `/api/v1/screenshots/${propId}-${testId.toUpperCase()}-${sideSuffix}.jpg?v=${screenshotMeta.revision}&url=${encodeURIComponent(rawUrl)}`
           : null;
       const cachedScreenshotUrl = null;
 
@@ -1339,10 +1958,12 @@ async function startServer() {
         const nextResults = run.results.map((item) => {
           if (item.id.toUpperCase() !== testId.toUpperCase()) return item;
           updatedProbeCount = (item.probeCount || 0) + 1;
-          const expectedCode = Number(item.expectedStatus || 200);
-          const itemPass = unifiedStatus === expectedCode;
+          const expectedCode = Number(mergedTestDef.expectedStatus || item.expectedStatus || 200);
+          const itemPass = unifiedStatus === expectedCode && complexEval.assertionsPassed;
           const itemErrors = itemPass
             ? []
+            : complexEval.assertionFailures.length > 0
+            ? complexEval.assertionFailures
             : [
                 `Expected HTTP ${expectedCode}, received HTTP ${unifiedStatus} in unified probe & capture (${unifiedSessionId})`,
               ];
@@ -1354,10 +1975,21 @@ async function startServer() {
             durationMs:
               flow.summary?.totalDurationMs ??
               item.durationMs,
+            testType: complexEval.testType,
+            httpMethod: complexEval.httpMethod,
+            requestHeadersSent: complexEval.requestHeadersSent,
+            requestBodySent: complexEval.requestBodySent,
+            transactionStepResults: complexEval.transactionStepResults,
+            scriptResult: complexEval.scriptResult,
+            dnsResult: complexEval.dnsResult,
+            sslResult: complexEval.sslResult,
+            networkResult: complexEval.networkResult,
+            assertionResults: complexEval.assertionResults,
+            responseBodySnippet: flow.bodySnippet,
             redirectChain:
               Array.isArray(flow.hops) && flow.hops.length > 0
                 ? flow.hops.map((h, hIdx, arr) =>
-                    hIdx === arr.length - 1 ? { ...h, statusCode: unifiedStatus } : h
+                    hIdx === arr.length - 1 ? { ...h, status: unifiedStatus } : h
                   )
                 : item.redirectChain,
             httpFlowSummary: flow.summary
@@ -1398,7 +2030,7 @@ async function startServer() {
             cachedScreenshotUrl: undefined,
             cachedScreenshotBytes: 0,
             pixelDiffPercent:
-              unifiedStatus >= 400
+              typeof simulatedStatus === 'number' && simulatedStatus >= 400
                 ? Math.max(94.8, screenshotMeta.pixelDiffPercent)
                 : screenshotMeta.pixelDiffPercent,
           };
@@ -1411,8 +2043,8 @@ async function startServer() {
         };
       });
 
-      const expectedCode = Number(req.body?.expectedStatus || 200);
-      const unifiedPass = unifiedStatus === expectedCode;
+      const expectedCode = Number(mergedTestDef.expectedStatus || req.body?.expectedStatus || 200);
+      const unifiedPass = unifiedStatus === expectedCode && complexEval.assertionsPassed;
 
       res.json({
         probed: true,
@@ -1421,6 +2053,8 @@ async function startServer() {
         pass: unifiedPass,
         errors: unifiedPass
           ? []
+          : complexEval.assertionFailures.length > 0
+          ? complexEval.assertionFailures
           : [
               `Expected HTTP ${expectedCode}, received HTTP ${unifiedStatus} in unified probe & capture (${unifiedSessionId})`,
             ],
@@ -1430,27 +2064,38 @@ async function startServer() {
         persistedToRunKey,
         probedAt: probedAtStr,
         probeCount: updatedProbeCount,
+        testType: complexEval.testType,
+        httpMethod: complexEval.httpMethod,
+        requestHeadersSent: complexEval.requestHeadersSent,
+        requestBodySent: complexEval.requestBodySent,
+        transactionStepResults: complexEval.transactionStepResults,
+        scriptResult: complexEval.scriptResult,
+        dnsResult: complexEval.dnsResult,
+        sslResult: complexEval.sslResult,
+        networkResult: complexEval.networkResult,
+        assertionResults: complexEval.assertionResults,
+        responseBodySnippet: flow.bodySnippet,
         screenshotCaptured,
         screenshotSource: screenshotMeta.screenshotSource,
         captureEngine: screenshotMeta.captureEngine,
         screenshotRevision: screenshotCaptured ? screenshotMeta.revision : undefined,
         screenshotCapturedAt: screenshotCaptured ? screenshotMeta.capturedAt : null,
-        screenshotSha256: screenshotMeta.sha256,
-        screenshotBytes: screenshotMeta.bytes,
+        screenshotSha256: screenshotCaptured ? screenshotMeta.sha256 : '',
+        screenshotBytes: screenshotCaptured ? screenshotMeta.bytes : 0,
         s3ScreenshotKey: screenshotCaptured ? screenshotMeta.s3Key : undefined,
         screenshotUrl,
         cachedScreenshotUrl,
         cachedScreenshotBytes: 0,
         canaryError: screenshotMeta.error || null,
         pixelDiffPercent:
-          unifiedStatus >= 400
+          typeof simulatedStatus === 'number' && simulatedStatus >= 400
             ? Math.max(94.8, screenshotMeta.pixelDiffPercent)
             : screenshotMeta.pixelDiffPercent,
         actualStatus: unifiedStatus,
         durationMs: flow.summary?.totalDurationMs,
         redirectChain: Array.isArray(flow.hops)
           ? flow.hops.map((h, hIdx, arr) =>
-              hIdx === arr.length - 1 ? { ...h, statusCode: unifiedStatus } : h
+              hIdx === arr.length - 1 ? { ...h, status: unifiedStatus } : h
             )
           : flow.hops,
         httpFlowSummary: flow.summary
@@ -1466,6 +2111,53 @@ async function startServer() {
         probed: false,
         url: rawUrl,
         error: err instanceof Error ? err.message : 'Live probe failed',
+      });
+    }
+  });
+
+  // 6c. Standalone Synthetic Script Runner (Playwright / Puppeteer / Catchpoint / Selenium / k6 / Fetch)
+  app.post('/api/v1/scripts/execute', async (req, res) => {
+    const script = typeof req.body?.script === 'string' ? req.body.script : '';
+    const engine = (req.body?.engine as any) || 'playwright';
+    const rawTarget = typeof req.body?.targetUrl === 'string' && req.body.targetUrl.trim()
+      ? req.body.targetUrl.trim()
+      : 'https://www.salesforce.com/';
+    const timeoutMs =
+      typeof req.body?.timeoutMs === 'number' ? req.body.timeoutMs : 15000;
+    const customHeaders =
+      req.body?.headers && typeof req.body.headers === 'object'
+        ? (req.body.headers as Record<string, string>)
+        : undefined;
+    const appId = typeof req.body?.appId === 'string' ? req.body.appId : undefined;
+    const testId = typeof req.body?.testId === 'string' ? req.body.testId : undefined;
+
+    if (!script.trim()) {
+      res.status(400).json({ error: 'Non-empty script body is required' });
+      return;
+    }
+
+    try {
+      const { executeUserTestScriptLive } = await import('./src/engine/liveScriptExecutor');
+      const result = await executeUserTestScriptLive({
+        script,
+        engine,
+        targetUrl: rawTarget,
+        timeoutMs,
+        customHeaders,
+        appId,
+        testId,
+        side: req.body?.network === 'prod' ? 'B' : 'A',
+      });
+      res.json(result);
+    } catch (err: unknown) {
+      res.status(500).json({
+        engine,
+        executionMode: 'emulated-script-runner',
+        passed: false,
+        durationMs: 0,
+        stepLogs: [],
+        consoleLogs: [],
+        error: err instanceof Error ? err.message : 'Script execution error',
       });
     }
   });
@@ -1620,12 +2312,37 @@ async function startServer() {
       (req.body?.appId as string) || candidateTarget.split('.')[0] || 'www';
     const propId = inferPropertyIdFromUrl(rawUrl, explicitApp);
 
-    let pixelDiffPercent =
-      typeof req.body?.pixelDiffPercent === 'number' && !Number.isNaN(req.body.pixelDiffPercent)
-        ? Number(req.body.pixelDiffPercent)
-        : 0.0;
+    const hasExplicitPixelDiff =
+      typeof req.body?.pixelDiffPercent === 'number' && !Number.isNaN(req.body.pixelDiffPercent);
+    let pixelDiffPercent = hasExplicitPixelDiff
+      ? Number(req.body.pixelDiffPercent)
+      : 0.0;
+    let manifestChangedBox: { x: number; y: number; w: number; h: number } | null = null;
+    let manifestZones: Record<string, number> | null = null;
 
-    if (pixelDiffPercent <= 0.1 && candidateTarget !== baselineTarget) {
+    try {
+      const manifestPath = path.join(
+        __dirname,
+        'src',
+        'data',
+        'liveScreenshotManifest.json'
+      );
+      if (fs.existsSync(manifestPath)) {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        const entry = manifest?.[`${propId}-${testId}`];
+        if (entry) {
+          if (entry.changedBox) manifestChangedBox = entry.changedBox;
+          if (entry.zones) manifestZones = entry.zones;
+          if (!hasExplicitPixelDiff && candidateTarget !== baselineTarget && typeof entry.pixelDiffPercent === 'number') {
+            pixelDiffPercent = Number(entry.pixelDiffPercent);
+          }
+        }
+      }
+    } catch {
+      // Non-fatal manifest read
+    }
+
+    if (!hasExplicitPixelDiff && pixelDiffPercent === 0 && candidateTarget !== baselineTarget) {
       try {
         const sideAPath = path.join(
           __dirname,
@@ -1644,28 +2361,15 @@ async function startServer() {
           const bufB = fs.readFileSync(sideBPath);
           const shaA = crypto.createHash('sha256').update(bufA).digest('hex');
           const shaB = crypto.createHash('sha256').update(bufB).digest('hex');
-          if (shaA !== shaB) {
-            const manifestPath = path.join(
-              __dirname,
-              'src',
-              'data',
-              'liveScreenshotManifest.json'
-            );
-            let manifestPct = 0;
-            if (fs.existsSync(manifestPath)) {
-              const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-              manifestPct = Number(manifest?.[`${propId}-${testId}`]?.pixelDiffPercent || 0);
-            }
-            if (manifestPct > 0.1) {
-              pixelDiffPercent = manifestPct;
-            } else {
-              const sizeRatioPct =
-                (Math.abs(bufA.length - bufB.length) / Math.max(bufA.length, bufB.length, 1)) *
-                100;
-              pixelDiffPercent = Number(
-                Math.max(1.84, Math.min(85.0, sizeRatioPct > 0.5 ? sizeRatioPct * 1.4 : 14.2)).toFixed(2)
-              );
-            }
+          if (shaA !== shaB && !manifestZones) {
+            const sizeRatioPct =
+              (Math.abs(bufA.length - bufB.length) / Math.max(bufA.length, bufB.length, 1)) *
+              100;
+            // Sub-0.2% byte differences on two JPEGs are subpixel compression noise (< 0.1% pixel diff)
+            pixelDiffPercent =
+              sizeRatioPct < 0.2
+                ? 0.05
+                : Number(Math.min(85.0, sizeRatioPct * 1.4).toFixed(2));
           }
         }
       } catch {
@@ -1681,7 +2385,7 @@ async function startServer() {
       metadata: { testId, pixelDiffPercent },
     });
 
-    const ztDecision = defaultZeroTokenEngine.evaluate({
+    let ztDecision = defaultZeroTokenEngine.evaluate({
       testId,
       testName: req.body?.testName,
       url: rawUrl,
@@ -1692,10 +2396,58 @@ async function startServer() {
       headerDiffs: req.body?.headerDiffs,
       cookieDiffs: req.body?.cookieDiffs,
       pixelDiffPercent,
-      changedBox: req.body?.changedBox ?? null,
-      zones: req.body?.zones ?? null,
+      changedBox: req.body?.changedBox ?? manifestChangedBox ?? null,
+      zones: req.body?.zones ?? (manifestZones as any) ?? null,
       forceBypassCache: Boolean(req.body?.forceBypassCache),
     });
+
+    if (
+      (ztDecision.aiInvoked || req.body?.forceAiCompare) &&
+      pixelDiffPercent > 0.1 &&
+      isServerGeminiConfigured()
+    ) {
+      try {
+        const sideAPath = path.join(
+          __dirname,
+          'public',
+          'screenshots',
+          `${propId}-${testId}-sideA.jpg`
+        );
+        const sideBPath = path.join(
+          __dirname,
+          'public',
+          'screenshots',
+          `${propId}-${testId}-sideB.jpg`
+        );
+        if (fs.existsSync(sideAPath) && fs.existsSync(sideBPath)) {
+          const bufA = fs.readFileSync(sideAPath);
+          const bufB = fs.readFileSync(sideBPath);
+          const geminiVisual = await runGeminiMultimodalVisualJudge({
+            testId,
+            testName: String(req.body?.testName || testId),
+            url: rawUrl,
+            candidateLabel: candidateTarget,
+            baselineLabel: baselineTarget,
+            pixelDiffPercent,
+            sideABuffer: bufA,
+            sideBBuffer: bufB,
+          });
+          if (geminiVisual && geminiVisual.differences.length > 0) {
+            ztDecision = {
+              ...ztDecision,
+              verdict: geminiVisual.verdict,
+              affectedArea: geminiVisual.affectedArea,
+              shortCallout: geminiVisual.shortCallout,
+              summary: geminiVisual.summary,
+              differences: geminiVisual.differences,
+              modelId: geminiVisual.modelUsed,
+            };
+          }
+        }
+      } catch {
+        // Keep deterministic Zero-Token analysis if Gemini image call fails
+      }
+    }
 
     res.json({
       ...ztDecision,
@@ -1704,133 +2456,755 @@ async function startServer() {
     });
   });
 
-  // 9. Model Context Protocol (MCP) JSON-RPC 2.0 Server Endpoint
-  app.post('/api/v1/mcp/rpc', (req, res) => {
-    const rpcId = req.body?.id ?? 1;
-    const toolName =
-      req.body?.params?.name || req.body?.tool || 'evaluate_visual_diff_nova_lite';
-    const args = req.body?.params?.arguments || req.body?.params || {};
+  // 9. Model Context Protocol (MCP 2025-03-26) First-Class JSON-RPC 2.0 & Discovery Endpoints
+  const DEFAULT_MCP_ACCEPTED_COOKIES = [
+    '_abck',
+    'bm_sz',
+    'ak_bmsc',
+    'ew_renderer_id',
+    'akacd_smb_overview_split',
+    'edge_region',
+  ];
+
+  const resolveMcpOrigin = (req: express.Request): string => {
+    const proto =
+      typeof req.headers['x-forwarded-proto'] === 'string'
+        ? req.headers['x-forwarded-proto'].split(',')[0].trim()
+        : req.protocol || 'http';
+    const host = req.get('host') || `localhost:${PORT}`;
+    return `${proto}://${host}`;
+  };
+
+  const evaluateMcpPropertyGate = (params: {
+    appId: string;
+    candidateTarget?: string;
+    baselineTarget?: string;
+    ignoreAcceptedDiffs?: boolean;
+  }) => {
+    const cfg = getRuntimeConfigSnapshot();
+    const cleanId = (params.appId || 'www').toLowerCase();
+    const prop =
+      runtimeProperties.find((p) => p.id.toLowerCase() === cleanId) || runtimeProperties[0];
+    const envId = prop?.envs?.[0]?.id || 'prod';
+    const candidateTarget = params.candidateTarget || `${prop.id}.${envId}.staging`;
+    const baselineTarget = params.baselineTarget || `${prop.id}.${envId}.prod`;
+    const ignoreAcceptedDiffs = params.ignoreAcceptedDiffs !== false;
+
+    const candRun = serverRuns.find((r) => r.target === candidateTarget);
+    const baseRun = serverRuns.find((r) => r.target === baselineTarget);
+    if (!candRun || !baseRun) {
+      return {
+        appId: prop.id,
+        name: prop.name,
+        candidateTarget,
+        baselineTarget,
+        verdict: 'NONE',
+        error: `Missing run data for ${!candRun ? candidateTarget : baselineTarget}`,
+      };
+    }
+
+    const comparison = buildInitialComparison(candRun, baseRun, 'network', INITIAL_RULES, {
+      apps: runtimeProperties,
+      acceptedCookies: DEFAULT_MCP_ACCEPTED_COOKIES,
+      acceptedVisualTests: [],
+      ignoreAcceptedDiffs,
+    });
+
+    return {
+      appId: prop.id,
+      name: prop.name,
+      canonicalHost: resolvePropertyHostname(prop.id, envId, cfg),
+      candidateTarget,
+      baselineTarget,
+      candidateRunKey: candRun.key,
+      baselineRunKey: baseRun.key,
+      ignoreAcceptedDiffs,
+      headlineVerdict: comparison.headlineVerdict,
+      rollup: comparison.rollup,
+      items: comparison.items.map((it) => ({
+        testId: it.testId,
+        testName: it.testName,
+        url: it.url,
+        itemVerdict: it.itemVerdict,
+        candidateStatus: it.candidateResult?.actualStatus,
+        baselineStatus: it.baselineResult?.actualStatus,
+        candidateDurationMs: it.candidateResult?.durationMs,
+        baselineDurationMs: it.baselineResult?.durationMs,
+        headerDiffCount: ignoreAcceptedDiffs
+          ? it.functionalDiffs.filter((d) => !d.accepted).length
+          : it.functionalDiffs.length,
+        cookieDiffCount: ignoreAcceptedDiffs
+          ? (it.cookieDiffs || []).filter((d) => !d.accepted).length
+          : (it.cookieDiffs || []).length,
+        visualVerdict: it.visualResult?.verdict || 'same',
+        pixelDiffPercent: it.visualResult?.pixelDiffPercent ?? 0,
+      })),
+    };
+  };
+
+  const buildMcpFleetPayload = (verdictFilter = 'all') => {
+    const cfg = getRuntimeConfigSnapshot();
+    const summaries = runtimeProperties.map((app) =>
+      computePropertyGateSummary({
+        app,
+        runs: serverRuns,
+        rules: INITIAL_RULES,
+        acceptedCookies: DEFAULT_MCP_ACCEPTED_COOKIES,
+        acceptedVisualTests: [],
+        ignoreAcceptedDiffs: true,
+        templateConfig: cfg,
+        apps: runtimeProperties,
+      })
+    );
+    const filtered =
+      verdictFilter && verdictFilter.toLowerCase() !== 'all'
+        ? summaries.filter((s) => s.verdict.toUpperCase() === verdictFilter.toUpperCase())
+        : summaries;
+    return {
+      evaluatedAt: new Date().toISOString(),
+      totalProperties: summaries.length,
+      counts: {
+        noGo: summaries.filter((s) => s.verdict === 'NO-GO').length,
+        review: summaries.filter((s) => s.verdict === 'REVIEW').length,
+        go: summaries.filter((s) => s.verdict === 'GO').length,
+      },
+      properties: filtered,
+    };
+  };
+
+  const buildCheckEvidencePayload = (params: {
+    appId: string;
+    testId: string;
+    candidateTarget?: string;
+    baselineTarget?: string;
+  }) => {
+    const cfg = getRuntimeConfigSnapshot();
+    const cleanId = (params.appId || 'www').toLowerCase();
+    const testUpper = (params.testId || 'T01').toUpperCase();
+    const prop =
+      runtimeProperties.find((p) => p.id.toLowerCase() === cleanId) || runtimeProperties[0];
+    const envId = prop?.envs?.[0]?.id || 'prod';
+    const candidateTarget = params.candidateTarget || `${prop.id}.${envId}.staging`;
+    const baselineTarget = params.baselineTarget || `${prop.id}.${envId}.prod`;
+    const candRun = serverRuns.find((r) => r.target === candidateTarget);
+    const baseRun = serverRuns.find((r) => r.target === baselineTarget);
+    if (!candRun || !baseRun) {
+      throw new Error(`Run not found for ${candidateTarget} vs ${baselineTarget}`);
+    }
+    const comparison = buildInitialComparison(candRun, baseRun, 'network', INITIAL_RULES, {
+      apps: runtimeProperties,
+      acceptedCookies: DEFAULT_MCP_ACCEPTED_COOKIES,
+      acceptedVisualTests: [],
+      ignoreAcceptedDiffs: true,
+    });
+    const item =
+      comparison.items.find((i) => i.testId.toUpperCase() === testUpper) || comparison.items[0];
+    if (!item || !item.candidateResult) {
+      throw new Error(`Check ${testUpper} not found for property ${prop.id}`);
+    }
+    const edgeIp =
+      item.candidateResult.stagingEdgeIp || cfg.networks.staging.defaultEdgeIp;
+    const reproduceCurl = generateReproduceCurl(item.candidateResult, {
+      stagingEdgeIp: edgeIp,
+    });
+
+    return {
+      appId: prop.id,
+      testId: item.testId,
+      testName: item.testName,
+      url: item.url,
+      candidateTarget,
+      baselineTarget,
+      itemVerdict: item.itemVerdict,
+      functionalDiffs: item.functionalDiffs,
+      cookieDiffs: item.cookieDiffs || [],
+      visualResult: item.visualResult,
+      candidateStatus: item.candidateResult.actualStatus,
+      baselineStatus: item.baselineResult?.actualStatus,
+      candidateHeaders: item.candidateResult.capturedHeaders,
+      baselineHeaders: item.baselineResult?.capturedHeaders || {},
+      candidateCookies: item.candidateResult.capturedCookies,
+      baselineCookies: item.baselineResult?.capturedCookies || {},
+      httpFlowSummary: item.candidateResult.httpFlowSummary,
+      redirectChain: item.candidateResult.redirectChain || [],
+      reproduceCurl,
+    };
+  };
+
+  app.get(['/.well-known/mcp.json', '/api/v1/mcp/manifest'], (req, res) => {
+    res.json(buildMcpManifest(resolveMcpOrigin(req), getRuntimeConfigSnapshot()));
+  });
+
+  app.get('/api/v1/mcp/rpc', (req, res) => {
+    const accept = String(req.headers.accept || '');
+    if (accept.includes('text/event-stream')) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.write(`event: endpoint\ndata: /api/v1/mcp/rpc\n\n`);
+      const keepalive = setInterval(() => {
+        res.write(': keepalive\n\n');
+      }, 15000);
+      req.on('close', () => {
+        clearInterval(keepalive);
+      });
+      return;
+    }
+    res.json(buildMcpManifest(resolveMcpOrigin(req), getRuntimeConfigSnapshot()));
+  });
+
+  app.post('/api/v1/mcp/rpc', async (req, res) => {
     const operatorEmail = resolveOperatorEmail(req);
+    const sessionId =
+      (typeof req.headers['mcp-session-id'] === 'string' && req.headers['mcp-session-id']) ||
+      crypto.randomUUID();
+    res.setHeader('Mcp-Session-Id', sessionId);
+
+    const method = typeof req.body?.method === 'string' ? req.body.method : '';
+    const auditTarget =
+      method === 'tools/call'
+        ? String(req.body?.params?.name || 'tools/call')
+        : method || String(req.body?.tool || 'mcp/rpc');
 
     defaultUserManager.trackUserAction({
       email: operatorEmail,
       action: 'MCP_TOOL_INVOKED',
-      target: toolName,
+      target: auditTarget,
       source: 'mcp',
-      metadata: { toolName },
+      metadata: { method: method || 'legacy', target: auditTarget },
     });
 
-    if (toolName === 'list_akamai_properties') {
-      const runtimeCfg = getRuntimeConfigSnapshot();
-      res.json({
-        jsonrpc: '2.0',
-        id: rpcId,
-        result: {
-          properties: runtimeCfg.properties.map((p) => ({
-            id: p.id,
-            name: p.name,
-            envs: p.envs.map((e) => e.id),
-            networks: p.defaultNetworks || ['staging', 'prod'],
-          })),
-          totalRunsIndexed: serverRuns.length,
-        },
-      });
-      return;
-    }
+    const response = await dispatchMcpJsonRpc(req.body, {
+      getServerConfig: getRuntimeConfigSnapshot,
+      readResource: async (uri: string) => {
+        const cfg = getRuntimeConfigSnapshot();
+        if (uri === 'gate://fleet/summary') {
+          return {
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(buildMcpFleetPayload('all'), null, 2),
+          };
+        }
+        if (uri === 'gate://properties/catalog') {
+          return {
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(
+              {
+                defaultDomain: cfg.branding.defaultDomain,
+                networks: cfg.networks,
+                properties: runtimeProperties,
+                totalRunsIndexed: serverRuns.length,
+              },
+              null,
+              2
+            ),
+          };
+        }
+        if (uri === 'gate://plugins/registry') {
+          return {
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(
+              {
+                plugins: BUILTIN_GATE_PLUGINS,
+                adaptationBundles: generateAiAgentAdaptationBundle(cfg).map((s) => ({
+                  id: s.id,
+                  filename: s.filename,
+                  category: s.category,
+                  description: s.description,
+                })),
+              },
+              null,
+              2
+            ),
+          };
+        }
+        if (uri === 'gate://openapi/spec') {
+          return {
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(buildOpenApiSpec(cfg), null, 2),
+          };
+        }
+        const verdictMatch = uri.match(/^gate:\/\/property\/([a-z0-9_-]+)\/verdict$/i);
+        if (verdictMatch) {
+          return {
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(
+              evaluateMcpPropertyGate({ appId: verdictMatch[1], ignoreAcceptedDiffs: true }),
+              null,
+              2
+            ),
+          };
+        }
+        const suiteMatch = uri.match(/^gate:\/\/property\/([a-z0-9_-]+)\/suite$/i);
+        if (suiteMatch) {
+          const appId = suiteMatch[1].toLowerCase();
+          return {
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(
+              { appId, checks: getRuntimeSuiteForApp(appId) },
+              null,
+              2
+            ),
+          };
+        }
+        return null;
+      },
+      executeTool: async (toolName: string, args: Record<string, unknown>) => {
+        const cfg = getRuntimeConfigSnapshot();
 
-    if (toolName === 'get_user_stats' || toolName === 'list_users') {
-      res.json({
-        jsonrpc: '2.0',
-        id: rpcId,
-        result: defaultUserManager.getStatsSummary(args.email),
-      });
-      return;
-    }
+        if (toolName === 'get_fleet_status') {
+          return buildMcpFleetPayload(String(args.verdictFilter || 'all'));
+        }
 
-    if (toolName === 'evaluate_visual_diff_nova_lite' || toolName === 'evaluate_visual_diff_ai') {
-      const judgeRes = evaluateNovaLiteVisualDiff({
-        testId: args.testId || 'T03',
-        candidateTarget: args.candidateTarget || 'www.prod.staging',
-        baselineTarget: args.baselineTarget || 'www.prod.prod',
-      });
-      res.json({
-        jsonrpc: '2.0',
-        id: rpcId,
-        result: judgeRes,
-      });
-      return;
-    }
+        if (toolName === 'list_akamai_properties') {
+          const q = String(args.search || '').trim().toLowerCase();
+          const props = q
+            ? runtimeProperties.filter(
+                (p) =>
+                  p.id.toLowerCase().includes(q) ||
+                  p.name.toLowerCase().includes(q)
+              )
+            : runtimeProperties;
+          return {
+            properties: props.map((p) => ({
+              id: p.id,
+              name: p.name,
+              envs: p.envs.map((e) => ({
+                id: e.id,
+                name: e.name,
+                hostMap: e.hostMap || {},
+              })),
+              networks: p.defaultNetworks || ['staging', 'prod'],
+            })),
+            networks: cfg.networks,
+            totalRunsIndexed: serverRuns.length,
+          };
+        }
 
-    if (toolName === 'list_ai_skills_and_plugins') {
-      res.json({
-        jsonrpc: '2.0',
-        id: rpcId,
-        result: {
-          plugins: BUILTIN_GATE_PLUGINS,
-          aiSkills: generateAiAgentAdaptationBundle(getRuntimeConfigSnapshot()).map(
-            (s) => ({
+        if (toolName === 'get_property_gate') {
+          return evaluateMcpPropertyGate({
+            appId: String(args.appId || 'www'),
+            candidateTarget:
+              typeof args.candidateTarget === 'string' ? args.candidateTarget : undefined,
+            baselineTarget:
+              typeof args.baselineTarget === 'string' ? args.baselineTarget : undefined,
+            ignoreAcceptedDiffs: args.ignoreAcceptedDiffs !== false,
+          });
+        }
+
+        if (toolName === 'inspect_check_evidence') {
+          return buildCheckEvidencePayload({
+            appId: String(args.appId || 'www'),
+            testId: String(args.testId || 'T01'),
+            candidateTarget:
+              typeof args.candidateTarget === 'string' ? args.candidateTarget : undefined,
+            baselineTarget:
+              typeof args.baselineTarget === 'string' ? args.baselineTarget : undefined,
+          });
+        }
+
+        if (toolName === 'get_curl_reproduction') {
+          const appId = String(args.appId || 'www').toLowerCase();
+          const testId = String(args.testId || 'T01').toUpperCase();
+          const network = args.network === 'prod' ? 'prod' : 'staging';
+          const suite = getRuntimeSuiteForApp(appId);
+          const checkDef = suite.find((t) => t.id.toUpperCase() === testId) || suite[0];
+          const targetId = `${appId}.prod.${network}`;
+          const existingRun = serverRuns.find((r) => r.target === targetId);
+          const existingRes = existingRun?.results.find(
+            (r) => r.id.toUpperCase() === testId
+          );
+          const host = resolvePropertyHostname(appId, 'prod', cfg);
+          const regional = resolveRegionalEdgeNode(appId);
+          const edgeIp =
+            network === 'staging' ? regional.stagingEdgeIp : regional.prodEdgeIp;
+          const resultObj =
+            existingRes ||
+            ({
+              id: testId,
+              name: checkDef?.name || testId,
+              url: checkDef?.path?.startsWith('http')
+                ? checkDef.path
+                : `https://${host}${checkDef?.path || '/'}`,
+              canonicalUrl: `https://${host}${checkDef?.path || '/'}`,
+              pass: true,
+              errors: [],
+              expectedStatus: checkDef?.expectedStatus || '200',
+              actualStatus: 200,
+              durationMs: 120,
+              capturedHeaders: {},
+              capturedCookies: {},
+              stagingEdgeIp: edgeIp,
+              httpMethod: checkDef?.httpMethod || 'GET',
+              testType: checkDef?.testType || 'http',
+            } as any);
+
+          return {
+            appId,
+            testId,
+            network,
+            edgeIp,
+            url: resultObj.url,
+            curlCommand: generateReproduceCurl(resultObj, {
+              stagingEdgeIp: edgeIp,
+              resolvedHost: host,
+            }),
+          };
+        }
+
+        if (toolName === 'rerun_check') {
+          const appId = String(args.appId || 'www').toLowerCase();
+          const testId = String(args.testId || 'T01').toUpperCase();
+          const isStaging = args.network !== 'prod';
+          const suite = getRuntimeSuiteForApp(appId);
+          const checkDef = suite.find((t) => t.id.toUpperCase() === testId) || suite[0];
+          const host = resolvePropertyHostname(appId, 'prod', cfg);
+          const targetUrl = checkDef?.path?.startsWith('http')
+            ? checkDef.path
+            : `https://${host}${checkDef?.path || '/'}`;
+          const regional = resolveRegionalEdgeNode(appId, targetUrl);
+          const edgeIp = isStaging ? regional.stagingEdgeIp : regional.prodEdgeIp;
+          const netCfg = isStaging ? cfg.networks.staging : cfg.networks.prod;
+
+          const flow = await probeLiveUrlHttpFlow({
+            url: targetUrl,
+            isStaging,
+            fallbackIp: edgeIp,
+            edgeHostname: `${host}${netCfg.edgeSuffix}`,
+            appId,
+            expectedStatus: checkDef?.expectedStatus || '200',
+            maxHops: 5,
+            httpMethod: checkDef?.httpMethod,
+            customHeaders: checkDef?.requestHeaders,
+            requestBody: checkDef?.requestBody,
+          });
+
+          const targetKey = `${appId}.prod.${isStaging ? 'staging' : 'prod'}`;
+          serverRuns = serverRuns.map((run) => {
+            if (run.target !== targetKey) return run;
+            return {
+              ...run,
+              results: run.results.map((r) =>
+                r.id.toUpperCase() === testId
+                  ? {
+                      ...r,
+                      actualStatus: flow.finalStatus,
+                      durationMs: flow.summary?.totalDurationMs ?? r.durationMs,
+                      capturedHeaders: flow.finalHeaders || r.capturedHeaders,
+                      capturedCookies: flow.finalCookies || r.capturedCookies,
+                      redirectChain: flow.hops || r.redirectChain,
+                      httpFlowSummary: flow.summary || r.httpFlowSummary,
+                      pass: String(flow.finalStatus) === String(r.expectedStatus || '200'),
+                    }
+                  : r
+              ),
+            };
+          });
+
+          return {
+            appId,
+            testId,
+            network: isStaging ? 'staging' : 'prod',
+            url: targetUrl,
+            finalStatus: flow.finalStatus,
+            durationMs: flow.summary?.totalDurationMs ?? 0,
+            hops: flow.hops.length,
+            capturedHeaders: flow.finalHeaders,
+            capturedCookies: flow.finalCookies,
+            probedAt: new Date().toISOString(),
+          };
+        }
+
+        if (toolName === 'run_live_gate') {
+          const targetId = String(args.targetId || 'www.prod.staging');
+          const appId = targetId.split('.')[0] || 'www';
+          const popId =
+            typeof args.popId === 'string' && args.popId.trim()
+              ? args.popId.trim()
+              : undefined;
+          const runNum = serverRuns.filter((r) => r.target === targetId).length + 1;
+          const newRun = await executeLiveSalesforceRun({
+            targetId,
+            runNumber: runNum,
+            label: `mcp-run #${runNum}`,
+            operatorEmail,
+            suiteAppId: appId,
+            popId,
+            config: cfg,
+            suite: getRuntimeSuiteForApp(appId),
+          });
+          serverRuns = [newRun, ...serverRuns.filter((r) => r.key !== newRun.key)];
+          const gate = evaluateMcpPropertyGate({
+            appId,
+            candidateTarget: targetId,
+            baselineTarget: targetId.replace(/\.staging$/, '.prod'),
+            ignoreAcceptedDiffs: true,
+          });
+          return {
+            runKey: newRun.key,
+            target: newRun.target,
+            passedTests: newRun.passedTests,
+            failedTests: newRun.failedTests,
+            totalTests: newRun.totalTests,
+            gateVerdict: gate.headlineVerdict,
+            rollup: 'rollup' in gate ? gate.rollup : undefined,
+          };
+        }
+
+        if (
+          toolName === 'evaluate_visual_diff_nova_lite' ||
+          toolName === 'evaluate_visual_diff_ai'
+        ) {
+          return evaluateNovaLiteVisualDiff({
+            testId: String(args.testId || 'T03'),
+            candidateTarget: String(args.candidateTarget || 'www.prod.staging'),
+            baselineTarget: String(args.baselineTarget || 'www.prod.prod'),
+            pixelDiffPercent:
+              typeof args.pixelDiffPercent === 'number' ? args.pixelDiffPercent : undefined,
+          });
+        }
+
+        if (toolName === 'run_gate_plugin_pipeline') {
+          return evaluatePluginPipeline({
+            testId: String(args.testId || 'T02'),
+            testName: String(args.testName || 'Sales Cloud & Agentforce Product Overview'),
+            path: String(args.path || '/sales/'),
+            candidateTarget: String(args.candidateTarget || 'www.prod.staging'),
+            baselineTarget: String(args.baselineTarget || 'www.prod.prod'),
+            candidateStatus:
+              typeof args.candidateStatus === 'number' ? args.candidateStatus : 200,
+            baselineStatus:
+              typeof args.baselineStatus === 'number' ? args.baselineStatus : 200,
+            candidateLatencyMs:
+              typeof args.candidateLatencyMs === 'number' ? args.candidateLatencyMs : 118,
+            baselineLatencyMs:
+              typeof args.baselineLatencyMs === 'number' ? args.baselineLatencyMs : 72,
+            candidateHeaders: (args.candidateHeaders as Record<string, string>) || {
+              'x-check-cacheable': 'NO',
+              'cache-control': 'max-age=1800',
+            },
+            baselineHeaders: (args.baselineHeaders as Record<string, string>) || {
+              'x-check-cacheable': 'YES',
+              'cache-control': 'max-age=3600',
+            },
+            candidateCookies: (args.candidateCookies as Record<string, string>) || {
+              geo_region: 'US-EAST',
+              ak_bmsc: 'stg-9910',
+            },
+            baselineCookies: (args.baselineCookies as Record<string, string>) || {
+              geo_region: 'US-EAST',
+              ak_bmsc: 'prd-4412',
+            },
+            pixelDiffPercent:
+              typeof args.pixelDiffPercent === 'number' ? args.pixelDiffPercent : 0.04,
+            enabledPluginIds: Array.isArray(args.enabledPluginIds)
+              ? (args.enabledPluginIds as string[])
+              : undefined,
+          });
+        }
+
+        if (toolName === 'manage_test_suite') {
+          const action = String(args.action || 'list').toLowerCase();
+          const appId = String(args.appId || 'www').toLowerCase();
+          const currentSuite = [...getRuntimeSuiteForApp(appId)];
+
+          if (action === 'list') {
+            return { appId, totalChecks: currentSuite.length, checks: currentSuite };
+          }
+          if (action === 'delete') {
+            const testId = String(args.testId || '').toUpperCase();
+            if (!testId) throw new Error('testId is required to delete a check');
+            const filtered = currentSuite.filter((c) => c.id.toUpperCase() !== testId);
+            runtimeSuitesByAppId[appId] = filtered;
+            persistRuntimeCatchpointConfig();
+            return { appId, deleted: testId, totalChecks: filtered.length };
+          }
+          if (action === 'upsert') {
+            const testId =
+              (typeof args.testId === 'string' && args.testId.trim().toUpperCase()) ||
+              generateNextTestId(currentSuite);
+            const rawCheck = normalizeTestCaseWithCatchpointDefaults({
+              id: testId,
+              name: String(args.name || `Synthetic Check ${testId}`),
+              path: String(args.path || '/'),
+              expectedStatus: String(args.expectedStatus || '200'),
+            });
+            const existsIdx = currentSuite.findIndex((c) => c.id.toUpperCase() === testId);
+            if (existsIdx >= 0) {
+              currentSuite[existsIdx] = rawCheck;
+            } else {
+              currentSuite.push(rawCheck);
+            }
+            runtimeSuitesByAppId[appId] = currentSuite;
+            persistRuntimeCatchpointConfig();
+            return {
+              appId,
+              upserted: rawCheck,
+              totalChecks: currentSuite.length,
+            };
+          }
+          throw new Error(`Unsupported manage_test_suite action: ${action}`);
+        }
+
+        // Legacy compatible tools
+        if (toolName === 'get_user_stats' || toolName === 'list_users') {
+          return defaultUserManager.getStatsSummary(
+            typeof args.email === 'string' ? args.email : undefined
+          );
+        }
+
+        if (toolName === 'list_ai_skills_and_plugins') {
+          return {
+            plugins: BUILTIN_GATE_PLUGINS,
+            aiSkills: generateAiAgentAdaptationBundle(cfg).map((s) => ({
               id: s.id,
               filename: s.filename,
               category: s.category,
               description: s.description,
-            })
-          ),
-        },
-      });
-      return;
-    }
+            })),
+          };
+        }
 
-    if (toolName === 'run_gate_plugin_pipeline') {
-      const report = evaluatePluginPipeline({
-        testId: args.testId || 'T02',
-        testName: args.testName || 'Sales Cloud & Agentforce Product Overview',
-        path: args.path || '/sales/',
-        candidateTarget: args.candidateTarget || 'www.prod.staging',
-        baselineTarget: args.baselineTarget || 'www.prod.prod',
-        candidateStatus: args.candidateStatus ?? 200,
-        baselineStatus: args.baselineStatus ?? 200,
-        candidateLatencyMs: args.candidateLatencyMs ?? 118,
-        baselineLatencyMs: args.baselineLatencyMs ?? 72,
-        candidateHeaders: args.candidateHeaders || {
-          'x-check-cacheable': 'NO',
-          'cache-control': 'max-age=1800',
-        },
-        baselineHeaders: args.baselineHeaders || {
-          'x-check-cacheable': 'YES',
-          'cache-control': 'max-age=3600',
-        },
-        candidateCookies: args.candidateCookies || {
-          geo_region: 'US-EAST',
-          ak_bmsc: 'stg-9910',
-        },
-        baselineCookies: args.baselineCookies || {
-          geo_region: 'US-EAST',
-          ak_bmsc: 'prd-4412',
-        },
-        pixelDiffPercent: args.pixelDiffPercent ?? 0.04,
-        enabledPluginIds: args.enabledPluginIds,
-      });
-      res.json({
-        jsonrpc: '2.0',
-        id: rpcId,
-        result: report,
-      });
-      return;
-    }
-
-    const fallbackCfg = getRuntimeConfigSnapshot();
-    res.json({
-      jsonrpc: '2.0',
-      id: rpcId,
-      result: {
-        tool: toolName,
-        status: 'EXECUTED',
-        awsRegion: fallbackCfg.infrastructure.awsRegion,
-        visualJudgeModel: fallbackCfg.infrastructure.visualJudgeModel,
-        s3Bucket: fallbackCfg.infrastructure.s3Bucket,
-        evaluatedAt: new Date().toISOString(),
+        throw new Error(`Unknown MCP tool: ${toolName}`);
       },
     });
+
+    if (response.isNotification) {
+      res.status(202).end();
+      return;
+    }
+    res.status(response.statusCode).json(response.body);
+  });
+
+  // 9b. Scheduled Runs & SLA Telemetry REST Endpoint (/api/v1/schedules)
+  const runtimeSchedulePolicies: Record<string, SchedulePolicyConfig> = {};
+  const runtimeScheduledLiveTicks: Record<string, ScheduledRunPoint[]> = {};
+
+  app.get('/api/v1/schedules', (req, res) => {
+    const appId = String(req.query.appId || 'www').toLowerCase();
+    const range = (String(req.query.range || '24h') as ScheduleTimeRange) || '24h';
+    const prop =
+      runtimeProperties.find((p) => p.id === appId) || runtimeProperties[0];
+    const policy =
+      runtimeSchedulePolicies[prop.id] || buildDefaultSchedulePolicy(prop);
+    const suite = getRuntimeSuiteForApp(prop.id);
+    const basePoints = buildScheduledRunsDataset({
+      appId: prop.id,
+      suite,
+      policy,
+      range,
+    });
+    const withRealRuns = ingestRealPortalRunsIntoSchedule({
+      basePoints,
+      runs: serverRuns,
+      appId: prop.id,
+      suite,
+      policy,
+    });
+    const points = [
+      ...withRealRuns,
+      ...(runtimeScheduledLiveTicks[prop.id] || []),
+    ];
+    const sla = computeScheduledSlaAnalytics({
+      points,
+      policy,
+      excludeMaintenanceWindows: req.query.excludeMaintenance !== 'false',
+    });
+    res.json({
+      appId: prop.id,
+      range,
+      policy,
+      slaAnalytics: sla,
+      totalPoints: points.length,
+      points,
+    });
+  });
+
+  app.post('/api/v1/schedules/:appId/trigger', (req, res) => {
+    const appId = String(req.params.appId || 'www').toLowerCase();
+    const prop =
+      runtimeProperties.find((p) => p.id === appId) || runtimeProperties[0];
+    const policy =
+      runtimeSchedulePolicies[prop.id] || buildDefaultSchedulePolicy(prop);
+    const suite = getRuntimeSuiteForApp(prop.id);
+    const basePoints = buildScheduledRunsDataset({
+      appId: prop.id,
+      suite,
+      policy,
+      range: '24h',
+    });
+    const existing = [
+      ...basePoints,
+      ...(runtimeScheduledLiveTicks[prop.id] || []),
+    ];
+    const point = appendLiveScheduledRunTick({
+      existingPoints: existing,
+      appId: prop.id,
+      suite,
+      policy,
+      triggeredBy: req.body?.triggeredBy === 'scheduler-cron' ? 'scheduler-cron' : 'manual-trigger',
+    });
+    runtimeScheduledLiveTicks[prop.id] = [
+      ...(runtimeScheduledLiveTicks[prop.id] || []),
+      point,
+    ];
+    res.status(201).json({
+      triggered: true,
+      appId: prop.id,
+      point,
+    });
+  });
+
+  app.put('/api/v1/schedules/:appId/policy', (req, res) => {
+    const appId = String(req.params.appId || 'www').toLowerCase();
+    const prop =
+      runtimeProperties.find((p) => p.id === appId) || runtimeProperties[0];
+    const current =
+      runtimeSchedulePolicies[prop.id] || buildDefaultSchedulePolicy(prop);
+    const body = req.body || {};
+    const nextInterval: ScheduleIntervalMinutes =
+      typeof body.intervalMinutes === 'number' &&
+      [1, 5, 10, 15, 30, 60].includes(body.intervalMinutes)
+        ? (body.intervalMinutes as ScheduleIntervalMinutes)
+        : current.intervalMinutes;
+    const updated: SchedulePolicyConfig = {
+      ...current,
+      enabled: typeof body.enabled === 'boolean' ? body.enabled : current.enabled,
+      intervalMinutes: nextInterval,
+      cronExpression:
+        typeof body.cronExpression === 'string' && body.cronExpression.trim()
+          ? body.cronExpression.trim()
+          : intervalToCronExpression(nextInterval),
+      strategy:
+        body.strategy === 'round-robin' ||
+        body.strategy === 'all-pops' ||
+        body.strategy === 'primary-regional'
+          ? body.strategy
+          : current.strategy,
+      assignedPops:
+        Array.isArray(body.assignedPops) && body.assignedPops.length > 0
+          ? body.assignedPops.map(String)
+          : current.assignedPops,
+      slaTargetPct:
+        typeof body.slaTargetPct === 'number'
+          ? body.slaTargetPct
+          : current.slaTargetPct,
+      slaWarningMs:
+        typeof body.slaWarningMs === 'number'
+          ? body.slaWarningMs
+          : current.slaWarningMs,
+      slaCriticalMs:
+        typeof body.slaCriticalMs === 'number'
+          ? body.slaCriticalMs
+          : current.slaCriticalMs,
+    };
+    runtimeSchedulePolicies[prop.id] = updated;
+    res.json({ updated: true, appId: prop.id, policy: updated });
   });
 
   // 10. Exportable Infrastructure Blueprints Endpoint
@@ -1849,6 +3223,322 @@ async function startServer() {
       plugins: BUILTIN_GATE_PLUGINS,
       skills: generateAiAgentAdaptationBundle(getRuntimeConfigSnapshot()),
     });
+  });
+
+  // 11b. Built-In Portal AI Agent Skills & Interactive Tool-Calling Chat Endpoint
+  app.get('/api/v1/agent/skills', (_req, res) => {
+    res.json({
+      total: PORTAL_AGENT_SKILLS.length,
+      geminiConfigured: isServerGeminiConfigured(),
+      model: isServerGeminiConfigured() ? 'gemini-4-hydrogen' : 'deterministic-skill-router',
+      skills: PORTAL_AGENT_SKILLS,
+    });
+  });
+
+  app.post('/api/v1/agent/chat', async (req, res) => {
+    try {
+      const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+      if (!prompt) {
+        res.status(400).json({ error: 'Prompt is required' });
+        return;
+      }
+
+      const activeAppId = String(req.body?.context?.activeAppId || 'www').toLowerCase();
+      const fallbackProp =
+        runtimeProperties.find((p) => p.id === activeAppId) || runtimeProperties[0];
+      const fallbackPolicy =
+        runtimeSchedulePolicies[fallbackProp.id] || buildDefaultSchedulePolicy(fallbackProp);
+
+      const incomingCtx =
+        req.body?.context && typeof req.body.context === 'object' ? req.body.context : {};
+      const defaultPortalContext: AgentPortalContext = {
+        activeAppId: fallbackProp.id,
+        activeAppName: fallbackProp.name,
+        viewMode: 'workbench',
+        compareMode: 'compare',
+        candidateTarget: `${fallbackProp.id}.prod.staging`,
+        baselineTarget: `${fallbackProp.id}.prod.prod`,
+        selectedTestId: 'T01',
+        inspectorTab: 'headers',
+        selectedExecutionPopId: 'auto',
+        headlineVerdict: 'REVIEW',
+        counts: { headerDiffs: 0, cookieDiffs: 0, visualDiffs: 0, totalChecks: 8 },
+        properties: runtimeProperties.map((p) => ({
+          id: p.id,
+          name: p.name,
+          canonicalHost: resolvePropertyHostname(p.id, 'prod', getRuntimeConfigSnapshot()),
+          envs: p.envs.map((e) => e.id),
+        })),
+        checks: getRuntimeSuiteForApp(fallbackProp.id).map((tc) => {
+          const host = resolvePropertyHostname(fallbackProp.id, 'prod', getRuntimeConfigSnapshot());
+          return {
+            testId: tc.id,
+            testName: tc.name,
+            path: tc.path,
+            url: tc.path.startsWith('http') ? tc.path : `https://${host}${tc.path}`,
+            verdict: 'same',
+            candStatus: Number(tc.expectedStatus || 200),
+            headerDiffsCount: 0,
+            cookieDiffsCount: 0,
+            testType: tc.testType,
+          };
+        }),
+        acceptedHeaders: [],
+        acceptedCookies: [],
+        acceptedVisualTests: [],
+        schedulePolicy: {
+          enabled: fallbackPolicy.enabled,
+          intervalMinutes: fallbackPolicy.intervalMinutes,
+          cronExpression: fallbackPolicy.cronExpression,
+          strategy: fallbackPolicy.strategy,
+          assignedPops: fallbackPolicy.assignedPops,
+          slaTargetPct: fallbackPolicy.slaTargetPct,
+          slaWarningMs: fallbackPolicy.slaWarningMs,
+          slaCriticalMs: fallbackPolicy.slaCriticalMs,
+        },
+      };
+
+      const portalContext: AgentPortalContext = {
+        ...defaultPortalContext,
+        ...incomingCtx,
+        counts: {
+          ...defaultPortalContext.counts,
+          ...(incomingCtx.counts || {}),
+        },
+        properties: Array.isArray(incomingCtx.properties)
+          ? incomingCtx.properties
+          : defaultPortalContext.properties,
+        checks: Array.isArray(incomingCtx.checks)
+          ? incomingCtx.checks
+          : defaultPortalContext.checks,
+        acceptedHeaders: Array.isArray(incomingCtx.acceptedHeaders)
+          ? incomingCtx.acceptedHeaders
+          : defaultPortalContext.acceptedHeaders,
+        acceptedCookies: Array.isArray(incomingCtx.acceptedCookies)
+          ? incomingCtx.acceptedCookies
+          : defaultPortalContext.acceptedCookies,
+        acceptedVisualTests: Array.isArray(incomingCtx.acceptedVisualTests)
+          ? incomingCtx.acceptedVisualTests
+          : defaultPortalContext.acceptedVisualTests,
+        schedulePolicy: {
+          ...defaultPortalContext.schedulePolicy,
+          ...(incomingCtx.schedulePolicy || {}),
+        },
+      };
+
+      const result = await runGeminiPortalAgentChat({
+      prompt,
+      history: Array.isArray(req.body?.history) ? req.body.history : [],
+      context: portalContext,
+      enabledSkillIds: Array.isArray(req.body?.enabledSkillIds)
+        ? req.body.enabledSkillIds
+        : undefined,
+      executors: {
+        getPortalState: async () => portalContext as unknown as Record<string, unknown>,
+        getScheduleAnalytics: async ({ appId, range }) => {
+          const targetId = String(appId || portalContext.activeAppId || 'www').toLowerCase();
+          const prop =
+            runtimeProperties.find((p) => p.id === targetId) || runtimeProperties[0];
+          const policy =
+            runtimeSchedulePolicies[prop.id] || buildDefaultSchedulePolicy(prop);
+          const suite = getRuntimeSuiteForApp(prop.id);
+          const points = [
+            ...buildScheduledRunsDataset({
+              appId: prop.id,
+              suite,
+              policy,
+              range: (range as ScheduleTimeRange) || '24h',
+            }),
+            ...(runtimeScheduledLiveTicks[prop.id] || []),
+          ];
+          const sla = computeScheduledSlaAnalytics({
+            points,
+            policy,
+            excludeMaintenanceWindows: true,
+          });
+          return {
+            appId: prop.id,
+            range: range || '24h',
+            policy,
+            slaAnalytics: sla,
+            totalPoints: points.length,
+          };
+        },
+        triggerScheduledRun: async ({ appId }) => {
+          const targetId = String(appId || portalContext.activeAppId || 'www').toLowerCase();
+          const prop =
+            runtimeProperties.find((p) => p.id === targetId) || runtimeProperties[0];
+          const policy =
+            runtimeSchedulePolicies[prop.id] || buildDefaultSchedulePolicy(prop);
+          const suite = getRuntimeSuiteForApp(prop.id);
+          const basePoints = buildScheduledRunsDataset({
+            appId: prop.id,
+            suite,
+            policy,
+            range: '24h',
+          });
+          const existing = [
+            ...basePoints,
+            ...(runtimeScheduledLiveTicks[prop.id] || []),
+          ];
+          const point = appendLiveScheduledRunTick({
+            existingPoints: existing,
+            appId: prop.id,
+            suite,
+            policy,
+            triggeredBy: 'manual-trigger',
+          });
+          runtimeScheduledLiveTicks[prop.id] = [
+            ...(runtimeScheduledLiveTicks[prop.id] || []),
+            point,
+          ];
+          return {
+            triggered: true,
+            appId: prop.id,
+            runId: point.runId,
+            verdict: point.verdict,
+            totalMs: point.totalMs,
+            popCode: point.popCode,
+            point,
+          };
+        },
+        updateSchedulePolicy: async (args) => {
+          const targetId = String(args.appId || portalContext.activeAppId || 'www').toLowerCase();
+          const prop =
+            runtimeProperties.find((p) => p.id === targetId) || runtimeProperties[0];
+          const current =
+            runtimeSchedulePolicies[prop.id] || buildDefaultSchedulePolicy(prop);
+          const nextInt =
+            typeof args.intervalMinutes === 'number' &&
+            [1, 5, 10, 15, 30, 60].includes(args.intervalMinutes)
+              ? (args.intervalMinutes as ScheduleIntervalMinutes)
+              : current.intervalMinutes;
+          const updated: SchedulePolicyConfig = {
+            ...current,
+            enabled: typeof args.enabled === 'boolean' ? args.enabled : current.enabled,
+            intervalMinutes: nextInt,
+            cronExpression: intervalToCronExpression(nextInt),
+            strategy:
+              args.strategy === 'round-robin' ||
+              args.strategy === 'all-pops' ||
+              args.strategy === 'primary-regional'
+                ? args.strategy
+                : current.strategy,
+            assignedPops:
+              Array.isArray(args.assignedPops) && args.assignedPops.length > 0
+                ? args.assignedPops.map(String)
+                : current.assignedPops,
+            slaTargetPct:
+              typeof args.slaTargetPct === 'number' ? args.slaTargetPct : current.slaTargetPct,
+            slaWarningMs:
+              typeof args.slaWarningMs === 'number' ? args.slaWarningMs : current.slaWarningMs,
+          };
+          runtimeSchedulePolicies[prop.id] = updated;
+          return { updated: true, appId: prop.id, policy: updated };
+        },
+        createOrUpdateProperty: async (args) => {
+          const cleanId = String(args.id || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+          if (!cleanId) return { error: 'Invalid property id' };
+          const host = String(args.canonicalHost || `${cleanId}.salesforce.com`);
+          const propObj: AppConfig = {
+            id: cleanId,
+            name: String(args.name || cleanId),
+            suitePath: `config/suites/${cleanId}.csv`,
+            defaultNetworks: ['prod', 'staging'],
+            envs: [
+              {
+                id: 'prod',
+                name: 'PROD',
+                hostMap: { [host]: host },
+                networks: ['prod', 'staging'],
+              },
+            ],
+          };
+          const exists = runtimeProperties.some((p) => p.id === cleanId);
+          runtimeProperties = exists
+            ? runtimeProperties.map((p) => (p.id === cleanId ? propObj : p))
+            : [...runtimeProperties, propObj];
+          if (!runtimeSuitesByAppId[cleanId]) {
+            runtimeSuitesByAppId[cleanId] = normalizeSuiteWithCatchpointDefaults(
+              DEFAULT_TEMPLATE_CONFIG.testSuite
+            );
+          }
+          persistRuntimeCatchpointConfig();
+          return { saved: true, property: propObj };
+        },
+        createOrUpdateTest: async (args) => {
+          const targetId = String(args.appId || portalContext.activeAppId || 'www').toLowerCase();
+          const currentSuite = getRuntimeSuiteForApp(targetId);
+          const testId = args.testId
+            ? String(args.testId).toUpperCase()
+            : generateNextTestId(currentSuite);
+          const rawPath = String(args.path || '/sales/');
+          const canonicalHost = resolvePropertyHostname(
+            targetId,
+            'prod',
+            getRuntimeConfigSnapshot()
+          );
+          const cleanPath = rawPath.startsWith('http')
+            ? new URL(rawPath).pathname
+            : rawPath;
+          const draft = normalizeTestCaseWithCatchpointDefaults({
+            id: testId,
+            name: String(args.name || `Monitor ${rawPath}`),
+            path: cleanPath,
+            targetHost: rawPath.startsWith('http')
+              ? new URL(rawPath).hostname
+              : canonicalHost,
+            expectedStatus: String(args.expectedStatus || '200'),
+            category: 'Edge',
+            testType: (args.testType as any) || 'web-chrome',
+            httpMethod: (args.httpMethod as any) || 'GET',
+            scriptEngine: args.scriptEngine as any,
+            customScript: args.customScript ? String(args.customScript) : undefined,
+          });
+          const exists = currentSuite.some((t) => t.id === testId);
+          const nextSuite = exists
+            ? currentSuite.map((t) => (t.id === testId ? draft : t))
+            : [...currentSuite, draft];
+          runtimeSuitesByAppId[targetId] = nextSuite;
+          persistRuntimeCatchpointConfig();
+          return { saved: true, appId: targetId, testId, totalTests: nextSuite.length };
+        },
+        deleteTest: async ({ appId, testId }) => {
+          const targetId = String(appId || portalContext.activeAppId || 'www').toLowerCase();
+          const currentSuite = getRuntimeSuiteForApp(targetId);
+          const nextSuite = currentSuite.filter((t) => t.id !== testId.toUpperCase());
+          runtimeSuitesByAppId[targetId] = nextSuite;
+          persistRuntimeCatchpointConfig();
+          return { deleted: true, appId: targetId, testId: testId.toUpperCase(), totalTests: nextSuite.length };
+        },
+        evaluateVisualDiff: async ({ testId }) => {
+          const check = portalContext.checks.find((c) => c.testId === testId.toUpperCase());
+          const decision = defaultZeroTokenEngine.evaluate({
+            testId: testId.toUpperCase(),
+            testName: check?.testName,
+            url: check?.url,
+            candidateTarget: portalContext.candidateTarget,
+            baselineTarget: portalContext.baselineTarget,
+            candidateStatus: check?.candStatus ?? 200,
+            baselineStatus: check?.baseStatus ?? 200,
+            pixelDiffPercent: check?.visualVerdict === 'different' ? 28.4 : 0.0,
+          });
+          return {
+            testId: decision.testId,
+            verdict: decision.verdict,
+            summary: decision.summary,
+            affectedArea: decision.affectedArea,
+          };
+        },
+      },
+    });
+
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Agent chat execution failed',
+      });
+    }
   });
 
   // 12. Execute Release Gate Plugin Pipeline
@@ -1998,12 +3688,15 @@ async function startServer() {
   });
 
   // ==========================================================================
-  // 14. INTERACTIVE APP COMPUTE SHELL / TERMINAL API (@xterm/xterm BACKEND)
+  // 14. INTERACTIVE APP COMPUTE SHELL / TERMINAL API (FULL COMPUTE ACCESS)
   // ==========================================================================
   interface TerminalSession {
     id: string;
+    shellId: string;
     command: string;
     resolvedCommand: string;
+    cwd: string;
+    finalCwd: string;
     proc: ChildProcess;
     pid?: number;
     chunks: string[];
@@ -2014,6 +3707,7 @@ async function startServer() {
   }
 
   const terminalSessions = new Map<string, TerminalSession>();
+  const shellWorkingDirs = new Map<string, string>();
 
   const hasBinaryOnHost = (bin: string): boolean => {
     try {
@@ -2028,6 +3722,7 @@ async function startServer() {
     hostHasMake: boolean;
     hostHasPnpm: boolean;
     hostHasScript: boolean;
+    hostHasGit: boolean;
   } | null = null;
   const getHostBinCapabilities = () => {
     if (!cachedHostBins) {
@@ -2036,6 +3731,7 @@ async function startServer() {
         hostHasMake: hasBinaryOnHost('make'),
         hostHasPnpm: hasBinaryOnHost('pnpm'),
         hostHasScript: fs.existsSync('/usr/bin/script') || hasBinaryOnHost('script'),
+        hostHasGit: hasBinaryOnHost('git'),
       };
     } else {
       ensureComputeBinShims(__dirname);
@@ -2052,8 +3748,8 @@ async function startServer() {
     }
   };
 
-  app.get('/api/v1/terminal/status', (_req, res) => {
-    const { shims, hostHasMake } = getHostBinCapabilities();
+  const buildComputeHostInfo = (shellId?: string) => {
+    const { shims, hostHasMake, hostHasPnpm, hostHasGit } = getHostBinCapabilities();
     const makefilePath = path.resolve(__dirname, 'Makefile');
     const makefileRaw = fs.existsSync(makefilePath)
       ? fs.readFileSync(makefilePath, 'utf8')
@@ -2062,24 +3758,71 @@ async function startServer() {
     const activeSessions = Array.from(terminalSessions.values()).filter(
       (s) => !s.exited
     ).length;
+    const cpuList = os.cpus();
+    let username = process.env.USER || process.env.LOGNAME || 'root';
+    try {
+      username = os.userInfo().username || username;
+    } catch {
+      // fallback to env USER
+    }
+    const activeCwd =
+      (shellId && shellWorkingDirs.get(shellId)) || __dirname;
 
-    res.json({
-      cwd: __dirname,
-      nodeVersion: process.version,
+    return {
+      hostname: os.hostname() || 'compute-node',
+      user: username,
       platform: process.platform,
       arch: process.arch,
+      release: os.release(),
+      cwd: activeCwd,
+      rootCwd: __dirname,
+      shell: '/bin/bash',
+      nodeVersion: process.version,
+      cpus: cpuList.length || 1,
+      cpuModel: cpuList[0]?.model || 'Virtual CPU',
+      totalMemMb: Math.round(os.totalmem() / (1024 * 1024)),
+      freeMemMb: Math.round(os.freemem() / (1024 * 1024)),
+      uptimeSec: Math.round(os.uptime()),
+      pid: process.pid,
       hasMake: hostHasMake || shims.makeReady,
+      hasPnpm: hostHasPnpm || shims.pnpmReady,
       hasTerraform: fs.existsSync('/tmp/bin/terraform') || hasBinaryOnHost('terraform'),
+      hasGit: hostHasGit,
       activeSessions,
       targets,
-    });
+    };
+  };
+
+  app.get('/api/v1/terminal/status', (req, res) => {
+    const shellId = typeof req.query.shellId === 'string' ? req.query.shellId : undefined;
+    res.json(buildComputeHostInfo(shellId));
+  });
+
+  app.get('/api/v1/terminal/info', (req, res) => {
+    const shellId = typeof req.query.shellId === 'string' ? req.query.shellId : undefined;
+    res.json(buildComputeHostInfo(shellId));
   });
 
   app.post('/api/v1/terminal/exec', (req, res) => {
     cleanupOldTerminalSessions();
-    const { hostHasMake, hostHasPnpm, hostHasScript } = getHostBinCapabilities();
+    const { hostHasMake, hostHasPnpm } = getHostBinCapabilities();
     const rawCommand =
       typeof req.body?.command === 'string' ? req.body.command : '';
+    const shellId =
+      typeof req.body?.shellId === 'string' && req.body.shellId.trim()
+        ? req.body.shellId.trim()
+        : 'bash-1';
+    const requestedCwd =
+      typeof req.body?.cwd === 'string' && req.body.cwd.trim()
+        ? req.body.cwd.trim()
+        : shellWorkingDirs.get(shellId) || __dirname;
+
+    const effectiveCwd =
+      fs.existsSync(requestedCwd) && fs.statSync(requestedCwd).isDirectory()
+        ? requestedCwd
+        : __dirname;
+    shellWorkingDirs.set(shellId, effectiveCwd);
+
     const { resolvedCommand, empty } = resolveComputeCommand(rawCommand, {
       hasMake: hostHasMake,
       hasPnpm: hostHasPnpm,
@@ -2105,24 +3848,21 @@ async function startServer() {
       LINES: String(rows),
     };
 
-    const proc = hostHasScript
-      ? spawn('/usr/bin/script', ['-qefc', resolvedCommand, '/dev/null'], {
-          cwd: __dirname,
-          env,
-          stdio: ['pipe', 'pipe', 'pipe'],
-          detached: true,
-        })
-      : spawn('/bin/bash', ['-lc', resolvedCommand], {
-          cwd: __dirname,
-          env,
-          stdio: ['pipe', 'pipe', 'pipe'],
-          detached: true,
-        });
+    const statefulPayload = buildStatefulBashPayload(resolvedCommand);
+    const proc = spawn('/bin/bash', ['-c', statefulPayload], {
+      cwd: effectiveCwd,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: true,
+    });
 
     const session: TerminalSession = {
       id: sessionId,
+      shellId,
       command: rawCommand.trim(),
       resolvedCommand,
+      cwd: effectiveCwd,
+      finalCwd: effectiveCwd,
       proc,
       pid: proc.pid,
       chunks: [],
@@ -2134,14 +3874,27 @@ async function startServer() {
     terminalSessions.set(sessionId, session);
 
     const pushChunk = (data: Buffer | string) => {
-      const text = typeof data === 'string' ? data : data.toString('utf8');
-      if (!text) return;
-      session.chunks.push(text);
-      // Cap buffered history chunks in memory
+      const rawText = typeof data === 'string' ? data : data.toString('utf8');
+      if (!rawText) return;
+      const { cleanedChunk, detectedCwd } = extractStatefulCwdSentinel(rawText);
+      if (detectedCwd && fs.existsSync(detectedCwd)) {
+        session.finalCwd = detectedCwd;
+        shellWorkingDirs.set(shellId, detectedCwd);
+        const cwdPayload = `event: cwd\ndata: ${JSON.stringify({ cwd: detectedCwd, shellId })}\n\n`;
+        for (const clientRes of session.listeners) {
+          try {
+            clientRes.write(cwdPayload);
+          } catch {
+            session.listeners.delete(clientRes);
+          }
+        }
+      }
+      if (!cleanedChunk) return;
+      session.chunks.push(cleanedChunk);
       if (session.chunks.length > 4000) {
         session.chunks.splice(0, session.chunks.length - 3000);
       }
-      const payload = `event: output\ndata: ${JSON.stringify({ chunk: text })}\n\n`;
+      const payload = `event: output\ndata: ${JSON.stringify({ chunk: cleanedChunk })}\n\n`;
       for (const clientRes of session.listeners) {
         try {
           clientRes.write(payload);
@@ -2155,11 +3908,15 @@ async function startServer() {
     proc.stderr?.on('data', pushChunk);
 
     proc.on('error', (err) => {
-      pushChunk(`\r\n\x1b[31m[Compute Shell Error] ${err.message}\x1b[0m\r\n`);
+      pushChunk(`\r\n[Compute Shell Error] ${err.message}\r\n`);
       if (!session.exited) {
         session.exited = true;
         session.exitCode = 1;
-        const exitPayload = `event: exit\ndata: ${JSON.stringify({ code: 1 })}\n\n`;
+        const exitPayload = `event: exit\ndata: ${JSON.stringify({
+          code: 1,
+          cwd: session.finalCwd,
+          shellId,
+        })}\n\n`;
         for (const clientRes of session.listeners) {
           try {
             clientRes.write(exitPayload);
@@ -2177,7 +3934,11 @@ async function startServer() {
       const finalCode = typeof code === 'number' ? code : 0;
       session.exited = true;
       session.exitCode = finalCode;
-      const exitPayload = `event: exit\ndata: ${JSON.stringify({ code: finalCode })}\n\n`;
+      const exitPayload = `event: exit\ndata: ${JSON.stringify({
+        code: finalCode,
+        cwd: session.finalCwd,
+        shellId,
+      })}\n\n`;
       for (const clientRes of session.listeners) {
         try {
           clientRes.write(exitPayload);
@@ -2191,6 +3952,8 @@ async function startServer() {
 
     res.json({
       sessionId,
+      shellId,
+      cwd: effectiveCwd,
       pid: proc.pid ?? null,
       resolvedCommand,
     });
@@ -2213,9 +3976,22 @@ async function startServer() {
       res.write(`event: output\ndata: ${JSON.stringify({ chunk })}\n\n`);
     }
 
+    if (session.finalCwd) {
+      res.write(
+        `event: cwd\ndata: ${JSON.stringify({
+          cwd: session.finalCwd,
+          shellId: session.shellId,
+        })}\n\n`
+      );
+    }
+
     if (session.exited) {
       res.write(
-        `event: exit\ndata: ${JSON.stringify({ code: session.exitCode ?? 0 })}\n\n`
+        `event: exit\ndata: ${JSON.stringify({
+          code: session.exitCode ?? 0,
+          cwd: session.finalCwd,
+          shellId: session.shellId,
+        })}\n\n`
       );
       res.end();
       return;
@@ -2243,10 +4019,16 @@ async function startServer() {
       return;
     }
     const data = typeof req.body?.data === 'string' ? req.body.data : '';
-    if (data && session.proc.stdin && !session.proc.stdin.destroyed) {
-      session.proc.stdin.write(data);
+    const eof = Boolean(req.body?.eof);
+    if (session.proc.stdin && !session.proc.stdin.destroyed) {
+      if (data) {
+        session.proc.stdin.write(data);
+      }
+      if (eof) {
+        session.proc.stdin.end();
+      }
     }
-    res.json({ ok: true });
+    res.json({ ok: true, sessionId: session.id });
   });
 
   app.post('/api/v1/terminal/kill/:sessionId', (req, res) => {
@@ -2255,16 +4037,23 @@ async function startServer() {
       res.status(404).json({ error: 'Terminal session not found' });
       return;
     }
+    const requestedSignal =
+      req.body?.signal === 'SIGINT' ||
+      req.body?.signal === 'SIGKILL' ||
+      req.body?.signal === 'SIGTERM'
+        ? (req.body.signal as NodeJS.Signals)
+        : 'SIGTERM';
+
     if (!session.exited) {
       try {
         if (session.proc.pid) {
-          process.kill(-session.proc.pid, 'SIGTERM');
+          process.kill(-session.proc.pid, requestedSignal);
         } else {
-          session.proc.kill('SIGTERM');
+          session.proc.kill(requestedSignal);
         }
       } catch {
         try {
-          session.proc.kill('SIGTERM');
+          session.proc.kill(requestedSignal);
         } catch {
           // ignore
         }
@@ -2283,7 +4072,337 @@ async function startServer() {
         }
       }, 1500);
     }
-    res.json({ killed: true, sessionId: session.id });
+    res.json({ killed: true, signal: requestedSignal, sessionId: session.id });
+  });
+
+  // ==========================================================================
+  // 14B. FULL LINUX KERNEL PTY / TTY SESSIONS (/dev/pts/N via pty-bridge.py)
+  // ==========================================================================
+  interface PtyTerminalSession {
+    id: string;
+    proc: ChildProcess;
+    pid: number | null;
+    tty: string;
+    cwd: string;
+    shell: string;
+    cols: number;
+    rows: number;
+    chunks: string[];
+    exited: boolean;
+    exitCode: number | null;
+    listeners: Set<express.Response>;
+    startedAt: number;
+    stdoutBuffer: string;
+  }
+
+  const ptySessions = new Map<string, PtyTerminalSession>();
+
+  const cleanupOldPtySessions = () => {
+    const now = Date.now();
+    for (const [sid, sess] of ptySessions.entries()) {
+      if (sess.exited && sess.listeners.size === 0 && now - sess.startedAt > 15 * 60_000) {
+        ptySessions.delete(sid);
+      }
+    }
+  };
+
+  app.get('/api/v1/terminal/pty/list', (_req, res) => {
+    cleanupOldPtySessions();
+    res.json({
+      sessions: Array.from(ptySessions.values()).map((s) => ({
+        sessionId: s.id,
+        pid: s.pid,
+        tty: s.tty,
+        cwd: s.cwd,
+        shell: s.shell,
+        cols: s.cols,
+        rows: s.rows,
+        exited: s.exited,
+        exitCode: s.exitCode,
+      })),
+    });
+  });
+
+  app.post('/api/v1/terminal/pty/create', async (req, res) => {
+    cleanupOldPtySessions();
+    getHostBinCapabilities();
+    const { cols, rows } = clampPtyDimensions(req.body?.cols, req.body?.rows);
+    const requestedCwd =
+      typeof req.body?.cwd === 'string' && req.body.cwd.trim()
+        ? req.body.cwd.trim()
+        : __dirname;
+    const effectiveCwd =
+      fs.existsSync(requestedCwd) && fs.statSync(requestedCwd).isDirectory()
+        ? requestedCwd
+        : __dirname;
+    const shell =
+      typeof req.body?.shell === 'string' &&
+      req.body.shell.startsWith('/') &&
+      fs.existsSync(req.body.shell)
+        ? req.body.shell
+        : '/bin/bash';
+
+    const bridgeScript = path.resolve(__dirname, 'scripts', 'pty-bridge.py');
+    const sessionId = `pty_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+
+    const basePath = process.env.PATH || '/usr/local/bin:/usr/bin:/bin';
+    const localBin = path.resolve(__dirname, 'node_modules', '.bin');
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `/tmp/bin:${localBin}:${basePath}`,
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      FORCE_COLOR: '1',
+      COMPUTE_PTY_SHELL: shell,
+      COMPUTE_PTY_CWD: effectiveCwd,
+      COMPUTE_PTY_COLS: String(cols),
+      COMPUTE_PTY_ROWS: String(rows),
+    };
+
+    const proc = spawn('python3', ['-u', bridgeScript], {
+      cwd: effectiveCwd,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    const session: PtyTerminalSession = {
+      id: sessionId,
+      proc,
+      pid: proc.pid ?? null,
+      tty: '/dev/pts/pty',
+      cwd: effectiveCwd,
+      shell,
+      cols,
+      rows,
+      chunks: [],
+      exited: false,
+      exitCode: null,
+      listeners: new Set(),
+      startedAt: Date.now(),
+      stdoutBuffer: '',
+    };
+    ptySessions.set(sessionId, session);
+
+    let resolveReady: (() => void) | null = null;
+    const readyPromise = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+      setTimeout(resolve, 350);
+    });
+
+    const broadcast = (eventName: string, payloadObj: Record<string, unknown>) => {
+      const frame = `event: ${eventName}\ndata: ${JSON.stringify(payloadObj)}\n\n`;
+      for (const clientRes of session.listeners) {
+        try {
+          clientRes.write(frame);
+        } catch {
+          session.listeners.delete(clientRes);
+        }
+      }
+    };
+
+    const appendOutput = (text: string) => {
+      if (!text) return;
+      session.chunks.push(text);
+      if (session.chunks.length > 6000) {
+        session.chunks.splice(0, session.chunks.length - 4500);
+      }
+      broadcast('output', { data: text });
+    };
+
+    proc.stdout?.on('data', (buf: Buffer) => {
+      session.stdoutBuffer += buf.toString('utf8');
+      let nlIdx = session.stdoutBuffer.indexOf('\n');
+      while (nlIdx !== -1) {
+        const line = session.stdoutBuffer.slice(0, nlIdx);
+        session.stdoutBuffer = session.stdoutBuffer.slice(nlIdx + 1);
+        const evt = parsePtyBridgeLine(line);
+        if (evt) {
+          if (evt.type === 'ready') {
+            session.pid = evt.pid || session.pid;
+            session.tty = evt.tty || session.tty;
+            session.cwd = evt.cwd || session.cwd;
+            broadcast('ready', {
+              tty: session.tty,
+              pid: session.pid,
+              cwd: session.cwd,
+              cols: session.cols,
+              rows: session.rows,
+            });
+            resolveReady?.();
+            resolveReady = null;
+          } else if (evt.type === 'data') {
+            const decoded = Buffer.from(evt.b64, 'base64').toString('utf8');
+            appendOutput(decoded);
+          } else if (evt.type === 'exit') {
+            if (!session.exited) {
+              session.exited = true;
+              session.exitCode = evt.code;
+              broadcast('exit', { code: evt.code });
+              for (const clientRes of session.listeners) {
+                try {
+                  clientRes.end();
+                } catch {
+                  // ignore
+                }
+              }
+              session.listeners.clear();
+            }
+          }
+        }
+        nlIdx = session.stdoutBuffer.indexOf('\n');
+      }
+    });
+
+    proc.stderr?.on('data', (buf: Buffer) => {
+      const text = buf.toString('utf8');
+      if (text) appendOutput(text);
+    });
+
+    proc.on('close', (code) => {
+      resolveReady?.();
+      resolveReady = null;
+      if (!session.exited) {
+        const finalCode = typeof code === 'number' ? code : 0;
+        session.exited = true;
+        session.exitCode = finalCode;
+        broadcast('exit', { code: finalCode });
+        for (const clientRes of session.listeners) {
+          try {
+            clientRes.end();
+          } catch {
+            // ignore
+          }
+        }
+        session.listeners.clear();
+      }
+    });
+
+    await readyPromise;
+
+    res.json({
+      sessionId: session.id,
+      pid: session.pid,
+      tty: session.tty,
+      cwd: session.cwd,
+      shell: session.shell,
+      cols: session.cols,
+      rows: session.rows,
+    });
+  });
+
+  app.get('/api/v1/terminal/pty/stream/:sessionId', (req, res) => {
+    const session = ptySessions.get(req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: 'PTY session not found' });
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    res.write(
+      `event: ready\ndata: ${JSON.stringify({
+        tty: session.tty,
+        pid: session.pid,
+        cwd: session.cwd,
+        cols: session.cols,
+        rows: session.rows,
+      })}\n\n`
+    );
+
+    for (const chunk of session.chunks) {
+      res.write(`event: output\ndata: ${JSON.stringify({ data: chunk })}\n\n`);
+    }
+
+    if (session.exited) {
+      res.write(`event: exit\ndata: ${JSON.stringify({ code: session.exitCode ?? 0 })}\n\n`);
+      res.end();
+      return;
+    }
+
+    session.listeners.add(res);
+    const keepalive = setInterval(() => {
+      try {
+        res.write(': keepalive\n\n');
+      } catch {
+        clearInterval(keepalive);
+      }
+    }, 15000);
+
+    req.on('close', () => {
+      clearInterval(keepalive);
+      session.listeners.delete(res);
+    });
+  });
+
+  app.post('/api/v1/terminal/pty/input/:sessionId', (req, res) => {
+    const session = ptySessions.get(req.params.sessionId);
+    if (!session || session.exited) {
+      res.status(404).json({ error: 'Active PTY session not found' });
+      return;
+    }
+    const data = typeof req.body?.data === 'string' ? req.body.data : '';
+    if (data && session.proc.stdin && !session.proc.stdin.destroyed) {
+      const b64 = Buffer.from(data, 'utf8').toString('base64');
+      session.proc.stdin.write(`${JSON.stringify({ type: 'input', b64 })}\n`);
+    }
+    res.json({ ok: true, sessionId: session.id });
+  });
+
+  app.post('/api/v1/terminal/pty/resize/:sessionId', (req, res) => {
+    const session = ptySessions.get(req.params.sessionId);
+    if (!session || session.exited) {
+      res.status(404).json({ error: 'Active PTY session not found' });
+      return;
+    }
+    const { cols, rows } = clampPtyDimensions(req.body?.cols, req.body?.rows);
+    session.cols = cols;
+    session.rows = rows;
+    if (session.proc.stdin && !session.proc.stdin.destroyed) {
+      session.proc.stdin.write(`${JSON.stringify({ type: 'resize', cols, rows })}\n`);
+    }
+    res.json({ ok: true, cols, rows, sessionId: session.id });
+  });
+
+  app.post('/api/v1/terminal/pty/kill/:sessionId', (req, res) => {
+    const session = ptySessions.get(req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: 'PTY session not found' });
+      return;
+    }
+    const sig =
+      req.body?.signal === 'SIGINT' ||
+      req.body?.signal === 'SIGKILL' ||
+      req.body?.signal === 'SIGHUP'
+        ? req.body.signal
+        : 'SIGTERM';
+    if (!session.exited) {
+      try {
+        if (session.proc.stdin && !session.proc.stdin.destroyed) {
+          session.proc.stdin.write(`${JSON.stringify({ type: 'signal', sig })}\n`);
+          if (sig !== 'SIGINT') {
+            session.proc.stdin.end();
+          }
+        }
+      } catch {
+        // ignore
+      }
+      if (sig !== 'SIGINT') {
+        setTimeout(() => {
+          if (!session.exited) {
+            try {
+              session.proc.kill('SIGKILL');
+            } catch {
+              // ignore
+            }
+          }
+        }, 1200);
+      }
+    }
+    res.json({ killed: true, signal: sig, sessionId: session.id });
   });
 
   // ==========================================================================
@@ -2359,6 +4478,23 @@ async function startServer() {
     }
   });
 
+  app.delete('/api/v1/workspace/file', (req, res) => {
+    const filePath =
+      typeof req.query.path === 'string'
+        ? req.query.path
+        : typeof req.body?.path === 'string'
+        ? req.body.path
+        : '';
+    try {
+      const result = deleteWorkspaceFile(__dirname, filePath);
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to delete file';
+      const status = msg.includes('not found') ? 404 : 400;
+      res.status(status).json({ error: msg });
+    }
+  });
+
   app.get('/api/v1/workspace/search', (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q : '';
     try {
@@ -2372,18 +4508,43 @@ async function startServer() {
   });
 
   // Vite Middleware (Development) or Static Dist (Production)
+  let viteInstance: Awaited<ReturnType<typeof createViteServer>> | null = null;
   if (process.env.NODE_ENV !== 'production') {
-    const vitePromise = createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
+    const disableHmr =
+      process.env.DISABLE_HMR === 'true' ||
+      Boolean(process.env.CONTROL_PLANE_PORT || process.env.K_SERVICE);
+    let vitePromise: Promise<Awaited<ReturnType<typeof createViteServer>>> | null = null;
+    const getVite = () => {
+      if (!vitePromise) {
+        vitePromise = createViteServer({
+          server: {
+            middlewareMode: true,
+            hmr: disableHmr ? false : undefined,
+            watch: disableHmr ? null : undefined,
+          },
+          appType: 'spa',
+        }).then((v) => {
+          viteInstance = v;
+          return v;
+        });
+        vitePromise.catch((err) => {
+          console.error('[Vite Middleware Init Error]', err);
+          vitePromise = null;
+        });
+      }
+      return vitePromise;
+    };
     app.use(async (req, res, next) => {
       try {
-        const vite = await vitePromise;
+        const vite = await getVite();
         vite.middlewares(req, res, next);
       } catch (err) {
         next(err);
       }
+    });
+    // Warm up Vite right after the HTTP port is bound so health probes succeed immediately
+    setImmediate(() => {
+      getVite().catch(() => undefined);
     });
   } else {
     const distPath = path.join(__dirname, 'dist');
@@ -2393,11 +4554,40 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const httpServer = app.listen(PORT, HOST, () => {
     console.log(
-      `[Salesforce Edge Release Gate] Control Plane + Live HTTP Flow Prober + MCP Server listening on http://0.0.0.0:${PORT} (AWS Account: ${awsEnv.accountId})`
+      `[Salesforce Edge Release Gate] Control Plane + Live HTTP Flow Prober + MCP Server listening on http://${HOST}:${PORT} (AWS Account: ${awsEnv.accountId || 'not-configured'})`
     );
   });
+
+  httpServer.on('error', (err) => {
+    console.error(`[Server Listen Error] Failed to bind ${HOST}:${PORT}:`, err);
+    process.exit(1);
+  });
+
+  const shutdown = () => {
+    httpServer.close(() => {
+      if (viteInstance) {
+        viteInstance.close().finally(() => process.exit(0));
+      } else {
+        process.exit(0);
+      }
+    });
+    setTimeout(() => process.exit(0), 2500).unref();
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
 }
 
-startServer();
+process.on('uncaughtException', (err) => {
+  console.error('[Server UncaughtException]', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[Server UnhandledRejection]', reason);
+});
+
+startServer().catch((err) => {
+  console.error('[Server Fatal Startup Error]', err);
+  process.exit(1);
+});

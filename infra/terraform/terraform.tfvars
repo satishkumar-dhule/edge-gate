@@ -48,7 +48,7 @@ akamai_pragma_headers = [
   "akamai-x-get-request-id"
 ]
 
-deploy_synthetics_canaries    = false
+deploy_synthetics_canaries    = true
 synthetics_runtime_version    = "syn-nodejs-puppeteer-9.1"
 start_canaries_on_apply       = false
 canary_schedule_expression    = "rate(0 minutes)"

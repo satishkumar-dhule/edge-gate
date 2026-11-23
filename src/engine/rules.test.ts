@@ -407,9 +407,10 @@ test('Cookie diffs use clean unprefixed cookie names and preserve itemVerdict un
     ['edge_cache_bypass', 'edge_region']
   );
 
-  // Assign measured pixelDiffPercent = 1.8% on T03 fixture to test visual minor -> acceptedVisualTests -> GO flow
-  const t03Stg = stgRun.results.find((r) => r.id === 'T03')!;
-  t03Stg.pixelDiffPercent = 1.8;
+  // Assign measured pixelDiffPercent = 1.8% ONLY on T03 fixture (0% on others) to test visual minor -> acceptedVisualTests -> GO flow
+  for (const r of stgRun.results) {
+    r.pixelDiffPercent = r.id === 'T03' ? 1.8 : 0;
+  }
 
   // Initial comparison: T01 (2 header diffs -> different), T02 (2 cookie diffs -> different), T03 (1.8% pixel diff -> minor)
   const initialComp = buildInitialComparison(stgRun, prdRun, 'network', []);
@@ -821,7 +822,7 @@ test('UserManager supports user creation, PBKDF2 password hashing, password rese
 import { buildHttpFlowForTest } from '../data/mockStore';
 import { loadDotEnvCredentials } from './httpFlowProber';
 
-test('Salesforce.com HTTP Flow tracking captures multi-hop redirects, DNS/TCP/TLS/TTFB/Transfer waterfall timings, request/response headers, and cookies', () => {
+test('Salesforce.com HTTP Flow tracking captures multi-hop redirects, DNS/TCP/TLS/TTFB/Transfer waterfall timings, request/response headers, and cookies', async () => {
   assert.equal(DEFAULT_TEMPLATE_CONFIG.branding.defaultDomain, 'salesforce.com');
   assert.ok(
     DEFAULT_TEMPLATE_CONFIG.properties.every((p) =>
@@ -871,11 +872,70 @@ test('Salesforce.com HTTP Flow tracking captures multi-hop redirects, DNS/TCP/TL
     'https://www.salesforce.com/crm/'
   );
 
-  // Verify .env credential loader parses active account without exposing secrets in summary
-  const creds = loadDotEnvCredentials();
-  assert.match(creds.accountId, /^\d{12}$/);
-  assert.ok(creds.operatorUsername.length > 0);
-  assert.equal(creds.loaded, true);
+  // Verify workspace .env does NOT contain default/hardcoded credentials
+  const fsMod = await import('node:fs');
+  const osMod = await import('node:os');
+  const pathMod = await import('node:path');
+  const dotEnvPath = pathMod.resolve(process.cwd(), '.env');
+  const rawDotEnv = fsMod.existsSync(dotEnvPath)
+    ? fsMod.readFileSync(dotEnvPath, 'utf8')
+    : '';
+  assert.ok(
+    !/AKIA[0-9A-Z]{16}/.test(rawDotEnv),
+    '.env must not contain hardcoded AWS Access Key IDs'
+  );
+  assert.ok(
+    !/^[ \t]*(Password|AWS Secret Key)[ \t]*:[ \t]*\S+/im.test(rawDotEnv),
+    '.env must not contain hardcoded default passwords or AWS secret keys'
+  );
+  assert.ok(
+    !/^[ \t]*(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)[ \t]*=[ \t]*\S+/m.test(rawDotEnv),
+    '.env must not contain default AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY values'
+  );
+
+  const savedEnv = {
+    AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
+    AWS_ACCOUNT_ID: process.env.AWS_ACCOUNT_ID,
+    AWS_OPERATOR_USERNAME: process.env.AWS_OPERATOR_USERNAME,
+  };
+  const tmpDir = fsMod.mkdtempSync(pathMod.join(osMod.tmpdir(), 'env-loader-test-'));
+  try {
+    delete process.env.AWS_ACCESS_KEY_ID;
+    delete process.env.AWS_SECRET_ACCESS_KEY;
+    delete process.env.AWS_ACCOUNT_ID;
+    delete process.env.AWS_OPERATOR_USERNAME;
+
+    const defaultCreds = loadDotEnvCredentials(dotEnvPath);
+    assert.equal(defaultCreds.loaded, false);
+    assert.equal(defaultCreds.hasAccessKey, false);
+    assert.equal(defaultCreds.hasSecretKey, false);
+    assert.equal(defaultCreds.maskedAccessKey, 'not-configured');
+
+    // Verify parser still parses explicit credentials cleanly without exposing raw secrets
+    const tmpEnvPath = pathMod.join(tmpDir, '.env');
+    fsMod.writeFileSync(
+      tmpEnvPath,
+      [
+        'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE',
+        'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+        'AWS_ACCOUNT_ID=123456789012',
+        'AWS_OPERATOR_USERNAME=test-operator',
+      ].join('\n'),
+      'utf8'
+    );
+    const parsedCreds = loadDotEnvCredentials(tmpEnvPath);
+    assert.equal(parsedCreds.loaded, true);
+    assert.equal(parsedCreds.accountId, '123456789012');
+    assert.equal(parsedCreds.operatorUsername, 'test-operator');
+    assert.equal(parsedCreds.maskedAccessKey, 'AKIA••••MPLE');
+  } finally {
+    fsMod.rmSync(tmpDir, { recursive: true, force: true });
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 });
 
 test('CloudFront SPA Portal Bundle, Terraform portal_spa_bundle & Makefile pipeline eliminate placeholder HTML', async () => {
@@ -1227,9 +1287,15 @@ test('Regional Salesforce properties resolve dedicated Akamai Edge PoP IPs, Acce
 // 15. Compute Shell Engine & CloudFront Deployment Summary (pnpm + deply)
 // ---------------------------------------------------------------------------
 import {
+  buildStatefulBashPayload,
+  clampPtyDimensions,
   extractCloudFrontUrlFromOutput,
+  extractStatefulCwdSentinel,
+  formatComputeShellPrompt,
   parseMakefileTargets,
+  parsePtyBridgeLine,
   resolveComputeCommand,
+  stripAnsiEscapeCodes,
 } from './computeShell';
 import { formatDeploymentSummaryBanner } from '../../scripts/deploy-aws-portal';
 
@@ -1297,6 +1363,52 @@ test('computeShell parses Makefile targets, resolves make deploy/deply to pnpm, 
   assert.equal(rawShell.wasTranslated, false);
   assert.equal(rawShell.resolvedCommand, 'node -v && pwd');
 
+  // Stateful bash payload, CWD sentinel extraction, prompt formatting, and ANSI stripping
+  assert.equal(
+    formatComputeShellPrompt('root', 'compute-01', '/app/applet', '/app/applet'),
+    'root@compute-01:~$'
+  );
+  assert.equal(
+    formatComputeShellPrompt('root', 'compute-01', '/app/applet/src/engine', '/app/applet'),
+    'root@compute-01:~/src/engine$'
+  );
+  assert.equal(
+    formatComputeShellPrompt('root', 'compute-01', '/tmp', '/app/applet'),
+    'root@compute-01:/tmp$'
+  );
+
+  const payload = buildStatefulBashPayload('cd src/engine && pwd');
+  assert.ok(payload.includes('cd src/engine && pwd'));
+  assert.ok(payload.includes('__COMPUTE_CWD__:'));
+  assert.ok(payload.includes('exit $__COMPUTE_EC'));
+
+  const sentinelParsed = extractStatefulCwdSentinel(
+    'total 24\ndrwxr-xr-x 2 root root 4096 Nov 18 12:00 .\n__COMPUTE_CWD__:/app/applet/src/engine__\n'
+  );
+  assert.equal(sentinelParsed.detectedCwd, '/app/applet/src/engine');
+  assert.ok(!sentinelParsed.cleanedChunk.includes('__COMPUTE_CWD__'));
+  assert.ok(sentinelParsed.cleanedChunk.includes('total 24'));
+
+  assert.equal(
+    stripAnsiEscapeCodes('\x1b[32mPASS\x1b[0m \x1b[1msrc/engine/rules.ts\x1b[0m\r\n'),
+    'PASS src/engine/rules.ts\n'
+  );
+
+  // Full kernel PTY framing & dimension clamping
+  assert.deepEqual(clampPtyDimensions(10, 2), { cols: 20, rows: 5 });
+  assert.deepEqual(clampPtyDimensions(500, 999), { cols: 400, rows: 200 });
+  assert.deepEqual(clampPtyDimensions('abc', undefined), { cols: 120, rows: 30 });
+  assert.deepEqual(
+    parsePtyBridgeLine('{"type":"ready","pid":4242,"tty":"/dev/pts/3","cwd":"/app/applet","cols":120,"rows":30}'),
+    { type: 'ready', pid: 4242, tty: '/dev/pts/3', cwd: '/app/applet', cols: 120, rows: 30 }
+  );
+  assert.deepEqual(parsePtyBridgeLine('{"type":"data","b64":"aGVsbG8="}'), {
+    type: 'data',
+    b64: 'aGVsbG8=',
+  });
+  assert.deepEqual(parsePtyBridgeLine('{"type":"exit","code":0}'), { type: 'exit', code: 0 });
+  assert.equal(parsePtyBridgeLine('not-json'), null);
+
   // CloudFront URL summary banner & stdout extractor
   const activeBanner = formatDeploymentSummaryBanner({
     accountId: '735234585484',
@@ -1330,11 +1442,39 @@ import {
   sanitizeWorkspacePath,
 } from './workspacePaths';
 import {
+  deleteWorkspaceFile,
   listWorkspaceTree,
   readWorkspaceFile,
   searchWorkspaceFiles,
   writeWorkspaceFile,
 } from './workspaceServer';
+
+test('workspaceServer create, edit/save, read, and delete roundtrip stays strictly inside workspace root', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vscode-ws-test-'));
+  try {
+    const created = writeWorkspaceFile(tmpRoot, 'notes/hello.ts', 'export const v = 1;\n', {
+      createOnly: true,
+    });
+    assert.equal(created.path, 'notes/hello.ts');
+    assert.equal(created.language, 'typescript');
+
+    const updated = writeWorkspaceFile(tmpRoot, 'notes/hello.ts', 'export const v = 2;\n');
+    assert.equal(updated.path, 'notes/hello.ts');
+
+    const loaded = readWorkspaceFile(tmpRoot, 'notes/hello.ts');
+    assert.equal(loaded.content, 'export const v = 2;\n');
+
+    const deleted = deleteWorkspaceFile(tmpRoot, 'notes/hello.ts');
+    assert.deepEqual(deleted, { deleted: true, path: 'notes/hello.ts' });
+    assert.throws(() => readWorkspaceFile(tmpRoot, 'notes/hello.ts'), /File not found/);
+    assert.throws(() => deleteWorkspaceFile(tmpRoot, '../etc/passwd'), /Parent directory traversal/);
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
 
 test('workspacePaths enforces traversal boundaries and maps Monaco languages accurately', () => {
   assert.deepEqual(sanitizeWorkspacePath('Makefile'), {
@@ -1652,6 +1792,7 @@ import {
   VIEW_CHORD_MAP,
   filterCommandItems,
   isEditableTarget,
+  isSecretCodeEditorShortcut,
   resolveKeyboardAction,
 } from './shortcuts';
 
@@ -1684,6 +1825,86 @@ test('isEditableTarget protects inputs, selects, contentEditable, and Monaco edi
     }),
     true
   );
+});
+
+test('isSecretCodeEditorShortcut unlocks Code Editor only on Ctrl/Cmd+Shift+Alt+E and hides it from public shortcut lists', async () => {
+  // Windows / Linux combo
+  assert.equal(
+    isSecretCodeEditorShortcut({
+      key: 'E',
+      code: 'KeyE',
+      ctrlKey: true,
+      shiftKey: true,
+      altKey: true,
+    }),
+    true
+  );
+  // macOS combo (including Option dead-key layout where key is '´' or 'Dead')
+  assert.equal(
+    isSecretCodeEditorShortcut({
+      key: '´',
+      code: 'KeyE',
+      metaKey: true,
+      shiftKey: true,
+      altKey: true,
+    }),
+    true
+  );
+  // Reject repeats and incomplete modifiers
+  assert.equal(
+    isSecretCodeEditorShortcut({
+      key: 'E',
+      code: 'KeyE',
+      ctrlKey: true,
+      shiftKey: true,
+      altKey: true,
+      repeat: true,
+    }),
+    false
+  );
+  assert.equal(
+    isSecretCodeEditorShortcut({
+      key: 'E',
+      code: 'KeyE',
+      ctrlKey: true,
+      shiftKey: true,
+      altKey: false,
+    }),
+    false
+  );
+  assert.equal(
+    isSecretCodeEditorShortcut({
+      key: 'E',
+      code: 'KeyE',
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: true,
+      altKey: true,
+    }),
+    false
+  );
+
+  // Public shortcut definitions and G-chord map must NOT advertise Code Editor
+  assert.equal(
+    SHORTCUT_DEFINITIONS.some((d) => d.id === 'nav-vscode'),
+    false
+  );
+  assert.equal(VIEW_CHORD_MAP.v, undefined);
+
+  // Verify DevStudioView & App gate Code Editor behind codeEditorUnlocked
+  const fsMod = await import('node:fs');
+  const pathMod = await import('node:path');
+  const devStudioSrc = fsMod.readFileSync(
+    pathMod.resolve(process.cwd(), 'src/components/DevStudioView.tsx'),
+    'utf8'
+  );
+  const appSrc = fsMod.readFileSync(
+    pathMod.resolve(process.cwd(), 'src/App.tsx'),
+    'utf8'
+  );
+  assert.ok(devStudioSrc.includes('{codeEditorUnlocked && ('));
+  assert.ok(appSrc.includes('isSecretCodeEditorShortcut(e)'));
+  assert.ok(appSrc.includes('const [codeEditorUnlocked, setCodeEditorUnlocked] = useState<boolean>(false)'));
 });
 
 test('resolveKeyboardAction handles global shortcuts, G navigation chords, inspector context, and modal guards', () => {
@@ -2153,7 +2374,11 @@ test('diagnoseCheckRootCause pinpoints cache regression, cookie drift, status fa
   assert.equal(statusFailDiag.severity, 'P0_BLOCKER');
 });
 
-import { classifyVisualVerdictFromPixelDiff } from './pixelDiff';
+import {
+  buildItemizedVisualAnalysis,
+  classifyVisualVerdictFromPixelDiff,
+  describeVisualDiffLogically,
+} from './pixelDiff';
 
 test('visual comparison preserves AI judge and browser pixel diff overrides without resetting verdict to same', () => {
   assert.equal(classifyVisualVerdictFromPixelDiff(0), 'same');
@@ -2180,14 +2405,9 @@ test('visual comparison preserves AI judge and browser pixel diff overrides with
   const t01 = compWithVisualDiff.items.find((i) => i.testId === 'T01')!;
   assert.equal(t01.visualResult?.verdict, 'different');
   assert.equal(t01.visualResult?.pixelDiffPercent, 34.8);
-  assert.equal(t01.visualResult?.differences.length, 1);
+  assert.equal(t01.visualResult?.differences.length, 5);
   assert.equal(t01.visualResult?.differences[0].severity, 'major');
-  assert.deepEqual(t01.visualResult?.differences[0].box, {
-    x: 4.5,
-    y: 12.0,
-    w: 91.0,
-    h: 72.5,
-  });
+  assert.equal(t01.visualResult?.differences[0].region, 'Top Navigation & Global Header');
 
   // Also verify that accepting the visual test and enabling ignoreAcceptedDiffs marks it accepted
   const compAccepted = buildInitialComparison(stgRun, prdRun, 'network', [], {
@@ -2224,9 +2444,9 @@ test('visual comparison preserves AI judge and browser pixel diff overrides with
 });
 
 // ---------------------------------------------------------------------------
-// 21. Zero Cached Screenshots on AWS (Live-Only Chromium Pipeline Invariants)
+// 21. Instant CloudFront Edge + S3 OAC Screenshot Delivery & Fallback Invariants
 // ---------------------------------------------------------------------------
-test('AWS side enforces zero cached screenshots across Lambda, CloudFront, Terraform, S3 sync, and UI', () => {
+test('AWS side enforces instant CloudFront S3 edge screenshot delivery, CORS headers, and zero-exception API fallback', async () => {
   const controlPlane = fs.readFileSync(
     path.resolve(process.cwd(), 'aws-lambda/control-plane-handler.js'),
     'utf8'
@@ -2244,16 +2464,17 @@ test('AWS side enforces zero cached screenshots across Lambda, CloudFront, Terra
     'control-plane-handler must NOT fall back to s3-cached-baseline'
   );
   assert.ok(
-    controlPlane.includes("rawPath.startsWith('/screenshots/')"),
-    'control-plane-handler must proxy /screenshots/* requests live'
+    controlPlane.includes("rawPath.startsWith('/screenshots/')") &&
+      controlPlane.includes("rawPath.startsWith('/api/v1/screenshots/')"),
+    'control-plane-handler must support /api/v1/screenshots/* and /screenshots/* on-demand Chromium fallback'
   );
   assert.ok(
-    controlPlane.includes('isVerifiedLiveS3Metadata'),
-    'control-plane-handler must verify live-capture S3 metadata before serving portal-ui/screenshots/*'
+    controlPlane.includes("'public, max-age=86400, stale-while-revalidate=604800'"),
+    'control-plane-handler must return cacheable headers on non-forceLive screenshot responses'
   );
   assert.ok(
     controlPlane.includes("'no-store, no-cache, must-revalidate, max-age=0'"),
-    'control-plane-handler must return strict no-store Cache-Control headers on screenshots'
+    'control-plane-handler must still return no-store on forceLive refreshes and 404 responses'
   );
 
   for (const runnerRel of [
@@ -2271,30 +2492,28 @@ test('AWS side enforces zero cached screenshots across Lambda, CloudFront, Terra
       `${runnerRel} must tag S3 uploads with live-capture=true metadata`
     );
     assert.ok(
-      code.includes('no-store, no-cache, must-revalidate, max-age=0'),
-      `${runnerRel} must set no-store CacheControl on uploaded screenshots`
+      code.includes('public, max-age=31536000, immutable'),
+      `${runnerRel} must set immutable CacheControl on portal-ui/screenshots/* uploads for instant CloudFront edge hits`
     );
   }
 
   const tfMain = fs.readFileSync(path.resolve(process.cwd(), 'infra/terraform/main.tf'), 'utf8');
   assert.ok(
-    tfMain.includes('!startswith(f, "screenshots/")'),
-    'infra/terraform/main.tf must exclude static screenshots/ from S3 portal-ui sync'
-  );
-  assert.ok(
-    /path_pattern\s*=\s*"\/screenshots\/\*"/.test(tfMain) &&
-      /max_ttl\s*=\s*0/.test(tfMain),
-    'infra/terraform/main.tf must route /screenshots/* to ControlPlaneApiOrigin with max_ttl = 0'
+    /path_pattern\s*=\s*"\/screenshots\/\*"[\s\S]{0,400}target_origin_id\s*=\s*"S3PortalSpaOrigin"/.test(tfMain) &&
+      /path_pattern\s*=\s*"\/screenshots\/\*"[\s\S]{0,600}max_ttl\s*=\s*31536000/.test(tfMain) &&
+      tfMain.includes('aws_cloudfront_response_headers_policy" "screenshots_cors_cache"') &&
+      tfMain.includes('aws_s3_bucket_cors_configuration" "synthetics_cors"'),
+    'infra/terraform/main.tf must route /screenshots/* directly to S3PortalSpaOrigin with edge caching and CORS headers policy'
   );
 
   const blueprintTf = generateTerraformBundle(DEFAULT_TEMPLATE_CONFIG);
   assert.ok(
-    blueprintTf.mainTf.includes('!startswith(f, "screenshots/")') &&
-      /path_pattern\s*=\s*"\/screenshots\/\*"/.test(blueprintTf.mainTf),
-    'generateTerraformBundle must also exclude screenshots/ from S3 static files and route /screenshots/* live'
+    /path_pattern\s*=\s*"\/screenshots\/\*"[\s\S]{0,400}target_origin_id\s*=\s*"S3PortalSpaOrigin"/.test(blueprintTf.mainTf) &&
+      blueprintTf.mainTf.includes('screenshots_cors_cache'),
+    'generateTerraformBundle must also route /screenshots/* directly to S3PortalSpaOrigin with CORS headers policy'
   );
 
-  // Verify verifyCompiledSpaBundle omits screenshots/* files from SPA bundle uploads
+  // Verify verifyCompiledSpaBundle INCLUDES screenshots/*.jpg with image/jpeg MIME type (and skips screenshots/manifest.json)
   const tmpDist = fs.mkdtempSync(path.join(os.tmpdir(), 'sfdc-spa-test-'));
   try {
     fs.writeFileSync(
@@ -2304,19 +2523,46 @@ test('AWS side enforces zero cached screenshots across Lambda, CloudFront, Terra
     fs.mkdirSync(path.join(tmpDist, 'assets'), { recursive: true });
     fs.writeFileSync(path.join(tmpDist, 'assets', 'index-test123.js'), 'console.log(1);');
     fs.mkdirSync(path.join(tmpDist, 'screenshots'), { recursive: true });
-    fs.writeFileSync(path.join(tmpDist, 'screenshots', 'www-T01-sideA.jpg'), 'fake-cached-jpeg');
+    fs.writeFileSync(path.join(tmpDist, 'screenshots', 'www-T01-sideA.jpg'), 'real-chromium-jpeg-bytes');
+    fs.writeFileSync(path.join(tmpDist, 'screenshots', 'manifest.json'), '{"ignored":true}');
     const verified = verifyCompiledSpaBundle(tmpDist, 'portal-ui');
     assert.equal(verified.valid, true);
+    const shotFile = verified.files.find((f) => f.relativePath === 'screenshots/www-T01-sideA.jpg');
+    assert.ok(shotFile, 'verifyCompiledSpaBundle must include screenshots/*.jpg for instant S3/CloudFront delivery');
+    assert.equal(shotFile.contentType, 'image/jpeg');
+    assert.equal(shotFile.s3Key, 'portal-ui/screenshots/www-T01-sideA.jpg');
     assert.ok(
-      !verified.files.some((f) => f.relativePath.startsWith('screenshots/')),
-      'verifyCompiledSpaBundle must never upload baked screenshots/ directory to S3'
+      !verified.files.some((f) => f.relativePath === 'screenshots/manifest.json'),
+      'verifyCompiledSpaBundle should omit non-image screenshots/manifest.json'
     );
   } finally {
     fs.rmSync(tmpDist, { recursive: true, force: true });
   }
 
-  // Verify server.ts, App.tsx, and TestInspector.tsx contain zero cached baseline fallbacks
-  for (const appFile of ['server.ts', 'src/App.tsx', 'src/components/TestInspector.tsx']) {
+  // Verify pure screenshot URL normalization & live API fallback URL builder
+  const { normalizeEdgeScreenshotUrl, buildScreenshotFallbackUrl } = await import('./domScreenshotRenderer');
+  assert.equal(
+    normalizeEdgeScreenshotUrl('/screenshots/www-T01-sideA.jpg?v=live5&url=https%3A%2F%2Fwww.salesforce.com%2F'),
+    '/screenshots/www-T01-sideA.jpg?v=live5'
+  );
+  assert.equal(
+    normalizeEdgeScreenshotUrl('/api/v1/screenshots/apac-T03-sideB.jpg?v=live5&r=1700000001'),
+    '/screenshots/apac-T03-sideB.jpg?v=live5&r=1700000001'
+  );
+  const fallbackUrl = buildScreenshotFallbackUrl('/screenshots/www-T09-sideA.jpg?v=live5', {
+    targetUrl: 'https://www.salesforce.com/custom/',
+    nonce: 12345,
+  });
+  assert.ok(
+    fallbackUrl.startsWith('/api/v1/screenshots/www-T09-sideA.jpg?') &&
+      fallbackUrl.includes('live=1') &&
+      fallbackUrl.includes('retry=12345') &&
+      fallbackUrl.includes('url=https%3A%2F%2Fwww.salesforce.com%2Fcustom%2F'),
+    `Expected live API fallback URL, got ${fallbackUrl}`
+  );
+
+  // Verify server.ts, App.tsx, and EvidenceInspectorPane.tsx contain zero legacy cached baseline tokens
+  for (const appFile of ['server.ts', 'src/App.tsx', 'src/components/EvidenceInspectorPane.tsx']) {
     const content = fs.readFileSync(path.resolve(process.cwd(), appFile), 'utf8');
     assert.ok(!content.includes('?cached=1'), `${appFile} must not use ?cached=1`);
     assert.ok(!content.includes('s3-cached-baseline'), `${appFile} must not reference s3-cached-baseline`);
@@ -2334,7 +2580,7 @@ test('Visual diff engine produces human-understandable logical explanations acro
     humanizeVisualSummary,
     isTechnicalPixelSummary,
   } = await import('./pixelDiff');
-  const { cleanHumanVisualSummary } = await import('../components/TestInspector');
+  const { cleanHumanVisualSummary } = await import('../components/EvidenceInspectorPane');
   const { diagnoseCheckRootCause } = await import('./sreIntelligence');
 
   // 1. Real RGBA buffer with right-sidebar drawer on Side B + collapsed header links on Side B
@@ -2584,8 +2830,8 @@ test('54. Unified Single-Test Execution guarantees HTTP status (e.g. 403 Forbidd
     'HTTP 200 must resolve to live screenshot URL'
   );
 
-  // 2. When httpStatus is 403 Forbidden (or any >= 400 error), resolveLiveScreenshotUrl and resolveApiScreenshotUrl
-  // NEVER return a 200 OK marketing screenshot; they return the 1280x760 HTTP Error DOM screen
+  // 2. When httpStatus is 403 Forbidden or 404 Not Found (or any >= 400 status), resolveLiveScreenshotUrl and resolveApiScreenshotUrl
+  // ALWAYS return the real headless Chromium JPEG screenshot URL (never '' or a dummy SVG) so the true browser-rendered screen is displayed
   const forbiddenShotUrl = resolveLiveScreenshotUrl({
     appId: 'www',
     testId: 'T01',
@@ -2595,23 +2841,31 @@ test('54. Unified Single-Test Execution guarantees HTTP status (e.g. 403 Forbidd
     httpStatus: 403,
   });
   assert.ok(
-    forbiddenShotUrl.startsWith('data:image/svg+xml;utf8,'),
-    'HTTP 403 must never display a 200 OK marketing page screenshot'
+    forbiddenShotUrl.startsWith('/screenshots/www-T01-sideA.jpg'),
+    'HTTP 403/404 must always resolve to the live browser JPEG screenshot URL, never empty string or dummy SVG'
   );
-  const decodedSvg = decodeURIComponent(
-    forbiddenShotUrl.replace('data:image/svg+xml;utf8,', '')
-  );
-  assert.ok(decodedSvg.includes('HTTP 403 Forbidden'), 'Error screen must display HTTP 403 Forbidden');
-  assert.ok(decodedSvg.includes('UNIFIED PROBE'), 'Error screen must indicate Unified Probe capture');
 
   const apiForbiddenUrl = resolveApiScreenshotUrl({
     appId: 'www',
-    testId: 'T01',
+    testId: 'T09',
     side: 'A',
-    httpStatus: 403,
+    httpStatus: 404,
   });
-  assert.ok(apiForbiddenUrl.startsWith('data:image/svg+xml;utf8,'));
+  assert.ok(apiForbiddenUrl.startsWith('/api/v1/screenshots/www-T09-sideA.jpg'));
   assert.ok(renderHttpErrorScreenshotDataUri({ httpStatus: 503, testId: 'T03' }).includes('503'));
+
+  // When both sides return the same HTTP error code (e.g. 404 vs 404) with 0% pixel diff between their rendered 404 pages,
+  // describeVisualDiffLogically reports 'same' instead of fabricating a status divergence
+  const logicalMatching404 = describeVisualDiffLogically({
+    pixelDiffPercent: 0,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    candidateStatus: 404,
+    baselineStatus: 404,
+    pageName: 'Synthetic Monitor (/contact-us/)',
+  });
+  assert.equal(logicalMatching404.verdict, 'same');
+  assert.ok(logicalMatching404.summary.includes('HTTP 404'));
 
   // 3. Even if pixelDiffPercent was 0, describeVisualDiffLogically and humanizeVisualSummary
   // immediately flag HTTP 403 vs HTTP 200 as a Major Layout Shift ('different')
@@ -2918,87 +3172,118 @@ test('55. Priority Work-Stealing Consumer Queue, Parallel Batch Processor & Mult
   );
 });
 
-test('56. Unified HTTP Call + Live DOM Screenshot Fallback eliminates HTTP-only probe exceptions and 404 thumbnails', async () => {
-  const {
-    renderLiveDomScreenshotSvg,
-    renderLiveDomScreenshotDataUri,
-  } = await import('./domScreenshotRenderer');
+test('56. Dynamic Itemized AI Visual Analysis, Zero ZONE/Locate Button, & Retry Live Capture UI', async () => {
+  const { buildItemizedVisualAnalysis } = await import('./pixelDiff');
 
-  // 1. Live HTTP 200 response renders a rich 1280x760 DOM SVG with observed HTTP status and latency
-  const svgA = renderLiveDomScreenshotSvg({
-    appId: 'www',
-    testId: 'T05',
-    testName: 'Salesforce Free Trial & Lead Capture Flow',
-    url: 'https://www.salesforce.com/form/signup/freetrial-sales/',
-    side: 'A',
-    httpStatus: 200,
-    durationMs: 114,
-    edgeHostname: 'www.salesforce.com.edgekey-staging.net',
-    edgeIp: '23.48.201.18',
+  // 1. Dynamic cross-env homepage comparison produces 5 context-aware zones using candidate/baseline labels
+  const itemizedHome = buildItemizedVisualAnalysis({
+    pixelDiffPercent: 28.4,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    pageName: 'Salesforce Global Home & Hero Experience',
+    url: 'https://www.salesforce.com/',
+    candidateStatus: 200,
+    baselineStatus: 200,
+    zones: {
+      headerPct: 12.4,
+      heroCenterPct: 31.2,
+      rightPanelPct: 48.0,
+      lowerBodyPct: 18.5,
+      footerPct: 0.4,
+      headerEdgeContrastA: 12,
+      headerEdgeContrastB: 18,
+      rightEdgeContrastA: 24,
+      rightEdgeContrastB: 8,
+    },
   });
-  assert.ok(svgA.includes('width="1280" height="760"'));
-  assert.ok(svgA.includes('HTTP 200 · 114ms'));
-  assert.ok(svgA.includes('Start Your Free 30-Day Salesforce Trial'));
+  assert.equal(itemizedHome.length, 5, 'Must return 5 dynamic viewport zones for web comparisons');
+  assert.equal(itemizedHome[0].region, 'Top Navigation & Global Header');
+  assert.equal(itemizedHome[1].region, 'Right Sidebar & Viewport Width');
+  assert.equal(itemizedHome[2].region, 'Above-the-Fold Hero & Primary CTAs');
+  assert.equal(itemizedHome[3].region, 'Mid-Page Modules & Secondary Content');
+  assert.equal(itemizedHome[4].region, 'Footer, Consent & Edge Parity Gate');
+  assert.equal(itemizedHome[0].severity, 'major');
+  assert.equal(itemizedHome[1].severity, 'major');
+  assert.ok(itemizedHome[0].stagingObservation.includes('Staging'));
+  assert.ok(itemizedHome[0].prodObservation.includes('Prod'));
 
-  const dataUriB = renderLiveDomScreenshotDataUri({
-    appId: 'www',
-    testId: 'T05',
-    testName: 'Salesforce Free Trial & Lead Capture Flow',
-    url: 'https://www.salesforce.com/form/signup/freetrial-sales/',
-    side: 'B',
-    httpStatus: 200,
-    durationMs: 76,
-    highlightDiff: true,
+  // 2. Dynamic pricing/form/redirect comparison adapts regions & wording to the actual check & status
+  const itemizedPricing = buildItemizedVisualAnalysis({
+    pixelDiffPercent: 6.2,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    pageName: 'Enterprise Editions & Pricing',
+    url: 'https://www.salesforce.com/editions-pricing/overview/',
+    candidateStatus: 200,
+    baselineStatus: 200,
   });
-  assert.ok(dataUriB.startsWith('data:image/svg+xml;utf8,'));
-  assert.ok(decodeURIComponent(dataUriB).includes('Agentforce Live Assistant'));
+  assert.equal(itemizedPricing[2].region, 'Above-the-Fold Pricing Header & Tier Grid');
+  assert.equal(itemizedPricing[3].region, 'Plan Comparison Matrix & Feature Rows');
 
-  // 2. HTTP error status (>= 400) automatically delegates to the error DOM screen
-  const errSvg = renderLiveDomScreenshotSvg({
-    appId: 'www',
-    testId: 'T05',
-    url: 'https://www.salesforce.com/form/signup/freetrial-sales/',
-    side: 'A',
-    httpStatus: 403,
+  const itemizedRedirect = buildItemizedVisualAnalysis({
+    pixelDiffPercent: 0,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    pageName: 'Legacy CRM Redirect Normalization',
+    url: 'https://www.salesforce.com/products/what-is-crm/',
+    testType: 'http-object',
+    candidateStatus: 301,
+    baselineStatus: 301,
   });
-  assert.ok(errSvg.includes('HTTP 403 Forbidden'));
+  assert.equal(itemizedRedirect.length, 3);
+  assert.ok(itemizedRedirect[0].region.includes('Redirect Edge Hop'));
 
-  // 3. TestInspector.tsx never shows 'HTTP-only probe (no live Chromium capture in this run)' or '· No Live Capture'
+  const itemizedErr = buildItemizedVisualAnalysis({
+    pixelDiffPercent: 0,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    pageName: 'Enterprise Login',
+    url: 'https://login.salesforce.com/',
+    candidateStatus: 503,
+    baselineStatus: 200,
+  });
+  assert.equal(itemizedErr[0].severity, 'major');
+  assert.ok(itemizedErr[0].stagingObservation.includes('HTTP 503'));
+
+  // 3. EvidenceInspectorPane.tsx never uses renderLiveDomScreenshotDataUri, removes Zone/Locate column, and renders Itemized AI Analysis + Retry UI
   const inspectorCode = fs.readFileSync(
-    path.resolve(process.cwd(), 'src/components/TestInspector.tsx'),
+    path.resolve(process.cwd(), 'src/components/EvidenceInspectorPane.tsx'),
     'utf8'
   );
   assert.ok(
-    !inspectorCode.includes('HTTP-only probe (no live Chromium capture in this run)'),
-    'TestInspector must never display the HTTP-only probe exception banner'
+    !inspectorCode.includes('renderLiveDomScreenshotDataUri'),
+    'EvidenceInspectorPane must never render dummy/mock SVG fallback images via renderLiveDomScreenshotDataUri'
   );
   assert.ok(
-    !inspectorCode.includes('· No Live Capture'),
-    'TestInspector must never display · No Live Capture exception badge'
+    !inspectorCode.includes('btn-focus-zone-'),
+    'EvidenceInspectorPane must NOT render useless Locate/Focused buttons'
   );
   assert.ok(
-    inspectorCode.includes("rawArea.toLowerCase() !== 'none'"),
-    'TestInspector must replace affectedArea="None" with a meaningful layout status label'
+    !inspectorCode.includes('Clear Highlight'),
+    'EvidenceInspectorPane must NOT render Clear Highlight zone button chrome'
+  );
+  assert.ok(
+    inspectorCode.includes('data-testid="ai-itemized-analysis-panel"'),
+    'EvidenceInspectorPane must render the Itemized AI Visual Analysis panel'
+  );
+  assert.ok(
+    inspectorCode.includes('data-testid="screenshot-retry-card-A"') &&
+      inspectorCode.includes('data-testid="btn-retry-screenshot-A"'),
+    'EvidenceInspectorPane must render Retry Live Capture card and button when a screenshot is unavailable'
   );
 
-  // 4. ControlCenterViews.tsx (PageMiniThumb) uses renderLiveDomScreenshotDataUri so thumbnails never break
-  const controlCenterCode = fs.readFileSync(
-    path.resolve(process.cwd(), 'src/components/ControlCenterViews.tsx'),
-    'utf8'
-  );
-  assert.ok(
-    controlCenterCode.includes('renderLiveDomScreenshotDataUri'),
-    'PageMiniThumb must fall back to renderLiveDomScreenshotDataUri so thumbnails never render missing [T01] boxes'
-  );
-
-  // 5. AWS Lambda control-plane-handler.js synthesizes live HTTP DOM screenshots when S3/Chromium is busy
+  // 4. AWS Lambda control-plane-handler.js returns 404 retryable JSON on missing screenshots and itemized differences on /api/v1/judge/nova-lite
   const controlPlaneCode = fs.readFileSync(
     path.resolve(process.cwd(), 'aws-lambda/control-plane-handler.js'),
     'utf8'
   );
   assert.ok(
-    controlPlaneCode.includes('buildLiveHttpDomSvgBuffer'),
-    'control-plane-handler.js must include buildLiveHttpDomSvgBuffer for unified HTTP+screenshot capture'
+    controlPlaneCode.includes('buildLambdaItemizedDifferences'),
+    'control-plane-handler.js must include buildLambdaItemizedDifferences for itemized AI analysis'
+  );
+  assert.ok(
+    controlPlaneCode.includes('retryable: true'),
+    'control-plane-handler.js must mark missing screenshots as retryable: true instead of serving dummy SVGs'
   );
 });
 
@@ -3463,11 +3748,368 @@ test('plugin-akamai-cache-physics uses normalizeCacheControl for multi-directive
   assert.equal(cachePluginFail?.verdict, 'FAIL');
 });
 
+test('zone-grounded visual analysis accurately diagnoses www-T01 (rightPanelPct=0 MATCH), www-T03 (0.08% cost gate SAME), and trailhead-T03 (header-only banner)', () => {
+  const wwwT01Zones = {
+    headerPct: 34.7,
+    heroCenterPct: 95.41,
+    rightPanelPct: 0,
+    lowerBodyPct: 95.65,
+    footerPct: 68.05,
+    meanLumDiff: 21.35,
+  };
+  const wwwT01Box = { x: 0, y: 1.6, w: 68.8, h: 98.4 };
 
+  const logicalT01 = describeVisualDiffLogically({
+    pixelDiffPercent: 63.89,
+    changedBox: wwwT01Box,
+    zones: wwwT01Zones,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    pageName: 'Salesforce Global Home & Hero Experience',
+    url: 'https://www.salesforce.com/',
+  });
+  assert.equal(logicalT01.verdict, 'different');
+  assert.equal(logicalT01.affectedArea, 'Header CTA, Above-the-Fold Hero & Mid-Page Modules');
+  assert.ok(
+    !logicalT01.summary.includes('opens a right-hand assistant/sidebar panel'),
+    'Must not falsely claim right sidebar opened when rightPanelPct is 0'
+  );
+  assert.ok(logicalT01.summary.includes('Agentforce sidebar panel matches'));
 
+  const itemizedT01 = buildItemizedVisualAnalysis({
+    pixelDiffPercent: 63.89,
+    changedBox: wwwT01Box,
+    zones: wwwT01Zones,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    pageName: 'Salesforce Global Home & Hero Experience',
+    url: 'https://www.salesforce.com/',
+  });
+  const rightZone = itemizedT01.find((z) => z.id === 'zone-right-panel');
+  const headerZone = itemizedT01.find((z) => z.id === 'zone-header');
+  const heroZone = itemizedT01.find((z) => z.id === 'zone-hero');
+  const lowerZone = itemizedT01.find((z) => z.id === 'zone-lower-modules');
+  assert.equal(rightZone?.severity, 'match');
+  assert.equal(rightZone?.zoneDeltaPct, 0);
+  assert.equal(headerZone?.severity, 'major');
+  assert.equal(heroZone?.severity, 'major');
+  assert.equal(lowerZone?.severity, 'major');
 
+  // www-T03: 0.08% pixel diff is below the 0.1% cost gate -> 'same'
+  const logicalT03 = describeVisualDiffLogically({
+    pixelDiffPercent: 0.08,
+    changedBox: { x: 30.6, y: 32.6, w: 38.4, h: 11.6 },
+    zones: {
+      headerPct: 0,
+      heroCenterPct: 0.24,
+      rightPanelPct: 0,
+      lowerBodyPct: 0,
+      footerPct: 0,
+      meanLumDiff: 0,
+    },
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    pageName: 'Agentforce AI & Einstein Platform Landing',
+    url: 'https://www.salesforce.com/artificial-intelligence/',
+  });
+  assert.equal(logicalT03.verdict, 'same');
+  assert.equal(logicalT03.affectedArea, 'None');
 
+  // trailhead-T03: 5.65% pixel diff isolated to top header banner (41.31% header, 0% hero/right/lower)
+  const trailheadT03Zones = {
+    headerPct: 41.31,
+    heroCenterPct: 0,
+    rightPanelPct: 0,
+    lowerBodyPct: 0,
+    footerPct: 0,
+    meanLumDiff: 7.38,
+  };
+  const logicalTrailhead = describeVisualDiffLogically({
+    pixelDiffPercent: 5.65,
+    changedBox: { x: 0, y: 0, w: 100, h: 6.3 },
+    zones: trailheadT03Zones,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    pageName: 'Trailhead Modules Catalog',
+    url: 'https://trailhead.salesforce.com/en/modules',
+  });
+  assert.equal(logicalTrailhead.verdict, 'different');
+  assert.equal(logicalTrailhead.affectedArea, 'Top Navigation & Header Banner');
 
+  const itemizedTrailhead = buildItemizedVisualAnalysis({
+    pixelDiffPercent: 5.65,
+    changedBox: { x: 0, y: 0, w: 100, h: 6.3 },
+    zones: trailheadT03Zones,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    pageName: 'Trailhead Modules Catalog',
+    url: 'https://trailhead.salesforce.com/en/modules',
+  });
+  assert.equal(itemizedTrailhead.find((z) => z.id === 'docs-global-search')?.severity, 'major');
+  assert.equal(itemizedTrailhead.find((z) => z.id === 'docs-toc-rail')?.severity, 'match');
+  assert.equal(itemizedTrailhead.find((z) => z.id === 'docs-primary-catalog')?.severity, 'match');
+  assert.equal(itemizedTrailhead.find((z) => z.id === 'docs-cards-footer')?.severity, 'match');
+});
 
+test('63. Dynamic Page-Specific AI Validation Parameters, Real RGBA Grounding (No Lying), Per-Parameter Accept/Undo, and Static Monaco Setup', async () => {
+  const { buildItemizedVisualAnalysis, measureBoxesFromRgbaFrames, compareRgbaFrames } =
+    await import('./pixelDiff');
 
+  // 1. Different page archetypes produce distinct AI-derived validation parameters with page rationales (NOT a fixed checklist)
+  const pricingParams = buildItemizedVisualAnalysis({
+    pixelDiffPercent: 28.5,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    pageName: 'Enterprise Editions & Pricing Matrix',
+    url: 'https://www.salesforce.com/editions-pricing/sales-cloud/',
+    zones: {
+      headerPct: 16.4,
+      heroCenterPct: 14.2,
+      rightPanelPct: 54.8,
+      lowerBodyPct: 19.0,
+      footerPct: 0.2,
+      headerEdgeContrastA: 6,
+      headerEdgeContrastB: 18,
+    },
+  });
+  const loginParams = buildItemizedVisualAnalysis({
+    pixelDiffPercent: 14.0,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    pageName: 'Enterprise Login',
+    url: 'https://login.salesforce.com/',
+    zones: {
+      headerPct: 0,
+      heroCenterPct: 0,
+      rightPanelPct: 38.0,
+      lowerBodyPct: 0,
+      footerPct: 0,
+    },
+  });
+  const trustParams = buildItemizedVisualAnalysis({
+    pixelDiffPercent: 12.0,
+    candidateLabel: 'staging',
+    baselineLabel: 'prod',
+    pageName: 'Salesforce Trust Status',
+    url: 'https://status.salesforce.com/',
+  });
 
+  // Pricing page catches the right skeleton drawer + collapsed header as DIFFERENT (major), never 0% MATCH
+  const pricingDrawer = pricingParams.find((p) => p.id === 'pricing-async-drawer');
+  const pricingNav = pricingParams.find((p) => p.id === 'pricing-nav-breakpoint');
+  assert.ok(pricingDrawer && pricingDrawer.severity === 'major' && pricingDrawer.zoneDeltaPct > 50);
+  assert.ok(pricingNav && pricingNav.severity === 'major' && pricingNav.zoneDeltaPct > 10);
+  assert.ok(pricingParams.every((p) => Boolean(p.rationale && p.rationale.length > 10)));
+
+  // Distinct page archetypes invent completely different validation parameter IDs & names
+  assert.notEqual(pricingParams[0].id, loginParams[0].id);
+  assert.notEqual(loginParams[0].id, trustParams[0].id);
+  assert.ok(loginParams.some((p) => p.id === 'auth-sso-form'));
+  assert.ok(trustParams.some((p) => p.id === 'trust-live-status'));
+
+  // 2. Real RGBA frame comparison + per-box delta measurement guarantees zero lying when right-side skeleton panel appears
+  const w = 100;
+  const h = 100;
+  const frameA = new Uint8ClampedArray(w * h * 4).fill(255); // White canvas
+  const frameB = new Uint8ClampedArray(w * h * 4).fill(255);
+  // Draw a distinct gray skeleton drawer on the right half (x >= 50) of frameA ONLY
+  for (let y = 0; y < h; y++) {
+    for (let x = 50; x < w; x++) {
+      const i = (y * w + x) * 4;
+      frameA[i] = 190;
+      frameA[i + 1] = 195;
+      frameA[i + 2] = 200;
+      frameA[i + 3] = 255;
+    }
+  }
+  const measured = compareRgbaFrames(frameA, frameB, w, h, 18);
+  assert.ok(measured.pixelDiffPercent >= 49 && measured.pixelDiffPercent <= 51);
+  const boxDeltas = measureBoxesFromRgbaFrames(frameA, frameB, w, h, [
+    { id: 'pricing-async-drawer', box: { x: 50, y: 0, w: 50, h: 100 } },
+    { id: 'left-unchanged', box: { x: 0, y: 0, w: 45, h: 100 } },
+  ]);
+  assert.equal(boxDeltas['pricing-async-drawer'], 100);
+  assert.equal(boxDeltas['left-unchanged'], 0);
+
+  // 3. EvidenceInspectorPane renders live pixel-verified grounding + per-parameter Accept/Undo buttons
+  const inspectorSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/components/EvidenceInspectorPane.tsx'),
+    'utf8'
+  );
+  assert.ok(
+    inspectorSrc.includes('accept-visual-param-${finding.id}'),
+    'EvidenceInspectorPane must render per-parameter Accept/Undo button testid'
+  );
+  assert.ok(
+    inspectorSrc.includes('setLiveMeasuredState'),
+    'EvidenceInspectorPane must store live canvas-measured pixel diff instead of discarding res.diff'
+  );
+
+  // 4. VsCodeView uses zero-dynamic-import static monacoSetup instead of root monaco-editor
+  const vscodeSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/components/VsCodeView.tsx'),
+    'utf8'
+  );
+  assert.ok(
+    !vscodeSrc.includes("from 'monaco-editor'"),
+    'VsCodeView must not import monolithic root monaco-editor (which triggers tsMode/typescript/ini dynamic chunk failures)'
+  );
+  assert.ok(
+    vscodeSrc.includes("from '../engine/monacoSetup'"),
+    'VsCodeView must bootstrap Monaco via static zero-dynamic-import monacoSetup'
+  );
+});
+
+// ---------------------------------------------------------------------------
+// AWS Deployed Synthetics Resilience & Simplified User Journeys
+// ---------------------------------------------------------------------------
+test('Synthetics resilience prevents 0-canary empty state and completedCanaries crash across AWS Lambda/SCP deployments', async () => {
+  const {
+    normalizeCanariesApiResponse,
+    normalizeFanOutApiResponse,
+  } = await import('./syntheticsResilience');
+
+  const apps = DEFAULT_TEMPLATE_CONFIG.properties;
+  const suitesByAppId: Record<string, typeof DEFAULT_TEMPLATE_CONFIG.testSuite> = {};
+  for (const app of apps) {
+    suitesByAppId[app.id] = DEFAULT_TEMPLATE_CONFIG.testSuite;
+  }
+  const runs = seedRunsFromConfig(DEFAULT_TEMPLATE_CONFIG);
+
+  // 1. AWS SCP returns empty canaries: [] -> client derives full 28-canary fleet (never 0!)
+  const scpEmpty = normalizeCanariesApiResponse({
+    raw: {
+      awsLiveConnected: false,
+      awsStatusMessage: 'AccessDeniedException: Organizations SCP',
+      canaries: [],
+    },
+    apps,
+    suitesByAppId,
+    runs,
+    templateConfig: DEFAULT_TEMPLATE_CONFIG,
+  });
+  assert.ok(scpEmpty.totalCanaries >= apps.length * 2, 'Must never drop to 0 canaries under SCP');
+  assert.equal(scpEmpty.totalProperties, apps.length);
+  assert.equal(scpEmpty.hydratedFromClientFallback, true);
+  assert.ok(scpEmpty.totalChecksManaged > 0);
+
+  // 2. Legacy AWS Lambda returns raw DescribeCanaries SDK objects ({ Name, Status }) -> safely enriched into full ManagedSyntheticsCanary[]
+  const rawSdkPayload = normalizeCanariesApiResponse({
+    raw: {
+      awsLiveConnected: true,
+      canaries: [
+        {
+          Name: 'ak-www-prod-stg',
+          Status: { State: 'RUNNING' },
+          RuntimeVersion: 'syn-nodejs-puppeteer-9.1',
+        },
+      ],
+    },
+    apps,
+    suitesByAppId,
+    runs,
+    templateConfig: DEFAULT_TEMPLATE_CONFIG,
+  });
+  assert.ok(rawSdkPayload.totalCanaries >= apps.length * 2);
+  const matchedWwwStg = rawSdkPayload.canaries.find((c) => c.canaryName === 'ak-www-prod-stg');
+  assert.ok(matchedWwwStg);
+  assert.equal(matchedWwwStg.syncStatus, 'AWS_LIVE_SYNCED');
+  assert.equal(matchedWwwStg.runtimeState, 'RUNNING');
+
+  // 3. Legacy Lambda flat fan-out payload (no `batch` object) NEVER crashes reading `completedCanaries`
+  const legacyFanOut = normalizeFanOutApiResponse({
+    raw: {
+      orchestrated: true,
+      totalCanaries: 2,
+      results: [
+        {
+          targetId: 'www.prod.staging',
+          canaryName: 'ak-www-prod-stg',
+          dispatched: false,
+          error: 'AccessDeniedException',
+        },
+        {
+          targetId: 'www.prod.prod',
+          canaryName: 'ak-www-prod-prd',
+          dispatched: true,
+        },
+      ],
+    },
+    scope: 'property-pair',
+    appId: 'www',
+  });
+  assert.ok(legacyFanOut.batch, 'Must always synthesize a valid FanOutBatchRecord');
+  assert.equal(legacyFanOut.batch.totalCanaries, 2);
+  assert.equal(legacyFanOut.batch.completedCanaries, 2);
+  assert.equal(legacyFanOut.batch.failedCanaries, 0);
+  assert.deepEqual(legacyFanOut.batch.affectedAppIds, ['www']);
+  assert.equal(legacyFanOut.batch.results.length, 2);
+
+  // 4. Full modern fan-out payload preserves exact batch fields
+  const modernFanOut = normalizeFanOutApiResponse({
+    raw: {
+      orchestrated: true,
+      batch: {
+        batchId: 'fanout-123',
+        scope: 'nogo-blockers',
+        triggeredBy: 'aws-lambda-control-plane',
+        startedAt: '2026-01-01T00:00:00Z',
+        completedAt: '2026-01-01T00:00:03Z',
+        status: 'COMPLETED',
+        concurrency: 6,
+        totalCanaries: 6,
+        completedCanaries: 6,
+        failedCanaries: 0,
+        affectedAppIds: ['www', 'help', 'apac'],
+        results: [],
+        propertyVerdicts: [],
+      },
+      runs: [],
+      canaries: scpEmpty.canaries,
+    },
+    scope: 'nogo-blockers',
+  });
+  assert.equal(modernFanOut.batch.batchId, 'fanout-123');
+  assert.equal(modernFanOut.batch.completedCanaries, 6);
+  assert.equal(modernFanOut.batch.totalCanaries, 6);
+  assert.equal(modernFanOut.canaries?.length, scpEmpty.canaries.length);
+
+  // 5. AWS Lambda control-plane-handler.js exposes full Synthetics parity endpoints & returns batch.completedCanaries
+  const lambdaSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'aws-lambda/control-plane-handler.js'),
+    'utf8'
+  );
+  assert.ok(lambdaSrc.includes('/api/v1/synthetics/canaries/sync'), 'Lambda must support /canaries/sync');
+  assert.ok(lambdaSrc.includes('/deep-dive'), 'Lambda must support /:canaryName/deep-dive');
+  assert.ok(lambdaSrc.includes('/start'), 'Lambda must support /:canaryName/start');
+  assert.ok(
+    lambdaSrc.includes('completedCanaries') && lambdaSrc.includes('propertyVerdicts'),
+    'Lambda /api/v1/synthetics/fan-out must return batch with completedCanaries and propertyVerdicts'
+  );
+
+  // 6. Simplified navigation, flattened ConfigHub & Fixed Slide-Over Canary Drawer verification
+  const topBarSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/components/TopBar.tsx'), 'utf8');
+  assert.ok(!topBarSrc.includes("label: 'VS Code'"), 'TopBar should have 4 streamlined tabs (no duplicate VS Code tab)');
+  assert.ok(topBarSrc.includes("label: 'Sites'") && topBarSrc.includes("label: 'Settings'"), 'TopBar uses plain-English labels');
+  const configHubSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/components/ConfigHubView.tsx'), 'utf8');
+  assert.ok(configHubSrc.includes('hideInnerTabs'), 'ConfigHubView must flatten nested SetupView tabs');
+  assert.ok(configHubSrc.includes('setup-tab-envs'), 'ConfigHubView must expose flattened Environments tab');
+  const synthSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/components/SyntheticsOrchestratorView.tsx'),
+    'utf8'
+  );
+  assert.ok(
+    synthSrc.includes('fixed inset-0 z-50 flex justify-end') && synthSrc.includes('role="dialog"'),
+    'Canary Inspector must render as a fixed right-hand Slide-Over Drawer so it is never hidden below the table on narrow viewports'
+  );
+
+  // 7. POST /api/v1/runs defaults to aws-lambda-adhoc returning results[] (never empty synthetics-run-once stub)
+  assert.ok(
+    lambdaSrc.includes("const executionEngine = body.engine || 'aws-lambda-adhoc'"),
+    'Lambda POST /api/v1/runs must default to aws-lambda-adhoc so callers receive newRun/result with results[]'
+  );
+  assert.ok(
+    lambdaSrc.includes('seedConcurrency'),
+    'Lambda POST /api/v1/runs/seed-fleet must throttle concurrent invocations to avoid AWS Lambda burst throttling'
+  );
+});

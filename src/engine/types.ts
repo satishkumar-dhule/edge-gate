@@ -46,12 +46,38 @@ export type CatchpointTestType =
   | 'rum'
   | 'custom';
 
+export type TestScriptEngine =
+  | 'playwright'
+  | 'puppeteer'
+  | 'catchpoint'
+  | 'selenium'
+  | 'k6'
+  | 'node-fetch';
+
 export interface TransactionStep {
   step: number;
   action: 'open' | 'click' | 'type' | 'waitForSelector' | 'assertText' | 'assertStatus' | 'screenshot';
   target: string;
   value?: string;
   assertText?: string;
+}
+
+export interface ScriptExecutionResult {
+  engine: TestScriptEngine;
+  executionMode: 'real-chromium-playwright' | 'emulated-script-runner';
+  passed: boolean;
+  durationMs: number;
+  finalUrl?: string;
+  pageTitle?: string;
+  stepLogs: TransactionStepResult[];
+  consoleLogs: string[];
+  metrics?: {
+    domContentLoadedMs?: number;
+    loadEventMs?: number;
+    lcpMs?: number;
+    resourceCount?: number;
+  };
+  error?: string;
 }
 
 export interface TestAssertions {
@@ -172,6 +198,57 @@ export interface ExecutionPopMeta {
   prodEdgeIp: string;
 }
 
+export interface TransactionStepResult {
+  step: number;
+  action: TransactionStep['action'];
+  target: string;
+  value?: string;
+  assertText?: string;
+  status: 'pass' | 'fail';
+  durationMs: number;
+  detail?: string;
+}
+
+export interface DnsProbeResult {
+  recordType: string;
+  server: string;
+  answers: string[];
+  ttlSec?: number;
+  dnssecValid?: boolean;
+  queryMs: number;
+}
+
+export interface SslProbeResult {
+  subject: string;
+  issuer: string;
+  validFrom: string;
+  validTo: string;
+  daysRemaining: number;
+  tlsProtocol: string;
+  cipher: string;
+  sanCount: number;
+  authorized?: boolean;
+}
+
+export interface NetworkProbeResult {
+  protocol: string;
+  port: number;
+  remoteIp?: string;
+  tcpHandshakeMs: number;
+  rttMs?: number;
+  packetLossPct?: number;
+  bgpPrefix?: string;
+  bgpOriginAsn?: string;
+  hopsCount?: number;
+}
+
+export interface AssertionResult {
+  rule: string;
+  expected: string;
+  actual: string;
+  passed: boolean;
+}
+
 export interface TestResult {
   id: string;
   name: string;
@@ -183,6 +260,17 @@ export interface TestResult {
   expectedStatus: string;
   actualStatus: number;
   durationMs: number;
+  testType?: CatchpointTestType;
+  httpMethod?: string;
+  requestHeadersSent?: Record<string, string>;
+  requestBodySent?: string;
+  transactionStepResults?: TransactionStepResult[];
+  scriptResult?: ScriptExecutionResult;
+  dnsResult?: DnsProbeResult;
+  sslResult?: SslProbeResult;
+  networkResult?: NetworkProbeResult;
+  assertionResults?: AssertionResult[];
+  responseBodySnippet?: string;
   capturedHeaders: {
     location?: string;
     'content-type'?: string;
@@ -221,6 +309,19 @@ export interface TestResult {
   canaryName?: string;
   canaryError?: string;
   pixelDiffPercent?: number;
+  changedBox?: { x: number; y: number; w: number; h: number } | null;
+  zones?: {
+    headerPct: number;
+    heroCenterPct: number;
+    rightPanelPct: number;
+    lowerBodyPct: number;
+    footerPct: number;
+    headerEdgeContrastA?: number;
+    headerEdgeContrastB?: number;
+    rightEdgeContrastA?: number;
+    rightEdgeContrastB?: number;
+    meanLumDiff?: number;
+  } | null;
 }
 
 export interface RunRecord {
@@ -265,8 +366,16 @@ export interface DifferenceItem {
 }
 
 export interface VisualDifferenceRegion {
+  id?: string;
+  region?: string;
+  rationale?: string;
+  parameterOrigin?: 'ai-page-derived' | 'bedrock-nova-lite' | 'gemini-multimodal';
   description: string;
-  severity: 'major' | 'minor';
+  severity: 'major' | 'minor' | 'match';
+  stagingObservation?: string;
+  prodObservation?: string;
+  impact?: string;
+  zoneDeltaPct?: number;
   box?: { x: number; y: number; w: number; h: number }; // percentage 0-100
   accepted?: boolean;
 }
@@ -276,6 +385,19 @@ export interface VisualJudgeResult {
   costGate: 'identical-bytes' | 'pixel-gate-passed' | 'ai-judged';
   costGateSkippedAi: boolean;
   pixelDiffPercent?: number;
+  changedBox?: { x: number; y: number; w: number; h: number } | null;
+  zones?: {
+    headerPct: number;
+    heroCenterPct: number;
+    rightPanelPct: number;
+    lowerBodyPct: number;
+    footerPct: number;
+    headerEdgeContrastA?: number;
+    headerEdgeContrastB?: number;
+    rightEdgeContrastA?: number;
+    rightEdgeContrastB?: number;
+    meanLumDiff?: number;
+  } | null;
   summary: string;
   affectedArea?: string;
   shortCallout?: string;

@@ -12,6 +12,7 @@ import {
   AppConfig,
   CatchpointTestType,
   TestAssertions,
+  TestScriptEngine,
   TransactionStep,
 } from '../engine/types';
 
@@ -40,6 +41,9 @@ export interface TestCaseDefinition {
   bgpPrefix?: string;
   bgpOriginAsn?: string;
   transactionSteps?: TransactionStep[];
+  scriptEngine?: TestScriptEngine;
+  customScript?: string;
+  scriptTimeoutMs?: number;
   assertions?: TestAssertions;
   scheduleIntervalMin?: number;
   slaWarningMs?: number;

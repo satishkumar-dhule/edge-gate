@@ -24,7 +24,7 @@
  */
 
 import { evaluateNovaLiteVisualDiff } from './awsBlueprint';
-import { type VisualZoneMetrics } from './pixelDiff';
+import { buildItemizedVisualAnalysis, type VisualZoneMetrics } from './pixelDiff';
 
 /**
  * Pure, isomorphic 128-bit deterministic hex digest (works identically in browser SPA & Node.js CLI/Server).
@@ -114,9 +114,14 @@ export interface ZeroTokenEvaluationDecision {
   shortCallout?: string;
   reason: string;
   differences: Array<{
+    id?: string;
     region?: string;
     description: string;
-    severity: 'minor' | 'different' | 'critical';
+    severity: 'minor' | 'different' | 'critical' | 'major' | 'match';
+    stagingObservation?: string;
+    prodObservation?: string;
+    impact?: string;
+    zoneDeltaPct?: number;
     box?: { x: number; y: number; w: number; h: number };
   }>;
   evaluatedAt: string;
@@ -134,9 +139,14 @@ export interface ZeroTokenCachedVerdict {
   affectedArea?: string;
   shortCallout?: string;
   differences: Array<{
+    id?: string;
     region?: string;
     description: string;
-    severity: 'minor' | 'different' | 'critical';
+    severity: 'minor' | 'different' | 'critical' | 'major' | 'match';
+    stagingObservation?: string;
+    prodObservation?: string;
+    impact?: string;
+    zoneDeltaPct?: number;
     box?: { x: number; y: number; w: number; h: number };
   }>;
   firstEvaluatedAt: string;
@@ -204,11 +214,18 @@ export function computeZeroTokenDiffFingerprint(
     .sort()
     .join(';');
 
+  const zoneSig = input.zones
+    ? `${input.zones.headerPct.toFixed(0)}:${input.zones.heroCenterPct.toFixed(0)}:${input.zones.rightPanelPct.toFixed(0)}:${input.zones.lowerBodyPct.toFixed(0)}`
+    : input.changedBox
+    ? `box:${input.changedBox.x}:${input.changedBox.y}:${input.changedBox.w}:${input.changedBox.h}`
+    : 'none';
+
   const canonicalPayload = [
     `test:${canonicalTestId}`,
     `url:${canonicalUrl}`,
     `status:${statusPair}`,
     `px:${quantizedPixelBucket}`,
+    `z:${zoneSig}`,
     `hdr:${sortedHeaders}`,
     `ck:${sortedCookies}`,
   ].join('||');
@@ -281,9 +298,9 @@ export class ZeroTokenArchitectureEngine {
     input: ZeroTokenDiffSignatureInput
   ): ZeroTokenEvaluationDecision {
     const now = new Date().toISOString();
-    const hasHttpError =
-      (typeof input.candidateStatus === 'number' && input.candidateStatus >= 400) ||
-      (typeof input.baselineStatus === 'number' && input.baselineStatus >= 400);
+    const candCode = typeof input.candidateStatus === 'number' ? input.candidateStatus : 200;
+    const baseCode = typeof input.baselineStatus === 'number' ? input.baselineStatus : 200;
+    const hasHttpError = (candCode >= 400 || baseCode >= 400) && candCode !== baseCode;
     const pct = hasHttpError
       ? Math.max(94.8, Number(input.pixelDiffPercent || 0))
       : Math.max(0, Number(input.pixelDiffPercent || 0));
@@ -296,6 +313,18 @@ export class ZeroTokenArchitectureEngine {
     // TIER 1: Deterministic 0.1% Pixel Cost Gate (0 Tokens) — ONLY when neither side returned an HTTP error (>= 400)
     if (pct <= COST_GATE_THRESHOLD_PCT && !hasHttpError) {
       this.tier1DeterministicSkips += 1;
+      const tier1Itemized = buildItemizedVisualAnalysis({
+        pixelDiffPercent: pct,
+        changedBox: input.changedBox ?? null,
+        zones: input.zones ?? null,
+        candidateLabel: input.candidateTarget,
+        baselineLabel: input.baselineTarget,
+        pageName: input.testName,
+        url,
+        candidateStatus: input.candidateStatus ?? 200,
+        baselineStatus: input.baselineStatus ?? 200,
+        cookieDiffCount: (input.cookieDiffs || []).length,
+      });
       const decision: ZeroTokenEvaluationDecision = {
         fingerprint,
         testId: input.testId,
@@ -315,7 +344,7 @@ export class ZeroTokenArchitectureEngine {
         affectedArea: 'None',
         shortCallout: 'Visually identical',
         reason: 'PIXEL_DELTA_BELOW_COST_GATE',
-        differences: [],
+        differences: tier1Itemized,
         evaluatedAt: now,
       };
       this.recordDecision(decision);

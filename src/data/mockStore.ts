@@ -9,6 +9,7 @@ import {
   RedirectHop,
   RunRecord,
   TestResult,
+  VisualDifferenceRegion,
 } from '../engine/types';
 import {
   applyRulesToItem,
@@ -26,11 +27,13 @@ import {
   resolveRegionalEdgeNode,
 } from '../config/template.config';
 import {
+  buildItemizedVisualAnalysis,
   describeVisualDiffLogically,
   humanizeVisualSummary,
   type VisualZoneMetrics,
 } from '../engine/pixelDiff';
 import { getCatchpointTypeMeta } from '../engine/catchpointCatalog';
+import { buildComplexTelemetryForTest } from '../engine/complexTestEngine';
 import liveScreenshotManifest from './liveScreenshotManifest.json';
 
 export const APPS: AppConfig[] = DEFAULT_TEMPLATE_CONFIG.properties;
@@ -377,9 +380,21 @@ export function generateTestResults(
   return activeSuite.map((tc, idx) => {
     const id = tc.id;
     const typeMeta = getCatchpointTypeMeta(tc.testType);
-    const targetPath = tc.path || '/';
-    const resolvedHostForEnv = tc.targetHost?.trim() || envHost;
-    const resolvedCanonicalHost = tc.targetHost?.trim() || canonicalHost;
+    let targetPath = tc.path || '/';
+    let fullUrlHostOverride: string | undefined;
+    if (/^https?:\/\//i.test(targetPath)) {
+      try {
+        const parsed = new URL(targetPath);
+        targetPath = `${parsed.pathname || '/'}${parsed.search || ''}`;
+        fullUrlHostOverride = parsed.hostname || undefined;
+      } catch {
+        targetPath = '/';
+      }
+    } else if (!targetPath.startsWith('/')) {
+      targetPath = `/${targetPath}`;
+    }
+    const resolvedHostForEnv = tc.targetHost?.trim() || fullUrlHostOverride || envHost;
+    const resolvedCanonicalHost = tc.targetHost?.trim() || fullUrlHostOverride || canonicalHost;
     let actualStatus =
       parseInt(tc.expectedStatus || typeMeta.defaultExpectedStatus, 10) || 200;
     let pass = true;
@@ -537,6 +552,16 @@ export function generateTestResults(
         ? `sftp://${resolvedHostForEnv}${targetPath}`
         : `https://${resolvedHostForEnv}${targetPath}`;
 
+    const complexTelemetry = buildComplexTelemetryForTest({
+      testDef: tc,
+      resolvedHost: resolvedHostForEnv,
+      edgeIp,
+      actualStatus,
+      durationMs,
+      hopCount: httpFlowSummary.totalHops,
+      isStaging,
+    });
+
     return {
       id,
       name: tc.name,
@@ -547,6 +572,7 @@ export function generateTestResults(
       expectedStatus: tc.expectedStatus || typeMeta.defaultExpectedStatus,
       actualStatus,
       durationMs,
+      ...complexTelemetry,
       capturedHeaders,
       capturedCookies,
       redirectChain,
@@ -684,6 +710,7 @@ export interface BuildComparisonOptions extends ApplyRulesOptions {
       pixelDiffPercent?: number;
       changedBox?: { x: number; y: number; w: number; h: number } | null;
       zones?: VisualZoneMetrics | null;
+      differences?: VisualDifferenceRegion[];
       costGate?: 'identical-bytes' | 'pixel-gate-passed' | 'ai-judged';
     }
   >;
@@ -720,69 +747,86 @@ export function buildInitialComparison(
       {
         pixelDiffPercent?: number;
         changedBox?: { x: number; y: number; w: number; h: number } | null;
+        zones?: VisualZoneMetrics | null;
       }
     >;
     const manifestEntry = manifestMap[`${candidateRun.appId}-${candRes.id}`];
+    const baseActualStatus = baseRes?.actualStatus ?? 200;
     const hasHttpErrorStatus =
-      candRes.actualStatus >= 400 || Boolean(baseRes && baseRes.actualStatus >= 400);
-    const rawMeasuredDiff =
-      candidateRun.key === baselineRun.key
-        ? 0
-        : typeof candRes.pixelDiffPercent === 'number'
-        ? candRes.pixelDiffPercent
-        : typeof manifestEntry?.pixelDiffPercent === 'number'
-        ? manifestEntry.pixelDiffPercent
-        : 0;
+      candRes.actualStatus >= 400 || baseActualStatus >= 400;
+    const hasHttpStatusDivergence =
+      hasHttpErrorStatus && candRes.actualStatus !== baseActualStatus;
+    const isSameRun = candidateRun.key === baselineRun.key;
+    const hasExplicitCandidateDiff = typeof candRes.pixelDiffPercent === 'number';
+    const rawMeasuredDiff = isSameRun
+      ? 0
+      : hasExplicitCandidateDiff
+      ? candRes.pixelDiffPercent!
+      : typeof manifestEntry?.pixelDiffPercent === 'number'
+      ? manifestEntry.pixelDiffPercent
+      : 0;
     const measuredDiff =
-      hasHttpErrorStatus && candidateRun.key !== baselineRun.key
+      hasHttpStatusDivergence && !isSameRun
         ? Math.max(rawMeasuredDiff, 94.8)
         : rawMeasuredDiff;
 
-    const baseLogical = describeVisualDiffLogically({
+    const resolvedChangedBox =
+      isSameRun || measuredDiff <= 0.1
+        ? null
+        : hasExplicitCandidateDiff
+        ? candRes.changedBox ?? null
+        : candRes.changedBox ??
+          manifestEntry?.changedBox ??
+          (hasHttpStatusDivergence ? { x: 0, y: 0, w: 100, h: 100 } : null);
+    const resolvedZones =
+      isSameRun || measuredDiff <= 0.1
+        ? null
+        : hasExplicitCandidateDiff
+        ? candRes.zones ?? null
+        : candRes.zones ?? manifestEntry?.zones ?? null;
+
+    const baseLogicalInput = {
       pixelDiffPercent: measuredDiff,
-      changedBox:
-        manifestEntry?.changedBox ??
-        (hasHttpErrorStatus ? { x: 0, y: 0, w: 100, h: 100 } : null),
+      changedBox: resolvedChangedBox,
+      zones: resolvedZones,
       candidateLabel: candidateRun.network,
       baselineLabel: baselineRun.network,
       pageName: candRes.name,
       url: candRes.canonicalUrl,
       candidateStatus: candRes.actualStatus,
       baselineStatus: baseRes?.actualStatus,
-    });
+      testType: candRes.testType || baseRes?.testType,
+      cookieDiffCount: cookieDiffs.length,
+    };
+    const baseLogical = describeVisualDiffLogically(baseLogicalInput);
+    const baseItemized = buildItemizedVisualAnalysis(baseLogicalInput);
 
     let visualResult: NonNullable<ComparisonItem['visualResult']> = {
       verdict: 'same',
       costGate: 'identical-bytes',
       costGateSkippedAi: true,
       pixelDiffPercent: measuredDiff,
+      changedBox: resolvedChangedBox,
+      zones: resolvedZones,
       summary: baseLogical.summary,
       affectedArea: baseLogical.affectedArea,
       shortCallout: baseLogical.shortCallout,
-      differences: [],
+      differences: baseItemized,
       primaryModel: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
     };
 
-    if ((measuredDiff > 0.1 || hasHttpErrorStatus) && candidateRun.key !== baselineRun.key) {
+    if ((measuredDiff > 0.1 || hasHttpStatusDivergence) && candidateRun.key !== baselineRun.key) {
       visualResult = {
-        verdict: hasHttpErrorStatus || measuredDiff > 5.0 ? 'different' : 'minor',
+        verdict: hasHttpStatusDivergence || measuredDiff > 5.0 ? 'different' : 'minor',
         costGate: 'ai-judged',
         costGateSkippedAi: false,
         pixelDiffPercent: measuredDiff,
+        changedBox: resolvedChangedBox,
+        zones: resolvedZones,
         summary: baseLogical.summary,
         affectedArea: baseLogical.affectedArea,
         shortCallout: baseLogical.shortCallout,
-        differences: [
-          {
-            description: baseLogical.shortCallout,
-            severity: hasHttpErrorStatus || measuredDiff > 5.0 ? 'major' : 'minor',
-            ...(manifestEntry?.changedBox
-              ? { box: manifestEntry.changedBox }
-              : hasHttpErrorStatus
-              ? { box: { x: 2, y: 2, w: 96, h: 96 } }
-              : {}),
-          },
-        ],
+        differences: baseItemized,
         primaryModel: DEFAULT_TEMPLATE_CONFIG.infrastructure.visualJudgeModel,
       };
     }
@@ -791,7 +835,7 @@ export function buildInitialComparison(
       options.aiJudgeOverrides?.[`${candidateRun.appId}-${candRes.id}`] ??
       options.aiJudgeOverrides?.[candRes.id];
     if (aiOverride && candidateRun.key !== baselineRun.key) {
-      const effectivePixelDiff = hasHttpErrorStatus
+      const effectivePixelDiff = hasHttpStatusDivergence
         ? Math.max(
             94.8,
             typeof aiOverride.pixelDiffPercent === 'number'
@@ -803,69 +847,37 @@ export function buildInitialComparison(
         : visualResult.pixelDiffPercent ?? 0;
       const effectiveBox =
         aiOverride.changedBox ??
-        manifestEntry?.changedBox ??
-        (hasHttpErrorStatus ? { x: 2, y: 2, w: 96, h: 96 } : undefined);
-      const overrideLogical = describeVisualDiffLogically({
+        resolvedChangedBox ??
+        (hasHttpStatusDivergence ? { x: 2, y: 2, w: 96, h: 96 } : null);
+      const effectiveZones = aiOverride.zones ?? resolvedZones;
+      const overrideLogicalInput = {
         pixelDiffPercent: effectivePixelDiff,
         changedBox: effectiveBox ?? null,
-        zones: aiOverride.zones ?? null,
+        zones: effectiveZones ?? null,
         candidateLabel: candidateRun.network,
         baselineLabel: baselineRun.network,
         pageName: candRes.name,
         url: candRes.canonicalUrl,
         candidateStatus: candRes.actualStatus,
         baselineStatus: baseRes?.actualStatus,
-      });
-      const resolvedSummary = humanizeVisualSummary(aiOverride.summary, {
-        pixelDiffPercent: effectivePixelDiff,
-        changedBox: effectiveBox ?? null,
-        zones: aiOverride.zones ?? null,
-        candidateLabel: candidateRun.network,
-        baselineLabel: baselineRun.network,
-        pageName: candRes.name,
-        url: candRes.canonicalUrl,
-        candidateStatus: candRes.actualStatus,
-        baselineStatus: baseRes?.actualStatus,
-      });
-      const effectiveVerdict = hasHttpErrorStatus ? 'different' : aiOverride.verdict;
-      const resolvedShortCallout = hasHttpErrorStatus
+        testType: candRes.testType || baseRes?.testType,
+        cookieDiffCount: cookieDiffs.length,
+      };
+      const overrideLogical = describeVisualDiffLogically(overrideLogicalInput);
+      const overrideItemized = buildItemizedVisualAnalysis(overrideLogicalInput);
+      const resolvedSummary = humanizeVisualSummary(aiOverride.summary, overrideLogicalInput);
+      const effectiveVerdict = hasHttpStatusDivergence ? 'different' : aiOverride.verdict;
+      const resolvedShortCallout = hasHttpStatusDivergence
         ? overrideLogical.shortCallout
         : aiOverride.shortCallout || overrideLogical.shortCallout;
-      const resolvedArea = hasHttpErrorStatus
+      const resolvedArea = hasHttpStatusDivergence
         ? overrideLogical.affectedArea
         : aiOverride.affectedArea || overrideLogical.affectedArea;
-      const diffBadgeDescription = hasHttpErrorStatus
-        ? overrideLogical.shortCallout
-        : aiOverride.shortCallout ||
-          (aiOverride.summary && aiOverride.summary.length <= 80 && !/pixel/i.test(aiOverride.summary)
-            ? aiOverride.summary
-            : resolvedShortCallout);
 
-      const overrideDifferences =
-        effectiveVerdict === 'same'
-          ? []
-          : visualResult.differences && visualResult.differences.length > 0
-          ? visualResult.differences.map((d, idx) =>
-              idx === 0
-                ? {
-                    ...d,
-                    description: diffBadgeDescription || d.description,
-                    severity: effectiveVerdict === 'different' ? ('major' as const) : ('minor' as const),
-                    ...(effectiveBox ? { box: effectiveBox } : {}),
-                  }
-                : d
-            )
-          : [
-              {
-                description:
-                  aiOverride.shortCallout ||
-                  (aiOverride.summary && !/pixel/i.test(aiOverride.summary)
-                    ? aiOverride.summary
-                    : resolvedShortCallout),
-                severity: effectiveVerdict === 'different' ? ('major' as const) : ('minor' as const),
-                ...(effectiveBox ? { box: effectiveBox } : {}),
-              },
-            ];
+      const overrideDifferences: VisualDifferenceRegion[] =
+        aiOverride.differences && aiOverride.differences.length > 0
+          ? aiOverride.differences
+          : overrideItemized;
 
       visualResult = {
         ...visualResult,
@@ -874,6 +886,8 @@ export function buildInitialComparison(
         affectedArea: resolvedArea,
         shortCallout: resolvedShortCallout,
         pixelDiffPercent: effectivePixelDiff,
+        changedBox: effectiveBox ?? null,
+        zones: effectiveZones ?? null,
         differences: overrideDifferences,
         costGate:
           aiOverride.costGate ??

@@ -1,1902 +1,3170 @@
 {
   "www-T01": {
-    "key": "www-T01",
-    "appId": "www",
-    "testId": "T01",
     "url": "https://www.salesforce.com/",
-    "finalUrl": "https://www.salesforce.com/",
-    "pageTitle": "Salesforce: The #1 AI CRM | Salesforce AP",
-    "sideAPath": "/screenshots/www-T01-sideA.jpg",
-    "sideBPath": "/screenshots/www-T01-sideB.jpg",
-    "sideASha256": "a1cab682198bfba06a9fc6a2f2a9edfe2b3361c488a1fd0153d4a8378d96c78d",
-    "sideBSha256": "a1cab682198bfba06a9fc6a2f2a9edfe2b3361c488a1fd0153d4a8378d96c78d",
-    "sideABytes": 99763,
-    "sideBBytes": 99763,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:54:33.181Z"
+    "status": 200,
+    "capturedAt": "2026-11-13T04:54:33.181Z",
+    "sideA": {
+      "bytes": 90327,
+      "sha256": "a63f7f848976fa069d77c76a7ec7c391355ecd9e2cd49f6ecf8fe439a2d01ace",
+      "path": "/screenshots/www-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 112457,
+      "sha256": "b0289c9022966596edccbe43dd50eeed66691a371b19f2d25e9b5f696649e532",
+      "path": "/screenshots/www-T01-sideB.jpg"
+    },
+    "pixelDiffPercent": 63.89,
+    "changedPixels": 38847,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 0,
+      "y": 1.6,
+      "w": 68.8,
+      "h": 98.4
+    },
+    "zones": {
+      "headerPct": 34.7,
+      "heroCenterPct": 95.41,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 95.65,
+      "footerPct": 68.05,
+      "headerEdgeContrastA": 5.47,
+      "headerEdgeContrastB": 6.56,
+      "rightEdgeContrastA": 0.72,
+      "rightEdgeContrastB": 0.63,
+      "meanLumDiff": 21.35
+    }
   },
   "www-T02": {
-    "key": "www-T02",
-    "appId": "www",
-    "testId": "T02",
     "url": "https://www.salesforce.com/sales/",
-    "finalUrl": "https://www.salesforce.com/sales/",
-    "pageTitle": "Sales Software & Solutions Powered by AI | Salesforce",
-    "sideAPath": "/screenshots/www-T02-sideA.jpg",
-    "sideBPath": "/screenshots/www-T02-sideB.jpg",
-    "sideASha256": "6c5c0a97b85ed0a424fb80ce2152ee363fb6454e04bd19ff36fca1b222d9f076",
-    "sideBSha256": "20efcafbeb0125c6069b553b7e086726815c9a0528ad3c9d62982654b4e699e1",
-    "sideABytes": 55167,
-    "sideBBytes": 55159,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:54:35.765Z",
+    "sideA": {
+      "bytes": 55159,
+      "sha256": "20efcafbeb0125c6069b553b7e086726815c9a0528ad3c9d62982654b4e699e1",
+      "path": "/screenshots/www-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 55159,
+      "sha256": "20efcafbeb0125c6069b553b7e086726815c9a0528ad3c9d62982654b4e699e1",
+      "path": "/screenshots/www-T02-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:54:35.765Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "www-T03": {
-    "key": "www-T03",
-    "appId": "www",
-    "testId": "T03",
     "url": "https://www.salesforce.com/artificial-intelligence/",
-    "finalUrl": "https://www.salesforce.com/artificial-intelligence/",
-    "pageTitle": "AIforce: Salesforce AI, Wherever You Already Work | Salesforce",
-    "sideAPath": "/screenshots/www-T03-sideA.jpg",
-    "sideBPath": "/screenshots/www-T03-sideB.jpg",
-    "sideASha256": "26cf5aea15ce340953e3b0346038290e6be86bbfaebfc393354843e10858dfa1",
-    "sideBSha256": "bbe66c7a036b775d739856bde57d1fbac28234e84e207f01f80dd5d91d8f461a",
-    "sideABytes": 77686,
-    "sideBBytes": 77651,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:54:39.834Z"
+    "status": 200,
+    "capturedAt": "2026-11-13T04:54:39.834Z",
+    "sideA": {
+      "bytes": 77797,
+      "sha256": "da92b5dd418583b48e6506956dcd8df472a74dca4d987182589d9640cc8fc56e",
+      "path": "/screenshots/www-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 77761,
+      "sha256": "7dae4c119474538aee4dcb568eadabe4b42caa6f0d6982dcf2d62dc60fb95657",
+      "path": "/screenshots/www-T03-sideB.jpg"
+    },
+    "pixelDiffPercent": 0.08,
+    "changedPixels": 50,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 30.6,
+      "y": 32.6,
+      "w": 38.4,
+      "h": 11.6
+    },
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0.24,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "headerEdgeContrastA": 15.03,
+      "headerEdgeContrastB": 15.03,
+      "rightEdgeContrastA": 8.34,
+      "rightEdgeContrastB": 8.34,
+      "meanLumDiff": 0
+    }
   },
   "www-T04": {
-    "key": "www-T04",
-    "appId": "www",
-    "testId": "T04",
     "url": "https://www.salesforce.com/crm",
-    "finalUrl": "https://www.salesforce.com/crm",
-    "pageTitle": "Salesforce CRM: Try The World’s #1 AI CRM | Salesforce",
-    "sideAPath": "/screenshots/www-T04-sideA.jpg",
-    "sideBPath": "/screenshots/www-T04-sideB.jpg",
-    "sideASha256": "1b1b88694ebb4ae69bc0080daa930e497db69b24dd2847c0bb4495008c2a54cc",
-    "sideBSha256": "1b1b88694ebb4ae69bc0080daa930e497db69b24dd2847c0bb4495008c2a54cc",
-    "sideABytes": 76773,
-    "sideBBytes": 76773,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:54:44.547Z",
+    "sideA": {
+      "bytes": 76773,
+      "sha256": "1b1b88694ebb4ae69bc0080daa930e497db69b24dd2847c0bb4495008c2a54cc",
+      "path": "/screenshots/www-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 76773,
+      "sha256": "1b1b88694ebb4ae69bc0080daa930e497db69b24dd2847c0bb4495008c2a54cc",
+      "path": "/screenshots/www-T04-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:54:44.547Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "www-T05": {
-    "key": "www-T05",
-    "appId": "www",
-    "testId": "T05",
     "url": "https://www.salesforce.com/form/signup/freetrial-sales/",
-    "finalUrl": "https://www.salesforce.com/form/signup/freetrial-sales/",
-    "pageTitle": "Enterprise Edition Free 30-Day Trial | Salesforce",
-    "sideAPath": "/screenshots/www-T05-sideA.jpg",
-    "sideBPath": "/screenshots/www-T05-sideB.jpg",
-    "sideASha256": "ce89f70b0f669d0d10a9fd4a3dae3ac3befef35233b53d8c5a40abf4d8fcedc9",
-    "sideBSha256": "ce89f70b0f669d0d10a9fd4a3dae3ac3befef35233b53d8c5a40abf4d8fcedc9",
-    "sideABytes": 40824,
-    "sideBBytes": 40824,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:54:46.451Z",
+    "sideA": {
+      "bytes": 80207,
+      "sha256": "8966488311c64d4b387efb9e7f0e942b37638a029bdd62b9d8ac87fc1599faed",
+      "path": "/screenshots/www-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 80207,
+      "sha256": "8966488311c64d4b387efb9e7f0e942b37638a029bdd62b9d8ac87fc1599faed",
+      "path": "/screenshots/www-T05-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:54:46.451Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "www-T06": {
-    "key": "www-T06",
-    "appId": "www",
-    "testId": "T06",
     "url": "https://www.salesforce.com/editions-pricing/sales-cloud/",
-    "finalUrl": "https://www.salesforce.com/editions-pricing/sales-cloud/",
-    "pageTitle": "Salesforce Sales Pricing | Salesforce",
-    "sideAPath": "/screenshots/www-T06-sideA.jpg",
-    "sideBPath": "/screenshots/www-T06-sideB.jpg",
-    "sideASha256": "81e984527dbe33360a280eae09e0881997984aa4472b19529a25a10fc566ae15",
-    "sideBSha256": "81e984527dbe33360a280eae09e0881997984aa4472b19529a25a10fc566ae15",
-    "sideABytes": 64009,
-    "sideBBytes": 64009,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:54:48.850Z",
+    "sideA": {
+      "bytes": 86855,
+      "sha256": "80a4dc3c5018320ff4b0f3e0d549c6561678ef745478a61937910f4802acd31b",
+      "path": "/screenshots/www-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 86855,
+      "sha256": "80a4dc3c5018320ff4b0f3e0d549c6561678ef745478a61937910f4802acd31b",
+      "path": "/screenshots/www-T06-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:54:48.850Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "www-T07": {
-    "key": "www-T07",
-    "appId": "www",
-    "testId": "T07",
     "url": "https://www.salesforce.com/small-business/",
-    "finalUrl": "https://www.salesforce.com/small-business/",
-    "pageTitle": "Small Business Software: All-in-One CRM | Salesforce",
-    "sideAPath": "/screenshots/www-T07-sideA.jpg",
-    "sideBPath": "/screenshots/www-T07-sideB.jpg",
-    "sideASha256": "4f1dee36576dbbe61ad5eaa96e6ab50dc881d4d52f8a909717c7b42eeb5b0492",
-    "sideBSha256": "4f1dee36576dbbe61ad5eaa96e6ab50dc881d4d52f8a909717c7b42eeb5b0492",
-    "sideABytes": 63471,
-    "sideBBytes": 63471,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:54:52.149Z",
+    "sideA": {
+      "bytes": 75120,
+      "sha256": "279fdb6ad340c02f3654244959b840c9b71d12c1c4027a7463cb5702200c6cd7",
+      "path": "/screenshots/www-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 75120,
+      "sha256": "279fdb6ad340c02f3654244959b840c9b71d12c1c4027a7463cb5702200c6cd7",
+      "path": "/screenshots/www-T07-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:54:52.149Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "www-T08": {
-    "key": "www-T08",
-    "appId": "www",
-    "testId": "T08",
     "url": "https://www.salesforce.com/company/",
-    "finalUrl": "https://www.salesforce.com/company/",
-    "pageTitle": "We’re Salesforce, the #1 AI CRM. | Salesforce",
-    "sideAPath": "/screenshots/www-T08-sideA.jpg",
-    "sideBPath": "/screenshots/www-T08-sideB.jpg",
-    "sideASha256": "3626213f965d8ca302435d3610c2fb41aa76cf66fe107ea52827c072320140d9",
-    "sideBSha256": "3626213f965d8ca302435d3610c2fb41aa76cf66fe107ea52827c072320140d9",
-    "sideABytes": 77333,
-    "sideBBytes": 77333,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:54:54.621Z",
+    "sideA": {
+      "bytes": 100393,
+      "sha256": "5d89b8b3c93b1d341729f398f855637438a27ac528fa7a5e4471a6a59d2b0d70",
+      "path": "/screenshots/www-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 100393,
+      "sha256": "5d89b8b3c93b1d341729f398f855637438a27ac528fa7a5e4471a6a59d2b0d70",
+      "path": "/screenshots/www-T08-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:54:54.621Z"
-  },
-  "trailhead-T01": {
-    "key": "trailhead-T01",
-    "appId": "trailhead",
-    "testId": "T01",
-    "url": "https://trailhead.salesforce.com/",
-    "finalUrl": "https://trailhead.salesforce.com/",
-    "pageTitle": "Trailhead | The fun way to learn",
-    "sideAPath": "/screenshots/trailhead-T01-sideA.jpg",
-    "sideBPath": "/screenshots/trailhead-T01-sideB.jpg",
-    "sideASha256": "915e5c1eeda958b7e0f5d199fb0b81e692979242c2d2929abe58e9c1cad3b913",
-    "sideBSha256": "519cc6ff772c94386a6e22f90ffc923d90f2fb5dd5750bedeae0ffd1a22884ce",
-    "sideABytes": 110765,
-    "sideBBytes": 115076,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:56:31.853Z"
-  },
-  "trailhead-T02": {
-    "key": "trailhead-T02",
-    "appId": "trailhead",
-    "testId": "T02",
-    "url": "https://trailhead.salesforce.com/en/credentials/agentforcespecialist",
-    "finalUrl": "https://trailhead.salesforce.com/en/credentials/agentforcespecialist",
-    "pageTitle": "Certification - Salesforce Certified Agentforce Specialist",
-    "sideAPath": "/screenshots/trailhead-T02-sideA.jpg",
-    "sideBPath": "/screenshots/trailhead-T02-sideB.jpg",
-    "sideASha256": "b50a7c65a1902ab2e1054805f44022f4d68103e1a85baf9b01d0091fdcf74126",
-    "sideBSha256": "b50a7c65a1902ab2e1054805f44022f4d68103e1a85baf9b01d0091fdcf74126",
-    "sideABytes": 104574,
-    "sideBBytes": 104574,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:56:38.516Z"
-  },
-  "trailhead-T03": {
-    "key": "trailhead-T03",
-    "appId": "trailhead",
-    "testId": "T03",
-    "url": "https://trailhead.salesforce.com/en/modules",
-    "finalUrl": "https://trailhead.salesforce.com/badges",
-    "pageTitle": "Badges | Salesforce Trailhead",
-    "sideAPath": "/screenshots/trailhead-T03-sideA.jpg",
-    "sideBPath": "/screenshots/trailhead-T03-sideB.jpg",
-    "sideASha256": "11d7c123cf0e43b1dec5479d835e3d438dd4741db83d1f01b9021ab332037be0",
-    "sideBSha256": "234525fb67dd0d4e01b510b224fc2da361872c0087cb178cde33a2ab55dd592d",
-    "sideABytes": 101403,
-    "sideBBytes": 106129,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:56:43.543Z"
-  },
-  "trailhead-T04": {
-    "key": "trailhead-T04",
-    "appId": "trailhead",
-    "testId": "T04",
-    "url": "https://trailhead.salesforce.com/en/career-paths",
-    "finalUrl": "https://trailhead.salesforce.com/",
-    "pageTitle": "Trailhead | The fun way to learn",
-    "sideAPath": "/screenshots/trailhead-T04-sideA.jpg",
-    "sideBPath": "/screenshots/trailhead-T04-sideB.jpg",
-    "sideASha256": "57ab738c90b6841ccdf902d19770bd07d65ab6956aaf67f6e36d511308a63cbb",
-    "sideBSha256": "57ab738c90b6841ccdf902d19770bd07d65ab6956aaf67f6e36d511308a63cbb",
-    "sideABytes": 93996,
-    "sideBBytes": 93996,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:56:49.117Z"
-  },
-  "trailhead-T05": {
-    "key": "trailhead-T05",
-    "appId": "trailhead",
-    "testId": "T05",
-    "url": "https://trailhead.salesforce.com/en/community",
-    "finalUrl": "https://trailhead.salesforce.com/",
-    "pageTitle": "Trailhead | The fun way to learn",
-    "sideAPath": "/screenshots/trailhead-T05-sideA.jpg",
-    "sideBPath": "/screenshots/trailhead-T05-sideB.jpg",
-    "sideASha256": "e11fec3fa5ce849b9e337ce02a8ae1a8cd14fde08673230508255cdbb52960c5",
-    "sideBSha256": "e11fec3fa5ce849b9e337ce02a8ae1a8cd14fde08673230508255cdbb52960c5",
-    "sideABytes": 93576,
-    "sideBBytes": 93576,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:56:55.319Z"
-  },
-  "trailhead-T06": {
-    "key": "trailhead-T06",
-    "appId": "trailhead",
-    "testId": "T06",
-    "url": "https://trailhead.salesforce.com/en/trailhead-playground",
-    "finalUrl": "https://trailhead.salesforce.com/",
-    "pageTitle": "Trailhead | The fun way to learn",
-    "sideAPath": "/screenshots/trailhead-T06-sideA.jpg",
-    "sideBPath": "/screenshots/trailhead-T06-sideB.jpg",
-    "sideASha256": "ba914107f4eec440705fef47c17c5b0c9e2d438badb727b3895eb736b1f99ef9",
-    "sideBSha256": "ba914107f4eec440705fef47c17c5b0c9e2d438badb727b3895eb736b1f99ef9",
-    "sideABytes": 109221,
-    "sideBBytes": 109221,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:57:01.962Z"
-  },
-  "trailhead-T07": {
-    "key": "trailhead-T07",
-    "appId": "trailhead",
-    "testId": "T07",
-    "url": "https://trailhead.salesforce.com/en/credentials/administrator",
-    "finalUrl": "https://trailhead.salesforce.com/en/credentials/platformadministrator",
-    "pageTitle": "Certification - Salesforce Certified Platform Administrator",
-    "sideAPath": "/screenshots/trailhead-T07-sideA.jpg",
-    "sideBPath": "/screenshots/trailhead-T07-sideB.jpg",
-    "sideASha256": "730da1c5ec040e02a8caf07f54a8f10cb43c9e4e989b332fa1bfa04d5e045e65",
-    "sideBSha256": "730da1c5ec040e02a8caf07f54a8f10cb43c9e4e989b332fa1bfa04d5e045e65",
-    "sideABytes": 104217,
-    "sideBBytes": 104217,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:57:07.975Z"
-  },
-  "trailhead-T08": {
-    "key": "trailhead-T08",
-    "appId": "trailhead",
-    "testId": "T08",
-    "url": "https://trailhead.salesforce.com/en/ranks",
-    "finalUrl": "https://trailhead.salesforce.com/",
-    "pageTitle": "Trailhead | The fun way to learn",
-    "sideAPath": "/screenshots/trailhead-T08-sideA.jpg",
-    "sideBPath": "/screenshots/trailhead-T08-sideB.jpg",
-    "sideASha256": "beee9018c507f64b4b5d94ed8bc8bcc402b34dde2d00541e5bdde0d16cb680e5",
-    "sideBSha256": "beee9018c507f64b4b5d94ed8bc8bcc402b34dde2d00541e5bdde0d16cb680e5",
-    "sideABytes": 102109,
-    "sideBBytes": 102109,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:57:14.229Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "login-T01": {
-    "key": "login-T01",
-    "appId": "login",
-    "testId": "T01",
     "url": "https://login.salesforce.com/",
-    "finalUrl": "https://login.salesforce.com/",
-    "pageTitle": "Log In with Email | Salesforce",
-    "sideAPath": "/screenshots/login-T01-sideA.jpg",
-    "sideBPath": "/screenshots/login-T01-sideB.jpg",
-    "sideASha256": "522ba1138a00a42ca392bc8f07f23ebeba21a16e487e476208713477533f229c",
-    "sideBSha256": "fa0012197e6842bbd20d00042c15c7f4c196499fddc7b7eabb8960e54475240b",
-    "sideABytes": 47787,
-    "sideBBytes": 45368,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:54:56.457Z",
+    "sideA": {
+      "bytes": 45202,
+      "sha256": "e9221683a48ef5a0be7977bf247c76ad5229c14ebe6b942c866eae7d24e78abb",
+      "path": "/screenshots/login-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 45202,
+      "sha256": "e9221683a48ef5a0be7977bf247c76ad5229c14ebe6b942c866eae7d24e78abb",
+      "path": "/screenshots/login-T01-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:54:56.457Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "login-T02": {
-    "key": "login-T02",
-    "appId": "login",
-    "testId": "T02",
     "url": "https://login.salesforce.com/services/oauth2/authorize",
-    "finalUrl": "https://login.salesforce.com/",
-    "pageTitle": "Log In with Email | Salesforce",
-    "sideAPath": "/screenshots/login-T02-sideA.jpg",
-    "sideBPath": "/screenshots/login-T02-sideB.jpg",
-    "sideASha256": "312a043430267dbd749d049be590065e4a84e177129b95b4862102736dda7d58",
-    "sideBSha256": "36ed09e720dfb0910e0e85b94678f06b182500d89e4ec126b3aab4ac3f7a8238",
-    "sideABytes": 47814,
-    "sideBBytes": 45422,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:54:57.955Z",
+    "sideA": {
+      "bytes": 126290,
+      "sha256": "528350d68f18cf66ab80e47ee99dd91cbb81bf493063686bced484e0a67f0b41",
+      "path": "/screenshots/login-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 126290,
+      "sha256": "528350d68f18cf66ab80e47ee99dd91cbb81bf493063686bced484e0a67f0b41",
+      "path": "/screenshots/login-T02-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:54:57.955Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "login-T03": {
-    "key": "login-T03",
-    "appId": "login",
-    "testId": "T03",
     "url": "https://login.salesforce.com/.well-known/idp-configuration",
-    "finalUrl": "https://login.salesforce.com/",
-    "pageTitle": "Log In with Email | Salesforce",
-    "sideAPath": "/screenshots/login-T03-sideA.jpg",
-    "sideBPath": "/screenshots/login-T03-sideB.jpg",
-    "sideASha256": "7c22c0c235ff00475f9f68182b4301e63b9ba0576871e0fe589b359f2ea509f1",
-    "sideBSha256": "580be6c850d31ec7420187d4652837284c67b7ffdbf635bc4d83721a1888db83",
-    "sideABytes": 47847,
-    "sideBBytes": 45407,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:54:59.541Z"
+    "status": 200,
+    "capturedAt": "2026-11-13T04:54:59.541Z",
+    "sideA": {
+      "bytes": 133901,
+      "sha256": "37cfa33bd38647fe53da7c6d948ceacaee5cec9f75edfd0f47329a5f8743dcc1",
+      "path": "/screenshots/login-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 122924,
+      "sha256": "b21aa8aa7a621885e81d0b899342389822656ba67cd9695cb8b92cfc3e53ef78",
+      "path": "/screenshots/login-T03-sideB.jpg"
+    },
+    "pixelDiffPercent": 5.77,
+    "changedPixels": 3508,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 68.4
+    },
+    "zones": {
+      "headerPct": 42.15,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0.01,
+      "footerPct": 0,
+      "headerEdgeContrastA": 26.9,
+      "headerEdgeContrastB": 15.67,
+      "rightEdgeContrastA": 22.32,
+      "rightEdgeContrastB": 22.28,
+      "meanLumDiff": 8.77
+    }
   },
   "login-T04": {
-    "key": "login-T04",
-    "appId": "login",
-    "testId": "T04",
     "url": "https://login.salesforce.com/services/auth/idp",
-    "finalUrl": "https://login.salesforce.com/_nc_external/identity/sso/ui/AuthorizationError?ErrorCode=Bad_Id",
-    "pageTitle": "Problem Logging In | Salesforce",
-    "sideAPath": "/screenshots/login-T04-sideA.jpg",
-    "sideBPath": "/screenshots/login-T04-sideB.jpg",
-    "sideASha256": "0ac0ad9c2abad05457ddc89e26fd926d92aa6f4611d77d8d164fe0c89d931a10",
-    "sideBSha256": "0ac0ad9c2abad05457ddc89e26fd926d92aa6f4611d77d8d164fe0c89d931a10",
-    "sideABytes": 23968,
-    "sideBBytes": 23968,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:55:00.867Z",
+    "sideA": {
+      "bytes": 105382,
+      "sha256": "21cd3ac005c6bb77a2a0baabb5f2c3c49db470028f1b3da10ce52da1d58d35a8",
+      "path": "/screenshots/login-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 105382,
+      "sha256": "21cd3ac005c6bb77a2a0baabb5f2c3c49db470028f1b3da10ce52da1d58d35a8",
+      "path": "/screenshots/login-T04-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:55:00.867Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "login-T05": {
-    "key": "login-T05",
-    "appId": "login",
-    "testId": "T05",
     "url": "https://login.salesforce.com/setup/secur/mfa",
-    "finalUrl": "https://login.salesforce.com/",
-    "pageTitle": "Log In with Email | Salesforce",
-    "sideAPath": "/screenshots/login-T05-sideA.jpg",
-    "sideBPath": "/screenshots/login-T05-sideB.jpg",
-    "sideASha256": "3e1603585fe4a62764c532a738a556c9424377ea7749db35e508e14c62473514",
-    "sideBSha256": "4b568807760ee7d613b51771fdc8ed1d031dd09637b4603ec92f22f410b78a1c",
-    "sideABytes": 47770,
-    "sideBBytes": 45273,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:55:02.522Z",
+    "sideA": {
+      "bytes": 86606,
+      "sha256": "20d6f8654b1133ca0976f04030e3a8b2238a1ec4778078ccf3eca7b108df0390",
+      "path": "/screenshots/login-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 86606,
+      "sha256": "20d6f8654b1133ca0976f04030e3a8b2238a1ec4778078ccf3eca7b108df0390",
+      "path": "/screenshots/login-T05-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:55:02.522Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "login-T06": {
-    "key": "login-T06",
-    "appId": "login",
-    "testId": "T06",
     "url": "https://login.salesforce.com/secur/forgotpassword.jsp",
-    "finalUrl": "https://login.salesforce.com/secur/forgotpassword.jsp",
-    "pageTitle": "Reset Your Password | Salesforce",
-    "sideAPath": "/screenshots/login-T06-sideA.jpg",
-    "sideBPath": "/screenshots/login-T06-sideB.jpg",
-    "sideASha256": "a34f7519ded3e3a9dc90227ed634053f1d8ea736f9da0846a29ebe0e7f054b48",
-    "sideBSha256": "a34f7519ded3e3a9dc90227ed634053f1d8ea736f9da0846a29ebe0e7f054b48",
-    "sideABytes": 38313,
-    "sideBBytes": 38313,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:55:04.344Z",
+    "sideA": {
+      "bytes": 60319,
+      "sha256": "d963919ae4850059143e89a1eea6d4e75c0972370f88406c4d2c0febcc89e513",
+      "path": "/screenshots/login-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 60319,
+      "sha256": "d963919ae4850059143e89a1eea6d4e75c0972370f88406c4d2c0febcc89e513",
+      "path": "/screenshots/login-T06-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:55:04.344Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "login-T07": {
-    "key": "login-T07",
-    "appId": "login",
-    "testId": "T07",
     "url": "https://login.salesforce.com/services/auth/sso",
-    "finalUrl": "https://login.salesforce.com/_nc_external/identity/sso/ui/AuthorizationError?ErrorCode=Bad_Id",
-    "pageTitle": "Problem Logging In | Salesforce",
-    "sideAPath": "/screenshots/login-T07-sideA.jpg",
-    "sideBPath": "/screenshots/login-T07-sideB.jpg",
-    "sideASha256": "0ac0ad9c2abad05457ddc89e26fd926d92aa6f4611d77d8d164fe0c89d931a10",
-    "sideBSha256": "0ac0ad9c2abad05457ddc89e26fd926d92aa6f4611d77d8d164fe0c89d931a10",
-    "sideABytes": 23968,
-    "sideBBytes": 23968,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:55:05.651Z",
+    "sideA": {
+      "bytes": 122687,
+      "sha256": "83df2254c32c31e15445876d5c7e419f2f5204809e87c795eac863594b2448a6",
+      "path": "/screenshots/login-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 122687,
+      "sha256": "83df2254c32c31e15445876d5c7e419f2f5204809e87c795eac863594b2448a6",
+      "path": "/screenshots/login-T07-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:55:05.651Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "login-T08": {
-    "key": "login-T08",
-    "appId": "login",
-    "testId": "T08",
     "url": "https://login.salesforce.com/id/health",
-    "finalUrl": "https://login.salesforce.com/",
-    "pageTitle": "Log In with Email | Salesforce",
-    "sideAPath": "/screenshots/login-T08-sideA.jpg",
-    "sideBPath": "/screenshots/login-T08-sideB.jpg",
-    "sideASha256": "3bd3e647282f4a3a48d73d9c7785978299c0df2b096f21b74bdbd85f0b321ce6",
-    "sideBSha256": "3ef6cd6c72e035f745d1bbaac0caf48a08be9daf6a719635f3ada762c604546e",
-    "sideABytes": 47852,
-    "sideBBytes": 45381,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:55:07.177Z",
+    "sideA": {
+      "bytes": 98981,
+      "sha256": "e0898149912967043406b07a37e7d2cdf3b1e7a9744b87f60c9aea7ae3fc9a62",
+      "path": "/screenshots/login-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 98981,
+      "sha256": "e0898149912967043406b07a37e7d2cdf3b1e7a9744b87f60c9aea7ae3fc9a62",
+      "path": "/screenshots/login-T08-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:55:07.177Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "developer-T01": {
-    "key": "developer-T01",
-    "appId": "developer",
-    "testId": "T01",
     "url": "https://developer.salesforce.com/",
-    "finalUrl": "https://developer.salesforce.com/",
-    "pageTitle": "Developer Portal | Salesforce Developers | Developer",
-    "sideAPath": "/screenshots/developer-T01-sideA.jpg",
-    "sideBPath": "/screenshots/developer-T01-sideB.jpg",
-    "sideASha256": "c44cd79e07cd2535d4eb926daa3bc87a585e1330b7709f33a8741a71644b2f61",
-    "sideBSha256": "c44cd79e07cd2535d4eb926daa3bc87a585e1330b7709f33a8741a71644b2f61",
-    "sideABytes": 111724,
-    "sideBBytes": 111724,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:55:11.487Z",
+    "sideA": {
+      "bytes": 111724,
+      "sha256": "c44cd79e07cd2535d4eb926daa3bc87a585e1330b7709f33a8741a71644b2f61",
+      "path": "/screenshots/developer-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 111724,
+      "sha256": "c44cd79e07cd2535d4eb926daa3bc87a585e1330b7709f33a8741a71644b2f61",
+      "path": "/screenshots/developer-T01-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:55:11.487Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "developer-T02": {
-    "key": "developer-T02",
-    "appId": "developer",
-    "testId": "T02",
     "url": "https://developer.salesforce.com/docs/apis",
-    "finalUrl": "https://developer.salesforce.com/docs/apis",
-    "pageTitle": "API Library | Salesforce Developers",
-    "sideAPath": "/screenshots/developer-T02-sideA.jpg",
-    "sideBPath": "/screenshots/developer-T02-sideB.jpg",
-    "sideASha256": "05fd9890b86c265e013a878d5ecd56e3dae0e430abdec2681196f52c46e7897b",
-    "sideBSha256": "05fd9890b86c265e013a878d5ecd56e3dae0e430abdec2681196f52c46e7897b",
-    "sideABytes": 65035,
-    "sideBBytes": 65035,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:55:14.393Z",
+    "sideA": {
+      "bytes": 94676,
+      "sha256": "fb3f2f1138fe28ab00105ad93dbfd5375eac39eededbba854c7959c89b38ad15",
+      "path": "/screenshots/developer-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 94676,
+      "sha256": "fb3f2f1138fe28ab00105ad93dbfd5375eac39eededbba854c7959c89b38ad15",
+      "path": "/screenshots/developer-T02-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:55:14.393Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "developer-T03": {
-    "key": "developer-T03",
-    "appId": "developer",
-    "testId": "T03",
     "url": "https://developer.salesforce.com/tools/lwc",
-    "finalUrl": "https://developer.salesforce.com/",
-    "pageTitle": "Developer Portal | Salesforce Developers | Developer",
-    "sideAPath": "/screenshots/developer-T03-sideA.jpg",
-    "sideBPath": "/screenshots/developer-T03-sideB.jpg",
-    "sideASha256": "d674b5a15efca4b291e896b001ed0bc6d3a88d0518135b016b17b3f5a84cfbb6",
-    "sideBSha256": "d674b5a15efca4b291e896b001ed0bc6d3a88d0518135b016b17b3f5a84cfbb6",
-    "sideABytes": 125159,
-    "sideBBytes": 125159,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:55:20.656Z"
+    "status": 200,
+    "capturedAt": "2026-11-13T04:55:20.656Z",
+    "sideA": {
+      "bytes": 121869,
+      "sha256": "d68078fdaac7dd66e6ecc786313b1db8a0fbe60cc9603d3812e22177e5391891",
+      "path": "/screenshots/developer-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 124995,
+      "sha256": "f09ee40f8656eda474a00f7660655169b10f0cd39ddcbb9fdd3a5b5eb57f2952",
+      "path": "/screenshots/developer-T03-sideB.jpg"
+    },
+    "pixelDiffPercent": 18.19,
+    "changedPixels": 11060,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 3.1,
+      "y": 2.6,
+      "w": 93.1,
+      "h": 89.5
+    },
+    "zones": {
+      "headerPct": 18.23,
+      "heroCenterPct": 25.46,
+      "rightPanelPct": 12.31,
+      "lowerBodyPct": 11.57,
+      "footerPct": 14.25,
+      "headerEdgeContrastA": 35.94,
+      "headerEdgeContrastB": 28.91,
+      "rightEdgeContrastA": 14.62,
+      "rightEdgeContrastB": 14.37,
+      "meanLumDiff": 1.93
+    }
   },
   "developer-T04": {
-    "key": "developer-T04",
-    "appId": "developer",
-    "testId": "T04",
     "url": "https://developer.salesforce.com/docs/atlas.en-us.apexref.meta/apexref/",
-    "finalUrl": "https://developer.salesforce.com/docs/atlas.en-us.apexref.meta/apexref",
-    "pageTitle": "Salesforce Developers",
-    "sideAPath": "/screenshots/developer-T04-sideA.jpg",
-    "sideBPath": "/screenshots/developer-T04-sideB.jpg",
-    "sideASha256": "1d31e042ef6e0093f7a657410f0851e5f30b3adb4b3eceb8182e81736a170039",
-    "sideBSha256": "1d31e042ef6e0093f7a657410f0851e5f30b3adb4b3eceb8182e81736a170039",
-    "sideABytes": 39301,
-    "sideBBytes": 39301,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:55:23.292Z",
+    "sideA": {
+      "bytes": 39301,
+      "sha256": "1d31e042ef6e0093f7a657410f0851e5f30b3adb4b3eceb8182e81736a170039",
+      "path": "/screenshots/developer-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 39301,
+      "sha256": "1d31e042ef6e0093f7a657410f0851e5f30b3adb4b3eceb8182e81736a170039",
+      "path": "/screenshots/developer-T04-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:55:23.292Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "developer-T05": {
-    "key": "developer-T05",
-    "appId": "developer",
-    "testId": "T05",
     "url": "https://developer.salesforce.com/tools/vscode/agentforce",
-    "finalUrl": "https://developer.salesforce.com/docs/platform/sfvscode-extensions/guide",
-    "pageTitle": "Salesforce Extensions for Visual Studio Code | Salesforce Developers",
-    "sideAPath": "/screenshots/developer-T05-sideA.jpg",
-    "sideBPath": "/screenshots/developer-T05-sideB.jpg",
-    "sideASha256": "0abce4174909fa9b2f53776c7b98a4ab64b37f9547bdfc5c74795f7414bb1701",
-    "sideBSha256": "b64c2f93bb4ba15337e952c70a467063e1653661476e5e7de2444f30a5cdc747",
-    "sideABytes": 124996,
-    "sideBBytes": 124995,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:55:25.990Z",
+    "sideA": {
+      "bytes": 124996,
+      "sha256": "0abce4174909fa9b2f53776c7b98a4ab64b37f9547bdfc5c74795f7414bb1701",
+      "path": "/screenshots/developer-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 124996,
+      "sha256": "0abce4174909fa9b2f53776c7b98a4ab64b37f9547bdfc5c74795f7414bb1701",
+      "path": "/screenshots/developer-T05-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:55:25.990Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "developer-T06": {
-    "key": "developer-T06",
-    "appId": "developer",
-    "testId": "T06",
     "url": "https://developer.salesforce.com/signup",
-    "finalUrl": "https://developer.salesforce.com/signup",
-    "pageTitle": "Developer Edition with Agentforce and Data 360 | Salesforce | Developer",
-    "sideAPath": "/screenshots/developer-T06-sideA.jpg",
-    "sideBPath": "/screenshots/developer-T06-sideB.jpg",
-    "sideASha256": "bf1694d8f4ff2e03bf6097464a6c70964bc64a79b609cc40c4488406c2b7c25c",
-    "sideBSha256": "bf1694d8f4ff2e03bf6097464a6c70964bc64a79b609cc40c4488406c2b7c25c",
-    "sideABytes": 40320,
-    "sideBBytes": 40320,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:55:28.182Z",
+    "sideA": {
+      "bytes": 40320,
+      "sha256": "bf1694d8f4ff2e03bf6097464a6c70964bc64a79b609cc40c4488406c2b7c25c",
+      "path": "/screenshots/developer-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 40320,
+      "sha256": "bf1694d8f4ff2e03bf6097464a6c70964bc64a79b609cc40c4488406c2b7c25c",
+      "path": "/screenshots/developer-T06-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:55:28.182Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "developer-T07": {
-    "key": "developer-T07",
-    "appId": "developer",
-    "testId": "T07",
     "url": "https://developer.salesforce.com/docs/atlas.en-us.c360a_api.meta",
-    "finalUrl": "https://developer.salesforce.com/docs",
-    "pageTitle": "Developer Documentation | Salesforce Developers",
-    "sideAPath": "/screenshots/developer-T07-sideA.jpg",
-    "sideBPath": "/screenshots/developer-T07-sideB.jpg",
-    "sideASha256": "6c69c077f3988eed15f03633959fb951cf7e7067542ab6c200ad6903aedac7ce",
-    "sideBSha256": "0129d2b468925ed7489552efd375d0c119d36a6849741dd4cb67a5a9baee3dcf",
-    "sideABytes": 54189,
-    "sideBBytes": 61692,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:55:31.459Z",
+    "sideA": {
+      "bytes": 54189,
+      "sha256": "6c69c077f3988eed15f03633959fb951cf7e7067542ab6c200ad6903aedac7ce",
+      "path": "/screenshots/developer-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 54189,
+      "sha256": "6c69c077f3988eed15f03633959fb951cf7e7067542ab6c200ad6903aedac7ce",
+      "path": "/screenshots/developer-T07-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:55:31.459Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "developer-T08": {
-    "key": "developer-T08",
-    "appId": "developer",
-    "testId": "T08",
     "url": "https://developer.salesforce.com/forums",
-    "finalUrl": "https://trailhead.salesforce.com/trailblazer-community/feed",
-    "pageTitle": "Feed | Questions | Salesforce Trailblazer Community",
-    "sideAPath": "/screenshots/developer-T08-sideA.jpg",
-    "sideBPath": "/screenshots/developer-T08-sideB.jpg",
-    "sideASha256": "2cb75bc3fab3ced5fa4d99007eda6d02c6fd58429e3efcf832dc7053173bfe68",
-    "sideBSha256": "d7f50c64e2972da0e5e26fdaf0a64f6566f968135ebad1219d7c82e6b6032a98",
-    "sideABytes": 97485,
-    "sideBBytes": 103774,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:55:38.588Z",
+    "sideA": {
+      "bytes": 97506,
+      "sha256": "3ad7d672c97b663a52ff22b256f815a8f692fd15963130ab7942d50b0c6b1d26",
+      "path": "/screenshots/developer-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 97506,
+      "sha256": "3ad7d672c97b663a52ff22b256f815a8f692fd15963130ab7942d50b0c6b1d26",
+      "path": "/screenshots/developer-T08-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:55:38.588Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "help-T01": {
-    "key": "help-T01",
-    "appId": "help",
-    "testId": "T01",
     "url": "https://help.salesforce.com/s/",
-    "finalUrl": "https://help.salesforce.com/s/",
-    "pageTitle": "Salesforce Help | Home",
-    "sideAPath": "/screenshots/help-T01-sideA.jpg",
-    "sideBPath": "/screenshots/help-T01-sideB.jpg",
-    "sideASha256": "20d6f8654b1133ca0976f04030e3a8b2238a1ec4778078ccf3eca7b108df0390",
-    "sideBSha256": "fc196ce48bbfd8e562603870ecb5377ab299fc7f5c65574064f513ed3765088a",
-    "sideABytes": 86606,
-    "sideBBytes": 79649,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:06:19.730Z"
+    "status": 200,
+    "capturedAt": "2026-11-13T05:06:19.730Z",
+    "sideA": {
+      "bytes": 86606,
+      "sha256": "20d6f8654b1133ca0976f04030e3a8b2238a1ec4778078ccf3eca7b108df0390",
+      "path": "/screenshots/help-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 79649,
+      "sha256": "fc196ce48bbfd8e562603870ecb5377ab299fc7f5c65574064f513ed3765088a",
+      "path": "/screenshots/help-T01-sideB.jpg"
+    },
+    "pixelDiffPercent": 0.57,
+    "changedPixels": 344,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 3.1,
+      "y": 2.1,
+      "w": 92.8,
+      "h": 4.2
+    },
+    "zones": {
+      "headerPct": 4.13,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "headerEdgeContrastA": 12.35,
+      "headerEdgeContrastB": 1.02,
+      "rightEdgeContrastA": 13.2,
+      "rightEdgeContrastB": 13.2,
+      "meanLumDiff": 0.54
+    }
   },
   "help-T02": {
-    "key": "help-T02",
-    "appId": "help",
-    "testId": "T02",
     "url": "https://help.salesforce.com/s/articleView",
-    "finalUrl": "https://help.salesforce.com/s/articleView",
-    "pageTitle": "Salesforce Help | Article",
-    "sideAPath": "/screenshots/help-T02-sideA.jpg",
-    "sideBPath": "/screenshots/help-T02-sideB.jpg",
-    "sideASha256": "92a2ac36f56aeea8fbda3bf57eaba241d9da29a097d0630e359251a3a23b8778",
-    "sideBSha256": "92a2ac36f56aeea8fbda3bf57eaba241d9da29a097d0630e359251a3a23b8778",
-    "sideABytes": 46622,
-    "sideBBytes": 46622,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:06:24.404Z",
+    "sideA": {
+      "bytes": 46622,
+      "sha256": "92a2ac36f56aeea8fbda3bf57eaba241d9da29a097d0630e359251a3a23b8778",
+      "path": "/screenshots/help-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 46622,
+      "sha256": "92a2ac36f56aeea8fbda3bf57eaba241d9da29a097d0630e359251a3a23b8778",
+      "path": "/screenshots/help-T02-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:06:24.404Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "help-T03": {
-    "key": "help-T03",
-    "appId": "help",
-    "testId": "T03",
     "url": "https://help.salesforce.com/s/cases",
-    "finalUrl": "https://help.salesforce.com/s/login/?ec=302&startURL=%2Fs%2Fcases",
-    "pageTitle": "Loading https://tbid.digital.salesforce.com/oauth2/aus5v9466wdqLdY0O697/v1/authorize?response_type=code&response_mode=query&nonce=eed803f2-5842-4edd-920f-7c10bfa54d56&client_id=0oa5v93ebgAGqkFSn697&redirect_uri=https%3A%2F%2Fiis.digital.salesforce.com%2Fservices%2Foauth2%2Fcallback&state=eyJpaXNTdGF0ZSI6IjVmYTYxZjQxYzczMTUzM2VmNGU2YTBkZTppditydWV6QlZXeGdsZGJYMlprNnozOVNGT01wbklOZU5PWFBlMkpTN3BITkU5cUliZXNETnhkWkRSRTJkRVp5Y0lYdFREZGhsakY4NjFRbGZXamdVdm0yZzlVQkNyRVhZcVlxZVRpVUI5SWZPOHVVYlY3RGp2eUdqZXpGYk5Cc1llTlVoVm9GU1NGaHJDOTFWMTl1eWJvRVRZQkZvblpOL3hDc09SbUoza1RkTDhQQ0lqQU1ZdDQyMkVvcmg3UFBnZXRTS2wyMzgyd1VrUTJ3dUVKSXVHelJGNzdPY0hOWXozRVBIS0tDaXVKSXlsbFhkcEZGbTlsOTBlQVhGY085K3NBeW9UYjdoRWZ1QS9IclQwd0JUVkEvam5Jc3ZLVnlyU3pVMWdMNkxWWlo0a3hmTFdLNkhsUnlDVkxBNTBsSzJ1Z3NpVzJQeVFBTWpzQXJ0azdnSSt2V2RnZzFHTmtJVkh1d0xLaHpJbmJScUdNZHZnUUk3T24rSEd1dDhYZEN5UXkxekV6ZkluaGVlcHZTYnRrVGNjZ2NpcVRPc1M0NEJBbWhpbzhBODY3dlFGMUhaS1N6S09pUUlMVzJHaXhaZFp4TjNsRjVOL214aXNLdStVRnNZcy83U3FUditnbWxEWEtJMCtBaHhJSHpUL3RaR2NHQUprd0tmRWRFTUkzdU5pdHFiZ1VNdzQxRE5wYlVmTWZMRE5ua3BSR2hhS0JHZE4zVlVSYXluZlJQVjVtRFhDd3NkcDZVWHE2YTlpWWp4N3MrRlMycXNmNFdid1A1cjgrajZ5ZzZMOE1pWE85VUZYd21RQWJPK29LUjZQempYY1VhRVMzazR1N1ExaWYzc0lzaC9YKzBrKzhjWHc9PTpyS3dKZXU3WmJDWmx3Q3V4V3hvZ0h3PT0iLCJyZWZlcnJlciI6Imh0dHBzOi8vaGVscC5zYWxlc2ZvcmNlLmNvbS8iLCJjbGllbnRJZCI6IjNNVkc5ZzlyYnNUa0tuQVhSVV9oT0x2SFJZb2NzLjBLdEs3Nk1keklqR2pqck1CRjZKU1pUTTVrNjdXTk1rbWRKX25pdk1OR3FIR2k5eGx6RWdDRFAiLCJjb3JyZWxhdGlvbklkIjoiNjNlMzRjMjItOTk2MS00MDFhLWI3YjQtZWEyNWI1ZjEyN2Y0Iiwic3RhcnRUaW1lIjoxNzk0NTQ2MzkxMzc3LCJpZHBzIjpbIklkUCAtIFNhbGVzZm9yY2UiLCJJZFAgLSBNdWxlc29mdC1VUyIsIklkUCAtIE11bGVzb2Z0LUVVIiwiSWRQIC0gTXVsZXNvZnQtQ0FOIiwiSWRQIC0gTXVsZXNvZnQtSlAiLCJJZFAgLSBNdWxlc29mdC1JTiIsIklkUCAtIE11bGVzb2Z0LUJSIiwiSWRQIC0gTXVsZXNvZnQtVUsiLCJJZFAgLSBNdWxlc29mdC1BVSIsIklkUCAtIFNwaWZmLVVTIiwiSWRQIC0gU3BpZmYtRVUiLCJJZFAgLSBPd24iLCJJZFAgLSBUYWJsZWF1IiwiSWRQIC0gVGFibGVhdS1DbG91ZCIsIklkUCAtIE1hcmtldGluZ0Nsb3VkIiwiSWRQIC0gU2xhY2stSGVscCIsIm90cCJdLCJ0YmlkQ29uZmlnSWQiOiJzdGFuZGFyZCJ9&scope=openid+email+profile+offline_access&intent=login",
-    "sideAPath": "/screenshots/help-T03-sideA.jpg",
-    "sideBPath": "/screenshots/help-T03-sideB.jpg",
-    "sideASha256": "a27a44e4e765bfad0b219f8e90ae9ab475b0a206d7edb51eeab84b9ecca107f1",
-    "sideBSha256": "a27a44e4e765bfad0b219f8e90ae9ab475b0a206d7edb51eeab84b9ecca107f1",
-    "sideABytes": 6520,
-    "sideBBytes": 6520,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:06:35.347Z",
+    "sideA": {
+      "bytes": 6520,
+      "sha256": "a27a44e4e765bfad0b219f8e90ae9ab475b0a206d7edb51eeab84b9ecca107f1",
+      "path": "/screenshots/help-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 6520,
+      "sha256": "a27a44e4e765bfad0b219f8e90ae9ab475b0a206d7edb51eeab84b9ecca107f1",
+      "path": "/screenshots/help-T03-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:06:35.347Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "help-T04": {
-    "key": "help-T04",
-    "appId": "help",
-    "testId": "T04",
     "url": "https://help.salesforce.com/s/release-notes",
-    "finalUrl": "https://help.salesforce.com/s/",
-    "pageTitle": "Salesforce Help | Home",
-    "sideAPath": "/screenshots/help-T04-sideA.jpg",
-    "sideBPath": "/screenshots/help-T04-sideB.jpg",
-    "sideASha256": "8ae449f7ee893b4725ee5e2360a3021cecba68093787aec966c9d1d0afcc49ac",
-    "sideBSha256": "9e238c975ac3cd588539eb704a42440501ca4ae3e3bfcdd355213aa25b7a9ac5",
-    "sideABytes": 45532,
-    "sideBBytes": 45693,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:06:44.392Z"
+    "status": 200,
+    "capturedAt": "2026-11-13T05:06:44.392Z",
+    "sideA": {
+      "bytes": 45532,
+      "sha256": "8ae449f7ee893b4725ee5e2360a3021cecba68093787aec966c9d1d0afcc49ac",
+      "path": "/screenshots/help-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 45693,
+      "sha256": "9e238c975ac3cd588539eb704a42440501ca4ae3e3bfcdd355213aa25b7a9ac5",
+      "path": "/screenshots/help-T04-sideB.jpg"
+    },
+    "pixelDiffPercent": 3.15,
+    "changedPixels": 1917,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 0,
+      "y": 9.5,
+      "w": 100,
+      "h": 45.3
+    },
+    "zones": {
+      "headerPct": 5.1,
+      "heroCenterPct": 3.96,
+      "rightPanelPct": 5.56,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "headerEdgeContrastA": 17.09,
+      "headerEdgeContrastB": 16.96,
+      "rightEdgeContrastA": 7.05,
+      "rightEdgeContrastB": 6.82,
+      "meanLumDiff": 0.39
+    }
   },
   "help-T05": {
-    "key": "help-T05",
-    "appId": "help",
-    "testId": "T05",
     "url": "https://help.salesforce.com/s/known-issues",
-    "finalUrl": "https://help.salesforce.com/s/",
-    "pageTitle": "Salesforce Help | Home",
-    "sideAPath": "/screenshots/help-T05-sideA.jpg",
-    "sideBPath": "/screenshots/help-T05-sideB.jpg",
-    "sideASha256": "766e40db8ef2f2a4ac120e22a49a31ee6b5d95c9766b9302d8bccc3444d4ab57",
-    "sideBSha256": "766e40db8ef2f2a4ac120e22a49a31ee6b5d95c9766b9302d8bccc3444d4ab57",
-    "sideABytes": 45430,
-    "sideBBytes": 45430,
+    "status": 200,
+    "capturedAt": "2026-11-12T16:11:34.303Z",
+    "sideA": {
+      "bytes": 45430,
+      "sha256": "766e40db8ef2f2a4ac120e22a49a31ee6b5d95c9766b9302d8bccc3444d4ab57",
+      "path": "/screenshots/help-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 45430,
+      "sha256": "766e40db8ef2f2a4ac120e22a49a31ee6b5d95c9766b9302d8bccc3444d4ab57",
+      "path": "/screenshots/help-T05-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
-    "capturedAt": "2026-11-12T16:11:34.303Z"
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "help-T06": {
-    "key": "help-T06",
-    "appId": "help",
-    "testId": "T06",
     "url": "https://help.salesforce.com/s/guides",
-    "finalUrl": "https://help.salesforce.com/s/",
-    "pageTitle": "Salesforce Help | Home",
-    "sideAPath": "/screenshots/help-T06-sideA.jpg",
-    "sideBPath": "/screenshots/help-T06-sideB.jpg",
-    "sideASha256": "25a1366360721420e78bf3c65190f3c6a2b8231f386a2098adeb1fbcbacc686b",
-    "sideBSha256": "25a1366360721420e78bf3c65190f3c6a2b8231f386a2098adeb1fbcbacc686b",
-    "sideABytes": 38367,
-    "sideBBytes": 38367,
+    "status": 200,
+    "capturedAt": "2026-11-12T16:11:40.294Z",
+    "sideA": {
+      "bytes": 38367,
+      "sha256": "25a1366360721420e78bf3c65190f3c6a2b8231f386a2098adeb1fbcbacc686b",
+      "path": "/screenshots/help-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 38367,
+      "sha256": "25a1366360721420e78bf3c65190f3c6a2b8231f386a2098adeb1fbcbacc686b",
+      "path": "/screenshots/help-T06-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
-    "capturedAt": "2026-11-12T16:11:40.294Z"
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "help-T07": {
-    "key": "help-T07",
-    "appId": "help",
-    "testId": "T07",
     "url": "https://help.salesforce.com/s/contactsupport",
-    "finalUrl": "https://help.salesforce.com/s/",
-    "pageTitle": "Salesforce Help | Home",
-    "sideAPath": "/screenshots/help-T07-sideA.jpg",
-    "sideBPath": "/screenshots/help-T07-sideB.jpg",
-    "sideASha256": "21c06554ae747c30a9ff9545775812cfea8513a9e0a2e0186e1ec2320c4e7b9d",
-    "sideBSha256": "21c06554ae747c30a9ff9545775812cfea8513a9e0a2e0186e1ec2320c4e7b9d",
-    "sideABytes": 44593,
-    "sideBBytes": 44593,
+    "status": 200,
+    "capturedAt": "2026-11-12T16:11:45.514Z",
+    "sideA": {
+      "bytes": 44593,
+      "sha256": "21c06554ae747c30a9ff9545775812cfea8513a9e0a2e0186e1ec2320c4e7b9d",
+      "path": "/screenshots/help-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 44593,
+      "sha256": "21c06554ae747c30a9ff9545775812cfea8513a9e0a2e0186e1ec2320c4e7b9d",
+      "path": "/screenshots/help-T07-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
-    "capturedAt": "2026-11-12T16:11:45.514Z"
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "help-T08": {
-    "key": "help-T08",
-    "appId": "help",
-    "testId": "T08",
     "url": "https://help.salesforce.com/s/groups",
-    "finalUrl": "https://help.salesforce.com/s/",
-    "pageTitle": "Salesforce Help | Home",
-    "sideAPath": "/screenshots/help-T08-sideA.jpg",
-    "sideBPath": "/screenshots/help-T08-sideB.jpg",
-    "sideASha256": "0091c9ef4408f52f712e6adabc9da8fad4a0b06880655bd925eda014e3349394",
-    "sideBSha256": "0091c9ef4408f52f712e6adabc9da8fad4a0b06880655bd925eda014e3349394",
-    "sideABytes": 45581,
-    "sideBBytes": 45581,
+    "status": 200,
+    "capturedAt": "2026-11-12T16:11:52.568Z",
+    "sideA": {
+      "bytes": 45581,
+      "sha256": "0091c9ef4408f52f712e6adabc9da8fad4a0b06880655bd925eda014e3349394",
+      "path": "/screenshots/help-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 45581,
+      "sha256": "0091c9ef4408f52f712e6adabc9da8fad4a0b06880655bd925eda014e3349394",
+      "path": "/screenshots/help-T08-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
-    "capturedAt": "2026-11-12T16:11:52.568Z"
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "trailhead-T01": {
+    "url": "https://trailhead.salesforce.com/",
+    "status": 200,
+    "capturedAt": "2026-11-13T04:56:31.853Z",
+    "sideA": {
+      "bytes": 115070,
+      "sha256": "923632012834c304c08d6fb40be2e6311137ef70d0c3a888542abcb03e61f532",
+      "path": "/screenshots/trailhead-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 115070,
+      "sha256": "923632012834c304c08d6fb40be2e6311137ef70d0c3a888542abcb03e61f532",
+      "path": "/screenshots/trailhead-T01-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "trailhead-T02": {
+    "url": "https://trailhead.salesforce.com/en/credentials/agentforcespecialist",
+    "status": 200,
+    "capturedAt": "2026-11-13T04:56:38.516Z",
+    "sideA": {
+      "bytes": 118307,
+      "sha256": "16c2d74d2ca9ac1eb24b75edd41ba1aac2d2bfb7af322225a16b7a20ef7b10cf",
+      "path": "/screenshots/trailhead-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 118307,
+      "sha256": "16c2d74d2ca9ac1eb24b75edd41ba1aac2d2bfb7af322225a16b7a20ef7b10cf",
+      "path": "/screenshots/trailhead-T02-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "trailhead-T03": {
+    "url": "https://trailhead.salesforce.com/en/modules",
+    "status": 200,
+    "capturedAt": "2026-11-13T04:56:43.543Z",
+    "sideA": {
+      "bytes": 123409,
+      "sha256": "63036510db468adbc828b148d8699831fef8db4583460728e7f1caf315aafa32",
+      "path": "/screenshots/trailhead-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 119018,
+      "sha256": "7bbf759c666a645dfb8dd82f228b8658842e352074cd54c5d173c9578182ffff",
+      "path": "/screenshots/trailhead-T03-sideB.jpg"
+    },
+    "pixelDiffPercent": 5.65,
+    "changedPixels": 3437,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 6.3
+    },
+    "zones": {
+      "headerPct": 41.31,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "headerEdgeContrastA": 39.8,
+      "headerEdgeContrastB": 43.42,
+      "rightEdgeContrastA": 29.14,
+      "rightEdgeContrastB": 29.14,
+      "meanLumDiff": 7.38
+    }
+  },
+  "trailhead-T04": {
+    "url": "https://trailhead.salesforce.com/en/career-paths",
+    "status": 200,
+    "capturedAt": "2026-11-13T04:56:49.117Z",
+    "sideA": {
+      "bytes": 89634,
+      "sha256": "94958f1859dbabfe9ec0153e5f86957d3dd975f9d494e0353db797ddba91ec68",
+      "path": "/screenshots/trailhead-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 89634,
+      "sha256": "94958f1859dbabfe9ec0153e5f86957d3dd975f9d494e0353db797ddba91ec68",
+      "path": "/screenshots/trailhead-T04-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "trailhead-T05": {
+    "url": "https://trailhead.salesforce.com/en/community",
+    "status": 200,
+    "capturedAt": "2026-11-13T04:56:55.319Z",
+    "sideA": {
+      "bytes": 108560,
+      "sha256": "0851a1884a7533ef8f31ee7e6ee9f6535a007fa2103368a9ea92014a44a4ded9",
+      "path": "/screenshots/trailhead-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 108560,
+      "sha256": "0851a1884a7533ef8f31ee7e6ee9f6535a007fa2103368a9ea92014a44a4ded9",
+      "path": "/screenshots/trailhead-T05-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "trailhead-T06": {
+    "url": "https://trailhead.salesforce.com/en/trailhead-playground",
+    "status": 200,
+    "capturedAt": "2026-11-13T04:57:01.962Z",
+    "sideA": {
+      "bytes": 124178,
+      "sha256": "5e7117acc099ad157ed75a0ce321a5fbd53f2b7005aef81a7514552a01b8f841",
+      "path": "/screenshots/trailhead-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 124178,
+      "sha256": "5e7117acc099ad157ed75a0ce321a5fbd53f2b7005aef81a7514552a01b8f841",
+      "path": "/screenshots/trailhead-T06-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "trailhead-T07": {
+    "url": "https://trailhead.salesforce.com/en/credentials/administrator",
+    "status": 200,
+    "capturedAt": "2026-11-13T04:57:07.975Z",
+    "sideA": {
+      "bytes": 103167,
+      "sha256": "5c662762d6b9e5f118846ffcee3ef98bf79f9053bd983a7bd5cc21b2eec82f9f",
+      "path": "/screenshots/trailhead-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 103167,
+      "sha256": "5c662762d6b9e5f118846ffcee3ef98bf79f9053bd983a7bd5cc21b2eec82f9f",
+      "path": "/screenshots/trailhead-T07-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "trailhead-T08": {
+    "url": "https://trailhead.salesforce.com/en/ranks",
+    "status": 200,
+    "capturedAt": "2026-11-13T04:57:14.229Z",
+    "sideA": {
+      "bytes": 87342,
+      "sha256": "06e564c1b72afddd87fbde054fdd8d39b47b69b890944f3d3f2723e933e9a721",
+      "path": "/screenshots/trailhead-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 87342,
+      "sha256": "06e564c1b72afddd87fbde054fdd8d39b47b69b890944f3d3f2723e933e9a721",
+      "path": "/screenshots/trailhead-T08-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "status-T01": {
-    "key": "status-T01",
-    "appId": "status",
-    "testId": "T01",
     "url": "https://status.salesforce.com/",
-    "finalUrl": "https://status.salesforce.com/",
-    "pageTitle": "Trust Status",
-    "sideAPath": "/screenshots/status-T01-sideA.jpg",
-    "sideBPath": "/screenshots/status-T01-sideB.jpg",
-    "sideASha256": "2789b0e7fa8233ce38f1da1f1be4b12c7e9e6e2690a9f9530177bbf45628fc6b",
-    "sideBSha256": "847549785c84838d261772d9d9cdc6fd201fd8426f46088d6e84805fcc44d656",
-    "sideABytes": 94603,
-    "sideBBytes": 105684,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:57:17.173Z",
+    "sideA": {
+      "bytes": 105382,
+      "sha256": "21cd3ac005c6bb77a2a0baabb5f2c3c49db470028f1b3da10ce52da1d58d35a8",
+      "path": "/screenshots/status-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 105382,
+      "sha256": "21cd3ac005c6bb77a2a0baabb5f2c3c49db470028f1b3da10ce52da1d58d35a8",
+      "path": "/screenshots/status-T01-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:57:17.173Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "status-T02": {
-    "key": "status-T02",
-    "appId": "status",
-    "testId": "T02",
     "url": "https://status.salesforce.com/instances",
-    "finalUrl": "https://status.salesforce.com/instances",
-    "pageTitle": "Trust Status",
-    "sideAPath": "/screenshots/status-T02-sideA.jpg",
-    "sideBPath": "/screenshots/status-T02-sideB.jpg",
-    "sideASha256": "f9056fae6c1bc4475bcbbe87edacf90eabf654959a1e5f079d6bc648011e017c",
-    "sideBSha256": "f9056fae6c1bc4475bcbbe87edacf90eabf654959a1e5f079d6bc648011e017c",
-    "sideABytes": 50032,
-    "sideBBytes": 50032,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:57:19.195Z",
+    "sideA": {
+      "bytes": 107015,
+      "sha256": "643066e70f4b85b8782242a5e6914b211c1acead37f935b9123d3890e6c858e6",
+      "path": "/screenshots/status-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 107015,
+      "sha256": "643066e70f4b85b8782242a5e6914b211c1acead37f935b9123d3890e6c858e6",
+      "path": "/screenshots/status-T02-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:57:19.195Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "status-T03": {
-    "key": "status-T03",
-    "appId": "status",
-    "testId": "T03",
     "url": "https://status.salesforce.com/maintenance",
-    "finalUrl": "https://status.salesforce.com/maintenance",
-    "pageTitle": "Trust Status",
-    "sideAPath": "/screenshots/status-T03-sideA.jpg",
-    "sideBPath": "/screenshots/status-T03-sideB.jpg",
-    "sideASha256": "f9056fae6c1bc4475bcbbe87edacf90eabf654959a1e5f079d6bc648011e017c",
-    "sideBSha256": "f9056fae6c1bc4475bcbbe87edacf90eabf654959a1e5f079d6bc648011e017c",
-    "sideABytes": 50032,
-    "sideBBytes": 50032,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:57:21.217Z"
+    "status": 200,
+    "capturedAt": "2026-11-13T04:57:21.217Z",
+    "sideA": {
+      "bytes": 89463,
+      "sha256": "be7015a9c764a99623f94be54a708a2e35a3a754573aaf274997258359955525",
+      "path": "/screenshots/status-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 82122,
+      "sha256": "189905f024c95df877dfd981c97b10f8412c25c844670f86f559e117b995d0f5",
+      "path": "/screenshots/status-T03-sideB.jpg"
+    },
+    "pixelDiffPercent": 5.49,
+    "changedPixels": 3340,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 0,
+      "y": 0,
+      "w": 100,
+      "h": 6.3
+    },
+    "zones": {
+      "headerPct": 40.14,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "headerEdgeContrastA": 44.58,
+      "headerEdgeContrastB": 40.37,
+      "rightEdgeContrastA": 7.15,
+      "rightEdgeContrastB": 7.15,
+      "meanLumDiff": 7.51
+    }
   },
   "status-T04": {
-    "key": "status-T04",
-    "appId": "status",
-    "testId": "T04",
     "url": "https://status.salesforce.com/compliance",
-    "finalUrl": "https://status.salesforce.com/compliance",
-    "pageTitle": "Trust Status",
-    "sideAPath": "/screenshots/status-T04-sideA.jpg",
-    "sideBPath": "/screenshots/status-T04-sideB.jpg",
-    "sideASha256": "f9056fae6c1bc4475bcbbe87edacf90eabf654959a1e5f079d6bc648011e017c",
-    "sideBSha256": "f9056fae6c1bc4475bcbbe87edacf90eabf654959a1e5f079d6bc648011e017c",
-    "sideABytes": 50032,
-    "sideBBytes": 50032,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:57:23.204Z",
+    "sideA": {
+      "bytes": 107478,
+      "sha256": "e76c388749b3e0427ad7924f3992198e48dd0ea5ae01d6884c7d41656f9adc0c",
+      "path": "/screenshots/status-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 107478,
+      "sha256": "e76c388749b3e0427ad7924f3992198e48dd0ea5ae01d6884c7d41656f9adc0c",
+      "path": "/screenshots/status-T04-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:57:23.204Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "status-T05": {
-    "key": "status-T05",
-    "appId": "status",
-    "testId": "T05",
     "url": "https://status.salesforce.com/incidents",
-    "finalUrl": "https://status.salesforce.com/incidents",
-    "pageTitle": "Trust Status",
-    "sideAPath": "/screenshots/status-T05-sideA.jpg",
-    "sideBPath": "/screenshots/status-T05-sideB.jpg",
-    "sideASha256": "f9056fae6c1bc4475bcbbe87edacf90eabf654959a1e5f079d6bc648011e017c",
-    "sideBSha256": "04edbc40ff93f9dd7f4454435829a5931e94cbc965765a05601275a670129cf1",
-    "sideABytes": 50032,
-    "sideBBytes": 50033,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:57:25.355Z",
+    "sideA": {
+      "bytes": 51946,
+      "sha256": "fda86276dee0d0fbf7355c55ee144bb741112c94003061a0fb4104762f9a045d",
+      "path": "/screenshots/status-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 51946,
+      "sha256": "fda86276dee0d0fbf7355c55ee144bb741112c94003061a0fb4104762f9a045d",
+      "path": "/screenshots/status-T05-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:57:25.355Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "status-T06": {
-    "key": "status-T06",
-    "appId": "status",
-    "testId": "T06",
     "url": "https://status.salesforce.com/api/v1/status",
-    "finalUrl": "https://status.salesforce.com/",
-    "pageTitle": "Trust Status",
-    "sideAPath": "/screenshots/status-T06-sideA.jpg",
-    "sideBPath": "/screenshots/status-T06-sideB.jpg",
-    "sideASha256": "9165ab4a9455b4859a1280741313c402b013f26c229a4cf0cb4e7586cddd7b54",
-    "sideBSha256": "9165ab4a9455b4859a1280741313c402b013f26c229a4cf0cb4e7586cddd7b54",
-    "sideABytes": 116732,
-    "sideBBytes": 116732,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:57:27.457Z",
+    "sideA": {
+      "bytes": 85180,
+      "sha256": "96561b2e8edb89aa0b43dee7693380e0322dac10e3c7b6487de74dc0af8beac4",
+      "path": "/screenshots/status-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 85180,
+      "sha256": "96561b2e8edb89aa0b43dee7693380e0322dac10e3c7b6487de74dc0af8beac4",
+      "path": "/screenshots/status-T06-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:57:27.457Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "status-T07": {
-    "key": "status-T07",
-    "appId": "status",
-    "testId": "T07",
     "url": "https://status.salesforce.com/subscribe",
-    "finalUrl": "https://status.salesforce.com/subscribe",
-    "pageTitle": "Trust Status",
-    "sideAPath": "/screenshots/status-T07-sideA.jpg",
-    "sideBPath": "/screenshots/status-T07-sideB.jpg",
-    "sideASha256": "f9056fae6c1bc4475bcbbe87edacf90eabf654959a1e5f079d6bc648011e017c",
-    "sideBSha256": "f9056fae6c1bc4475bcbbe87edacf90eabf654959a1e5f079d6bc648011e017c",
-    "sideABytes": 50032,
-    "sideBBytes": 50032,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:57:29.489Z",
+    "sideA": {
+      "bytes": 109103,
+      "sha256": "4b246a52536d9a082d1af26f292dacd0ec4fc1579fe9368c7caddeca72ef6881",
+      "path": "/screenshots/status-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 109103,
+      "sha256": "4b246a52536d9a082d1af26f292dacd0ec4fc1579fe9368c7caddeca72ef6881",
+      "path": "/screenshots/status-T07-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:57:29.489Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "status-T08": {
-    "key": "status-T08",
-    "appId": "status",
-    "testId": "T08",
     "url": "https://status.salesforce.com/edge-telemetry",
-    "finalUrl": "https://status.salesforce.com/edge-telemetry",
-    "pageTitle": "Trust Status",
-    "sideAPath": "/screenshots/status-T08-sideA.jpg",
-    "sideBPath": "/screenshots/status-T08-sideB.jpg",
-    "sideASha256": "f9056fae6c1bc4475bcbbe87edacf90eabf654959a1e5f079d6bc648011e017c",
-    "sideBSha256": "f9056fae6c1bc4475bcbbe87edacf90eabf654959a1e5f079d6bc648011e017c",
-    "sideABytes": 50032,
-    "sideBBytes": 50032,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:57:31.493Z",
+    "sideA": {
+      "bytes": 98981,
+      "sha256": "e0898149912967043406b07a37e7d2cdf3b1e7a9744b87f60c9aea7ae3fc9a62",
+      "path": "/screenshots/status-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 98981,
+      "sha256": "e0898149912967043406b07a37e7d2cdf3b1e7a9744b87f60c9aea7ae3fc9a62",
+      "path": "/screenshots/status-T08-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:57:31.493Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "appexchange-T01": {
-    "key": "appexchange-T01",
-    "appId": "appexchange",
-    "testId": "T01",
     "url": "https://appexchange.salesforce.com/",
-    "finalUrl": "https://appexchange.salesforce.com/",
-    "pageTitle": "Salesforce AppExchange is now AgentExchange",
-    "sideAPath": "/screenshots/appexchange-T01-sideA.jpg",
-    "sideBPath": "/screenshots/appexchange-T01-sideB.jpg",
-    "sideASha256": "d1a48ec0e4ad0893c5a2e5b2708dce0725edfe5ebe1c7420968cafda796993ab",
-    "sideBSha256": "6cfeeeca01c6bd0f0c43bee7f5c3a2fc57a88e6549fb2e46878dd4c7fe984bfc",
-    "sideABytes": 23292,
-    "sideBBytes": 6518,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:57:36.935Z",
+    "sideA": {
+      "bytes": 21842,
+      "sha256": "f8fcca517dfb007d5ae691a7c88bc73db919ad33709150f8ba710bd84909f404",
+      "path": "/screenshots/appexchange-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 21842,
+      "sha256": "f8fcca517dfb007d5ae691a7c88bc73db919ad33709150f8ba710bd84909f404",
+      "path": "/screenshots/appexchange-T01-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:57:36.935Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "appexchange-T02": {
-    "key": "appexchange-T02",
-    "appId": "appexchange",
-    "testId": "T02",
     "url": "https://appexchange.salesforce.com/category/agentforce",
-    "finalUrl": "https://appexchange.salesforce.com/",
-    "pageTitle": "Salesforce AppExchange is now AgentExchange",
-    "sideAPath": "/screenshots/appexchange-T02-sideA.jpg",
-    "sideBPath": "/screenshots/appexchange-T02-sideB.jpg",
-    "sideASha256": "d1a48ec0e4ad0893c5a2e5b2708dce0725edfe5ebe1c7420968cafda796993ab",
-    "sideBSha256": "af6078b5feaa3544a5dde2fe094da6cff898154eec97158a2800b3f9d8fd8781",
-    "sideABytes": 23292,
-    "sideBBytes": 21752,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:57:53.817Z",
+    "sideA": {
+      "bytes": 86935,
+      "sha256": "651b4093de0125f2ae92ed76bfb45aa0b2b237c2035c42cabea426571c642da4",
+      "path": "/screenshots/appexchange-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 86935,
+      "sha256": "651b4093de0125f2ae92ed76bfb45aa0b2b237c2035c42cabea426571c642da4",
+      "path": "/screenshots/appexchange-T02-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:57:53.817Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "appexchange-T03": {
-    "key": "appexchange-T03",
-    "appId": "appexchange",
-    "testId": "T03",
     "url": "https://appexchange.salesforce.com/top-apps",
-    "finalUrl": "https://appexchange.salesforce.com/",
-    "pageTitle": "Salesforce AppExchange is now AgentExchange",
-    "sideAPath": "/screenshots/appexchange-T03-sideA.jpg",
-    "sideBPath": "/screenshots/appexchange-T03-sideB.jpg",
-    "sideASha256": "f8fcca517dfb007d5ae691a7c88bc73db919ad33709150f8ba710bd84909f404",
-    "sideBSha256": "6cfeeeca01c6bd0f0c43bee7f5c3a2fc57a88e6549fb2e46878dd4c7fe984bfc",
-    "sideABytes": 21842,
-    "sideBBytes": 6518,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:58:01.015Z"
+    "status": 200,
+    "capturedAt": "2026-11-13T04:58:01.015Z",
+    "sideA": {
+      "bytes": 113651,
+      "sha256": "8b3885605317d318c47424161ca12f189705ab85eceeb12b593eac69871022c2",
+      "path": "/screenshots/appexchange-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 120501,
+      "sha256": "2048c3bff8863a4031eb09f23ec3a65f1a8d026ad9957a74811127a986ee1604",
+      "path": "/screenshots/appexchange-T03-sideB.jpg"
+    },
+    "pixelDiffPercent": 15.07,
+    "changedPixels": 9162,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 2.5,
+      "y": 8.4,
+      "w": 94.7,
+      "h": 91.6
+    },
+    "zones": {
+      "headerPct": 5.91,
+      "heroCenterPct": 20.06,
+      "rightPanelPct": 11.55,
+      "lowerBodyPct": 10.3,
+      "footerPct": 20.16,
+      "headerEdgeContrastA": 23.59,
+      "headerEdgeContrastB": 31.22,
+      "rightEdgeContrastA": 23.66,
+      "rightEdgeContrastB": 25.83,
+      "meanLumDiff": 0.95
+    }
   },
   "appexchange-T04": {
-    "key": "appexchange-T04",
-    "appId": "appexchange",
-    "testId": "T04",
     "url": "https://appexchange.salesforce.com/industries",
-    "finalUrl": "https://appexchange.salesforce.com/",
-    "pageTitle": "Salesforce AppExchange is now AgentExchange",
-    "sideAPath": "/screenshots/appexchange-T04-sideA.jpg",
-    "sideBPath": "/screenshots/appexchange-T04-sideB.jpg",
-    "sideASha256": "36bc6693134c91554a5812d0f052969584f22227a673c164ce63bcec1c44730f",
-    "sideBSha256": "77b576ce31bf83b9ae7fd45f05f87e768f5d73df26e1a0c8caf068e594569d75",
-    "sideABytes": 97155,
-    "sideBBytes": 97399,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:58:09.278Z",
+    "sideA": {
+      "bytes": 116705,
+      "sha256": "9d92bc7edfb68a76463ad31d22df5d3250642bd1731428891814e1cf2754cf1a",
+      "path": "/screenshots/appexchange-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 116705,
+      "sha256": "9d92bc7edfb68a76463ad31d22df5d3250642bd1731428891814e1cf2754cf1a",
+      "path": "/screenshots/appexchange-T04-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:58:09.278Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "appexchange-T05": {
-    "key": "appexchange-T05",
-    "appId": "appexchange",
-    "testId": "T05",
     "url": "https://appexchange.salesforce.com/consultants",
-    "finalUrl": "https://appexchange.salesforce.com/",
-    "pageTitle": "Salesforce AppExchange is now AgentExchange",
-    "sideAPath": "/screenshots/appexchange-T05-sideA.jpg",
-    "sideBPath": "/screenshots/appexchange-T05-sideB.jpg",
-    "sideASha256": "662476192c045cc4c47f478cec85ab1859636f9420b6f417ac62da9ebe9afded",
-    "sideBSha256": "2a96568322ee23a940597b9a4f9b13ee48e72d81475bd860332e3557eae2c8f8",
-    "sideABytes": 96252,
-    "sideBBytes": 97260,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:58:17.576Z",
+    "sideA": {
+      "bytes": 100575,
+      "sha256": "55fdfd11586e537885070017e01943e4e067d0dee87d74521b487521bf063b60",
+      "path": "/screenshots/appexchange-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 100575,
+      "sha256": "55fdfd11586e537885070017e01943e4e067d0dee87d74521b487521bf063b60",
+      "path": "/screenshots/appexchange-T05-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:58:17.576Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "appexchange-T06": {
-    "key": "appexchange-T06",
-    "appId": "appexchange",
-    "testId": "T06",
     "url": "https://appexchange.salesforce.com/security-review",
-    "finalUrl": "https://appexchange.salesforce.com/",
-    "pageTitle": "Salesforce AppExchange is now AgentExchange",
-    "sideAPath": "/screenshots/appexchange-T06-sideA.jpg",
-    "sideBPath": "/screenshots/appexchange-T06-sideB.jpg",
-    "sideASha256": "d1a48ec0e4ad0893c5a2e5b2708dce0725edfe5ebe1c7420968cafda796993ab",
-    "sideBSha256": "f4328b744a867b6329a29fd66f86964fc26a13013ee75f218ebe4886fc16528a",
-    "sideABytes": 23292,
-    "sideBBytes": 96630,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:58:24.726Z",
+    "sideA": {
+      "bytes": 95418,
+      "sha256": "c92dadc41fbcede5d04ec6b7102e3e85e543702ba2799f52b6cedf41b1efd39c",
+      "path": "/screenshots/appexchange-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 95418,
+      "sha256": "c92dadc41fbcede5d04ec6b7102e3e85e543702ba2799f52b6cedf41b1efd39c",
+      "path": "/screenshots/appexchange-T06-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:58:24.726Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "appexchange-T07": {
-    "key": "appexchange-T07",
-    "appId": "appexchange",
-    "testId": "T07",
     "url": "https://appexchange.salesforce.com/components",
-    "finalUrl": "https://appexchange.salesforce.com/appxSearchKeywordResults?tech=force%2Flightning",
-    "pageTitle": "Salesforce AppExchange | Leading Enterprise Cloud Marketplace",
-    "sideAPath": "/screenshots/appexchange-T07-sideA.jpg",
-    "sideBPath": "/screenshots/appexchange-T07-sideB.jpg",
-    "sideASha256": "7e4139c9ca86ed20e09fa50963ac9fba4b96c58331d2387b44e672610474c8e2",
-    "sideBSha256": "4753828cdc35e2ef8629f56c658809aafaa972ab76d486180ae74c33baa7bedf",
-    "sideABytes": 63926,
-    "sideBBytes": 63922,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:58:28.624Z",
+    "sideA": {
+      "bytes": 63764,
+      "sha256": "087aa66679c0c5505a6e6e5e72f48331f9a10dd080e8dc173a50375b8cd6a028",
+      "path": "/screenshots/appexchange-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 63764,
+      "sha256": "087aa66679c0c5505a6e6e5e72f48331f9a10dd080e8dc173a50375b8cd6a028",
+      "path": "/screenshots/appexchange-T07-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:58:28.624Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "appexchange-T08": {
-    "key": "appexchange-T08",
-    "appId": "appexchange",
-    "testId": "T08",
     "url": "https://appexchange.salesforce.com/publishers",
-    "finalUrl": "https://appexchange.salesforce.com/",
-    "pageTitle": "Salesforce AppExchange is now AgentExchange",
-    "sideAPath": "/screenshots/appexchange-T08-sideA.jpg",
-    "sideBPath": "/screenshots/appexchange-T08-sideB.jpg",
-    "sideASha256": "4eab1febb2f8a9d8bdc1725b3956341be1f11dc420c630cff5158a76f7d6f934",
-    "sideBSha256": "9f9ff93c3dfc75119fa752791c43b03919d7c21f64b4ed2a5d2806daedd1110a",
-    "sideABytes": 97351,
-    "sideBBytes": 97396,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:58:37.479Z",
+    "sideA": {
+      "bytes": 88823,
+      "sha256": "6514a2ba7c6e7f0795791fb042b9d92a340b04ac7d63d5ebdf5704905e156967",
+      "path": "/screenshots/appexchange-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 88823,
+      "sha256": "6514a2ba7c6e7f0795791fb042b9d92a340b04ac7d63d5ebdf5704905e156967",
+      "path": "/screenshots/appexchange-T08-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:58:37.479Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "partners-T01": {
-    "key": "partners-T01",
-    "appId": "partners",
-    "testId": "T01",
     "url": "https://partners.salesforce.com/",
-    "finalUrl": "https://partners.salesforce.com/pdx/s/?language=en_US&redirected=RGSUDODQUL",
-    "pageTitle": "Salesforce Partner Community Home | Connect, collaborate, and manage your Salesforce partnership",
-    "sideAPath": "/screenshots/partners-T01-sideA.jpg",
-    "sideBPath": "/screenshots/partners-T01-sideB.jpg",
-    "sideASha256": "aad3640a17b0053eacfc8b7a21ba7969ff0ba2fd1e18337244ae20b351c58829",
-    "sideBSha256": "ed3f367297481b4b8f5aa3533ff7e010552263381c1de763de9b84cfbc8474fc",
-    "sideABytes": 42619,
-    "sideBBytes": 56470,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:58:46.104Z",
+    "sideA": {
+      "bytes": 53668,
+      "sha256": "c7891dd03cfd6f116d1898cf81255a71e3c71f6a600b08d55d4d53b9e3c29a45",
+      "path": "/screenshots/partners-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 53668,
+      "sha256": "c7891dd03cfd6f116d1898cf81255a71e3c71f6a600b08d55d4d53b9e3c29a45",
+      "path": "/screenshots/partners-T01-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:58:46.104Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "partners-T02": {
-    "key": "partners-T02",
-    "appId": "partners",
-    "testId": "T02",
     "url": "https://partners.salesforce.com/program",
-    "finalUrl": "https://partners.salesforce.com/pdx/s/?language=en_US&redirected=RGSUDODQUL",
-    "pageTitle": "Salesforce Partner Community Home | Connect, collaborate, and manage your Salesforce partnership",
-    "sideAPath": "/screenshots/partners-T02-sideA.jpg",
-    "sideBPath": "/screenshots/partners-T02-sideB.jpg",
-    "sideASha256": "1ca9cec9dfe224512a70a19412685421cd7faec1fff7d29bb091741af10da763",
-    "sideBSha256": "69f8fc503282c597ee94da2a90a30fa3e7b8d52d732c7c69c0ed9ef2868c7fce",
-    "sideABytes": 22246,
-    "sideBBytes": 22311,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:58:53.351Z",
+    "sideA": {
+      "bytes": 20135,
+      "sha256": "70557bdd8567f2a282e6659306962c612d62e8d8169c9674eb8439902e0fd218",
+      "path": "/screenshots/partners-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 20135,
+      "sha256": "70557bdd8567f2a282e6659306962c612d62e8d8169c9674eb8439902e0fd218",
+      "path": "/screenshots/partners-T02-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:58:53.351Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "partners-T03": {
-    "key": "partners-T03",
-    "appId": "partners",
-    "testId": "T03",
     "url": "https://partners.salesforce.com/isv",
-    "finalUrl": "https://partners.salesforce.com/pdx/s/?language=en_US&redirected=RGSUDODQUL",
-    "pageTitle": "Salesforce Partner Community Home | Connect, collaborate, and manage your Salesforce partnership",
-    "sideAPath": "/screenshots/partners-T03-sideA.jpg",
-    "sideBPath": "/screenshots/partners-T03-sideB.jpg",
-    "sideASha256": "f724f3cf90070cd7d7079b3ca82146ed7779afce0eb53caad09dc3e6fa7340ad",
-    "sideBSha256": "0b681abb94ee06e1b9e4c6882cf5e2809e55fc8701790a3610aca8683f28ae2f",
-    "sideABytes": 26246,
-    "sideBBytes": 48394,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:58:59.425Z"
+    "status": 200,
+    "capturedAt": "2026-11-13T04:58:59.425Z",
+    "sideA": {
+      "bytes": 48028,
+      "sha256": "6fb2665b6137f183a7f097a0e820d03627183695db5bc3690f6e2ed7ea93cdab",
+      "path": "/screenshots/partners-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 26080,
+      "sha256": "e1a4ff69af89ae1bf49ba5ff66ef346ec49ead8a9a721273c4c9013bba6d0df3",
+      "path": "/screenshots/partners-T03-sideB.jpg"
+    },
+    "pixelDiffPercent": 2.78,
+    "changedPixels": 1693,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 0,
+      "y": 46.3,
+      "w": 100,
+      "h": 53.7
+    },
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0.17,
+      "rightPanelPct": 2.8,
+      "lowerBodyPct": 5.48,
+      "footerPct": 9.5,
+      "headerEdgeContrastA": 20.54,
+      "headerEdgeContrastB": 20.54,
+      "rightEdgeContrastA": 6.21,
+      "rightEdgeContrastB": 0,
+      "meanLumDiff": 1.95
+    }
   },
   "partners-T04": {
-    "key": "partners-T04",
-    "appId": "partners",
-    "testId": "T04",
     "url": "https://partners.salesforce.com/learning",
-    "finalUrl": "https://partners.salesforce.com/pdx/s/?language=en_US&redirected=RGSUDODQUL",
-    "pageTitle": "Salesforce Partner Community Home | Connect, collaborate, and manage your Salesforce partnership",
-    "sideAPath": "/screenshots/partners-T04-sideA.jpg",
-    "sideBPath": "/screenshots/partners-T04-sideB.jpg",
-    "sideASha256": "9fbb6b6fe74bde7dfc5f9c846b92c2c0610fdd641f7eafa8d63807255e5f0023",
-    "sideBSha256": "f724f3cf90070cd7d7079b3ca82146ed7779afce0eb53caad09dc3e6fa7340ad",
-    "sideABytes": 26128,
-    "sideBBytes": 26246,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:59:06.489Z",
+    "sideA": {
+      "bytes": 25943,
+      "sha256": "6b01fbe3f9db232e01a68d7e8952c2ae12d326d50b994c14f05daa42cdcdbffe",
+      "path": "/screenshots/partners-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 25943,
+      "sha256": "6b01fbe3f9db232e01a68d7e8952c2ae12d326d50b994c14f05daa42cdcdbffe",
+      "path": "/screenshots/partners-T04-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:59:06.489Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "partners-T05": {
-    "key": "partners-T05",
-    "appId": "partners",
-    "testId": "T05",
     "url": "https://partners.salesforce.com/leads",
-    "finalUrl": "https://partners.salesforce.com/pdx/s/?language=en_US&redirected=RGSUDODQUL",
-    "pageTitle": "Salesforce Partner Community Home | Connect, collaborate, and manage your Salesforce partnership",
-    "sideAPath": "/screenshots/partners-T05-sideA.jpg",
-    "sideBPath": "/screenshots/partners-T05-sideB.jpg",
-    "sideASha256": "f724f3cf90070cd7d7079b3ca82146ed7779afce0eb53caad09dc3e6fa7340ad",
-    "sideBSha256": "f724f3cf90070cd7d7079b3ca82146ed7779afce0eb53caad09dc3e6fa7340ad",
-    "sideABytes": 26246,
-    "sideBBytes": 26246,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:59:12.381Z",
+    "sideA": {
+      "bytes": 26335,
+      "sha256": "d83f8ef6dc566b0ec131255b0ea678fb8338a3b25405406d29eccbc976b6eaa4",
+      "path": "/screenshots/partners-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 26335,
+      "sha256": "d83f8ef6dc566b0ec131255b0ea678fb8338a3b25405406d29eccbc976b6eaa4",
+      "path": "/screenshots/partners-T05-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:59:12.381Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "partners-T06": {
-    "key": "partners-T06",
-    "appId": "partners",
-    "testId": "T06",
     "url": "https://partners.salesforce.com/navigator",
-    "finalUrl": "https://partners.salesforce.com/pdx/s/?language=en_US&redirected=RGSUDODQUL",
-    "pageTitle": "Salesforce Partner Community Home | Connect, collaborate, and manage your Salesforce partnership",
-    "sideAPath": "/screenshots/partners-T06-sideA.jpg",
-    "sideBPath": "/screenshots/partners-T06-sideB.jpg",
-    "sideASha256": "7ba9341a2bc762cebfcbfc5d883c2c12f49c0a0ffb95a268bb4b2f92153a8634",
-    "sideBSha256": "f724f3cf90070cd7d7079b3ca82146ed7779afce0eb53caad09dc3e6fa7340ad",
-    "sideABytes": 26241,
-    "sideBBytes": 26246,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:59:18.412Z",
+    "sideA": {
+      "bytes": 23305,
+      "sha256": "bf2d4ac453d1aea86d7423905e0660ac52c14549b28dca75aace29357a9a650b",
+      "path": "/screenshots/partners-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 23305,
+      "sha256": "bf2d4ac453d1aea86d7423905e0660ac52c14549b28dca75aace29357a9a650b",
+      "path": "/screenshots/partners-T06-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:59:18.412Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "partners-T07": {
-    "key": "partners-T07",
-    "appId": "partners",
-    "testId": "T07",
     "url": "https://partners.salesforce.com/marketing",
-    "finalUrl": "https://partners.salesforce.com/pdx/s/?language=en_US&redirected=RGSUDODQUL",
-    "pageTitle": "Salesforce Partner Community Home | Connect, collaborate, and manage your Salesforce partnership",
-    "sideAPath": "/screenshots/partners-T07-sideA.jpg",
-    "sideBPath": "/screenshots/partners-T07-sideB.jpg",
-    "sideASha256": "f724f3cf90070cd7d7079b3ca82146ed7779afce0eb53caad09dc3e6fa7340ad",
-    "sideBSha256": "f724f3cf90070cd7d7079b3ca82146ed7779afce0eb53caad09dc3e6fa7340ad",
-    "sideABytes": 26246,
-    "sideBBytes": 26246,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:59:24.338Z",
+    "sideA": {
+      "bytes": 52629,
+      "sha256": "f16008623e8d93887353492503d48feb88191a15c601382e4298f5e383b1b4fe",
+      "path": "/screenshots/partners-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 52629,
+      "sha256": "f16008623e8d93887353492503d48feb88191a15c601382e4298f5e383b1b4fe",
+      "path": "/screenshots/partners-T07-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:59:24.338Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "partners-T08": {
-    "key": "partners-T08",
-    "appId": "partners",
-    "testId": "T08",
     "url": "https://partners.salesforce.com/governance",
-    "finalUrl": "https://partners.salesforce.com/pdx/s/?language=en_US&redirected=RGSUDODQUL",
-    "pageTitle": "Salesforce Partner Community Home | Connect, collaborate, and manage your Salesforce partnership",
-    "sideAPath": "/screenshots/partners-T08-sideA.jpg",
-    "sideBPath": "/screenshots/partners-T08-sideB.jpg",
-    "sideASha256": "022a02e0af78c8d5b9f6eec7b011b4018a26bf5bcc8657528a7672f8221972ec",
-    "sideBSha256": "f724f3cf90070cd7d7079b3ca82146ed7779afce0eb53caad09dc3e6fa7340ad",
-    "sideABytes": 60897,
-    "sideBBytes": 26246,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:59:31.020Z",
+    "sideA": {
+      "bytes": 60897,
+      "sha256": "022a02e0af78c8d5b9f6eec7b011b4018a26bf5bcc8657528a7672f8221972ec",
+      "path": "/screenshots/partners-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 60897,
+      "sha256": "022a02e0af78c8d5b9f6eec7b011b4018a26bf5bcc8657528a7672f8221972ec",
+      "path": "/screenshots/partners-T08-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:59:31.020Z"
-  },
-  "japan-T01": {
-    "key": "japan-T01",
-    "appId": "japan",
-    "testId": "T01",
-    "url": "https://www.salesforce.com/jp/",
-    "finalUrl": "https://www.salesforce.com/jp/",
-    "pageTitle": "世界No.1 AI CRM | AIエージェント搭載のSFA、CRM | セールスフォース・ジャパン",
-    "sideAPath": "/screenshots/japan-T01-sideA.jpg",
-    "sideBPath": "/screenshots/japan-T01-sideB.jpg",
-    "sideASha256": "84f053470a51cbe05e7a8a122b501a874f1fc6d689e40950f80a0a81061adc3d",
-    "sideBSha256": "84f053470a51cbe05e7a8a122b501a874f1fc6d689e40950f80a0a81061adc3d",
-    "sideABytes": 103177,
-    "sideBBytes": 103177,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:55.850Z"
-  },
-  "japan-T02": {
-    "key": "japan-T02",
-    "appId": "japan",
-    "testId": "T02",
-    "url": "https://www.salesforce.com/jp/sales/",
-    "finalUrl": "https://www.salesforce.com/jp/sales/",
-    "pageTitle": "AIを活用した営業ソフトウェア＆ソリューション | セールスフォース・ジャパン",
-    "sideAPath": "/screenshots/japan-T02-sideA.jpg",
-    "sideBPath": "/screenshots/japan-T02-sideB.jpg",
-    "sideASha256": "e3bf097b07bc64e229630f2163dfd1100cd30b18a9dcb0339f5feb784a0f804e",
-    "sideBSha256": "e3bf097b07bc64e229630f2163dfd1100cd30b18a9dcb0339f5feb784a0f804e",
-    "sideABytes": 60650,
-    "sideBBytes": 60650,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:58.325Z"
-  },
-  "japan-T03": {
-    "key": "japan-T03",
-    "appId": "japan",
-    "testId": "T03",
-    "url": "https://www.salesforce.com/jp/artificial-intelligence/",
-    "finalUrl": "https://www.salesforce.com/jp/artificial-intelligence/",
-    "pageTitle": "AIforce：どこで仕事をしていてもSalesforce AIを | セールスフォース・ジャパン",
-    "sideAPath": "/screenshots/japan-T03-sideA.jpg",
-    "sideBPath": "/screenshots/japan-T03-sideB.jpg",
-    "sideASha256": "930829ccdcc607fd2dfcf4aa0f7561a9d612f23e4c5fcf6562e3ea4e0b1f1bd7",
-    "sideBSha256": "0b378b5dfe7054fc841a422d385f3e58a6352050b2ab1c3e4b2f0b942bdfc5a9",
-    "sideABytes": 82524,
-    "sideBBytes": 82492,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:02.223Z"
-  },
-  "japan-T04": {
-    "key": "japan-T04",
-    "appId": "japan",
-    "testId": "T04",
-    "url": "https://www.salesforce.com/jp/customer-stories/",
-    "finalUrl": "https://www.salesforce.com/jp/customer-stories/",
-    "pageTitle": "Salesforce導入事例190選｜CRM/SFAで営業成果を最大化 | セールスフォース・ジャパン",
-    "sideAPath": "/screenshots/japan-T04-sideA.jpg",
-    "sideBPath": "/screenshots/japan-T04-sideB.jpg",
-    "sideASha256": "7513dcd988a37457032ddb49a3d4b7eb2496ace155f062f5d7fcb95646360380",
-    "sideBSha256": "7513dcd988a37457032ddb49a3d4b7eb2496ace155f062f5d7fcb95646360380",
-    "sideABytes": 63851,
-    "sideBBytes": 63851,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:04.713Z"
-  },
-  "japan-T05": {
-    "key": "japan-T05",
-    "appId": "japan",
-    "testId": "T05",
-    "url": "https://www.salesforce.com/jp/crm/",
-    "finalUrl": "https://www.salesforce.com/jp/crm/",
-    "pageTitle": "Salesforce CRM：世界No.1のエージェント型CRMをお試しください | セールスフォース・ジャパン",
-    "sideAPath": "/screenshots/japan-T05-sideA.jpg",
-    "sideBPath": "/screenshots/japan-T05-sideB.jpg",
-    "sideASha256": "86e67b9bcead61d0e73df253622a3d1f0d141d7e90fc8fcca00cf34b4aab3edb",
-    "sideBSha256": "86e67b9bcead61d0e73df253622a3d1f0d141d7e90fc8fcca00cf34b4aab3edb",
-    "sideABytes": 76562,
-    "sideBBytes": 76562,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:07.114Z"
-  },
-  "japan-T06": {
-    "key": "japan-T06",
-    "appId": "japan",
-    "testId": "T06",
-    "url": "https://www.salesforce.com/jp/sales/pricing/",
-    "finalUrl": "https://www.salesforce.com/jp/sales/pricing/",
-    "pageTitle": "Salesforce販売価格 | セールスフォース・ジャパン",
-    "sideAPath": "/screenshots/japan-T06-sideA.jpg",
-    "sideBPath": "/screenshots/japan-T06-sideB.jpg",
-    "sideASha256": "cb3e6422c80d97fc5e21468f2f5a4b5cd144eaf22783c39b088738db9b6ec574",
-    "sideBSha256": "59eaa2dd323e96fc0b3b65077a3e839f4a41c7dcaf8f2932a33574acdf7a6177",
-    "sideABytes": 71057,
-    "sideBBytes": 71047,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:09.681Z"
-  },
-  "japan-T07": {
-    "key": "japan-T07",
-    "appId": "japan",
-    "testId": "T07",
-    "url": "https://www.salesforce.com/jp/service/",
-    "finalUrl": "https://www.salesforce.com/jp/service/",
-    "pageTitle": "AIを活用した最高のカスタマーサービスソフトウェア | セールスフォース・ジャパン",
-    "sideAPath": "/screenshots/japan-T07-sideA.jpg",
-    "sideBPath": "/screenshots/japan-T07-sideB.jpg",
-    "sideASha256": "44682e7a3a76069043be0e53f5ad72a7581387b93abb460ff21d9ca183a1ce31",
-    "sideBSha256": "44682e7a3a76069043be0e53f5ad72a7581387b93abb460ff21d9ca183a1ce31",
-    "sideABytes": 60337,
-    "sideBBytes": 60337,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:12.765Z"
-  },
-  "japan-T08": {
-    "key": "japan-T08",
-    "appId": "japan",
-    "testId": "T08",
-    "url": "https://www.salesforce.com/jp/company/our-story/",
-    "finalUrl": "https://www.salesforce.com/jp/company/our-story/",
-    "pageTitle": "Salesforce develops the technology, the partnerships, and the communities that help companies connect with customers. | セールスフォース・ジャパン",
-    "sideAPath": "/screenshots/japan-T08-sideA.jpg",
-    "sideBPath": "/screenshots/japan-T08-sideB.jpg",
-    "sideASha256": "8de20bfac2c95bde7da66a5471bf18897a9d518f7fdafdea95b3cab331d7df91",
-    "sideBSha256": "8de20bfac2c95bde7da66a5471bf18897a9d518f7fdafdea95b3cab331d7df91",
-    "sideABytes": 90788,
-    "sideBBytes": 90788,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:15.215Z"
-  },
-  "germany-T01": {
-    "key": "germany-T01",
-    "appId": "germany",
-    "testId": "T01",
-    "url": "https://www.salesforce.com/de/",
-    "finalUrl": "https://www.salesforce.com/de/",
-    "pageTitle": "Salesforce: Das führende CRM mit KI | Salesforce DE",
-    "sideAPath": "/screenshots/germany-T01-sideA.jpg",
-    "sideBPath": "/screenshots/germany-T01-sideB.jpg",
-    "sideASha256": "87a76d118ac7b87aa5a5ad08a05f9c4b3ff8da72fed6473e3c357dbc56db69a9",
-    "sideBSha256": "87a76d118ac7b87aa5a5ad08a05f9c4b3ff8da72fed6473e3c357dbc56db69a9",
-    "sideABytes": 102108,
-    "sideBBytes": 102108,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:42.356Z"
-  },
-  "germany-T02": {
-    "key": "germany-T02",
-    "appId": "germany",
-    "testId": "T02",
-    "url": "https://www.salesforce.com/de/sales/",
-    "finalUrl": "https://www.salesforce.com/de/sales/",
-    "pageTitle": "KI-gestützte Vertriebssoftware und -lösungen | Salesforce DE",
-    "sideAPath": "/screenshots/germany-T02-sideA.jpg",
-    "sideBPath": "/screenshots/germany-T02-sideB.jpg",
-    "sideASha256": "efe487cf1e0c6968e4aeabc88c630857ffbc202e6496de450a4bc82b178a247e",
-    "sideBSha256": "efe487cf1e0c6968e4aeabc88c630857ffbc202e6496de450a4bc82b178a247e",
-    "sideABytes": 60232,
-    "sideBBytes": 60232,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:44.647Z"
-  },
-  "germany-T03": {
-    "key": "germany-T03",
-    "appId": "germany",
-    "testId": "T03",
-    "url": "https://www.salesforce.com/de/artificial-intelligence/",
-    "finalUrl": "https://www.salesforce.com/de/artificial-intelligence/",
-    "pageTitle": "AIforce: KI von Salesforce – überall dort, wo Sie bereits arbeiten | Salesforce DE",
-    "sideAPath": "/screenshots/germany-T03-sideA.jpg",
-    "sideBPath": "/screenshots/germany-T03-sideB.jpg",
-    "sideASha256": "e8590661a03d358a4df9de900cea8045ce9fb3b2146dc7c8e905914375917f98",
-    "sideBSha256": "963d141ecd190b250e87de63ea2c43d7df3802e4c7a262fabd7b58c2635e67be",
-    "sideABytes": 83493,
-    "sideBBytes": 83508,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:48.444Z"
-  },
-  "germany-T04": {
-    "key": "germany-T04",
-    "appId": "germany",
-    "testId": "T04",
-    "url": "https://www.salesforce.com/de/customer-stories/",
-    "finalUrl": "https://www.salesforce.com/de/customer-stories/",
-    "pageTitle": "Kundenreferenzen | Salesforce DE",
-    "sideAPath": "/screenshots/germany-T04-sideA.jpg",
-    "sideBPath": "/screenshots/germany-T04-sideB.jpg",
-    "sideASha256": "cdc1ccb5ce0fa1697540dc5714e3f45568bd52db579918853de2d43300b8bbff",
-    "sideBSha256": "cdc1ccb5ce0fa1697540dc5714e3f45568bd52db579918853de2d43300b8bbff",
-    "sideABytes": 57287,
-    "sideBBytes": 57287,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:50.895Z"
-  },
-  "germany-T05": {
-    "key": "germany-T05",
-    "appId": "germany",
-    "testId": "T05",
-    "url": "https://www.salesforce.com/de/crm/",
-    "finalUrl": "https://www.salesforce.com/de/crm/",
-    "pageTitle": "Salesforce CRM: Testen Sie das weltweit führende CRM mit KI | Salesforce DE",
-    "sideAPath": "/screenshots/germany-T05-sideA.jpg",
-    "sideBPath": "/screenshots/germany-T05-sideB.jpg",
-    "sideASha256": "ea2dce6b1c3a2524ccb2e1abc21ff4d4ac3451ebbce869120060efccdf3a345b",
-    "sideBSha256": "ea2dce6b1c3a2524ccb2e1abc21ff4d4ac3451ebbce869120060efccdf3a345b",
-    "sideABytes": 84101,
-    "sideBBytes": 84101,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:53.462Z"
-  },
-  "germany-T06": {
-    "key": "germany-T06",
-    "appId": "germany",
-    "testId": "T06",
-    "url": "https://www.salesforce.com/de/sales/pricing/",
-    "finalUrl": "https://www.salesforce.com/de/sales/pricing/",
-    "pageTitle": "Salesforce Sales – Preise | Salesforce DE",
-    "sideAPath": "/screenshots/germany-T06-sideA.jpg",
-    "sideBPath": "/screenshots/germany-T06-sideB.jpg",
-    "sideASha256": "f1e83b38fec5cd1640cbe451d8b5fa0f3f7b79c42f5f555231d6423fcc1feff1",
-    "sideBSha256": "5c9e894c205c30a29dda6b27200ef4fbe6f89ce5753347d27d0311ef02b578c9",
-    "sideABytes": 69973,
-    "sideBBytes": 69970,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:55.926Z"
-  },
-  "germany-T07": {
-    "key": "germany-T07",
-    "appId": "germany",
-    "testId": "T07",
-    "url": "https://www.salesforce.com/de/service/",
-    "finalUrl": "https://www.salesforce.com/de/service/",
-    "pageTitle": "Die beste KI-gestützte Software für den Kundenservice | Salesforce DE",
-    "sideAPath": "/screenshots/germany-T07-sideA.jpg",
-    "sideBPath": "/screenshots/germany-T07-sideB.jpg",
-    "sideASha256": "84c6daa61cbd86a839783bea749b8131f7b501b4710cc9ad1e8c7c813e26c447",
-    "sideBSha256": "84c6daa61cbd86a839783bea749b8131f7b501b4710cc9ad1e8c7c813e26c447",
-    "sideABytes": 57262,
-    "sideBBytes": 57262,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:58.598Z"
-  },
-  "germany-T08": {
-    "key": "germany-T08",
-    "appId": "germany",
-    "testId": "T08",
-    "url": "https://www.salesforce.com/de/company/our-story/",
-    "finalUrl": "https://www.salesforce.com/de/company/our-story/",
-    "pageTitle": "Salesforce develops the technology, the partnerships, and the communities that help companies connect with customers. | Salesforce DE",
-    "sideAPath": "/screenshots/germany-T08-sideA.jpg",
-    "sideBPath": "/screenshots/germany-T08-sideB.jpg",
-    "sideASha256": "c6460f17520d2d187cc755c22b8a07aeee5fb1e6736e0e0add336c2b5ab3a952",
-    "sideBSha256": "c6460f17520d2d187cc755c22b8a07aeee5fb1e6736e0e0add336c2b5ab3a952",
-    "sideABytes": 90991,
-    "sideBBytes": 90991,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:02:00.988Z"
-  },
-  "uk-T01": {
-    "key": "uk-T01",
-    "appId": "uk",
-    "testId": "T01",
-    "url": "https://www.salesforce.com/uk/",
-    "finalUrl": "https://www.salesforce.com/uk/",
-    "pageTitle": "Salesforce: The #1 AI CRM | Salesforce UK",
-    "sideAPath": "/screenshots/uk-T01-sideA.jpg",
-    "sideBPath": "/screenshots/uk-T01-sideB.jpg",
-    "sideASha256": "e722c5da30ce5f3b1a72230e883ce6b56118ffca524a4d0292ccfb6ec76f97c8",
-    "sideBSha256": "9afd33b05275bfc44f301c519b1bf68e36fea014ea08f235febfda1d57370335",
-    "sideABytes": 104677,
-    "sideBBytes": 104684,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:19.696Z"
-  },
-  "uk-T02": {
-    "key": "uk-T02",
-    "appId": "uk",
-    "testId": "T02",
-    "url": "https://www.salesforce.com/uk/sales/",
-    "finalUrl": "https://www.salesforce.com/uk/sales/",
-    "pageTitle": "Sales Software & Solutions Powered by AI | Salesforce UK",
-    "sideAPath": "/screenshots/uk-T02-sideA.jpg",
-    "sideBPath": "/screenshots/uk-T02-sideB.jpg",
-    "sideASha256": "6c5c0a97b85ed0a424fb80ce2152ee363fb6454e04bd19ff36fca1b222d9f076",
-    "sideBSha256": "6c5c0a97b85ed0a424fb80ce2152ee363fb6454e04bd19ff36fca1b222d9f076",
-    "sideABytes": 55167,
-    "sideBBytes": 55167,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:22.087Z"
-  },
-  "uk-T03": {
-    "key": "uk-T03",
-    "appId": "uk",
-    "testId": "T03",
-    "url": "https://www.salesforce.com/uk/artificial-intelligence/",
-    "finalUrl": "https://www.salesforce.com/uk/artificial-intelligence/",
-    "pageTitle": "AIforce: Salesforce AI, Wherever You Already Work | Salesforce UK",
-    "sideAPath": "/screenshots/uk-T03-sideA.jpg",
-    "sideBPath": "/screenshots/uk-T03-sideB.jpg",
-    "sideASha256": "16ab427b583e696bb51c359bb899c274013352c69a3897fb8410635b2768310a",
-    "sideBSha256": "ce49cbc81e2be13255352d848d2546a7ce70f954f408dbb92c6c0eaf0f518f69",
-    "sideABytes": 77613,
-    "sideBBytes": 77683,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:25.761Z"
-  },
-  "uk-T04": {
-    "key": "uk-T04",
-    "appId": "uk",
-    "testId": "T04",
-    "url": "https://www.salesforce.com/uk/customer-stories/",
-    "finalUrl": "https://www.salesforce.com/uk/customer-stories/",
-    "pageTitle": "Customer Success Stories | Salesforce UK",
-    "sideAPath": "/screenshots/uk-T04-sideA.jpg",
-    "sideBPath": "/screenshots/uk-T04-sideB.jpg",
-    "sideASha256": "0d653170a7202933e6ec08a43efff0580ec88f4cbccc06cbff34ec4b72125d58",
-    "sideBSha256": "0d653170a7202933e6ec08a43efff0580ec88f4cbccc06cbff34ec4b72125d58",
-    "sideABytes": 52565,
-    "sideBBytes": 52565,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:28.631Z"
-  },
-  "uk-T05": {
-    "key": "uk-T05",
-    "appId": "uk",
-    "testId": "T05",
-    "url": "https://www.salesforce.com/uk/crm/",
-    "finalUrl": "https://www.salesforce.com/uk/crm/",
-    "pageTitle": "Salesforce CRM: Try The World’s #1 Agentic CRM | Salesforce UK",
-    "sideAPath": "/screenshots/uk-T05-sideA.jpg",
-    "sideBPath": "/screenshots/uk-T05-sideB.jpg",
-    "sideASha256": "29f0143c4be1d786c28dd51d0b054a9d255ca711d275bc274f66cfc235ca982d",
-    "sideBSha256": "29f0143c4be1d786c28dd51d0b054a9d255ca711d275bc274f66cfc235ca982d",
-    "sideABytes": 68382,
-    "sideBBytes": 68382,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:31.036Z"
-  },
-  "uk-T06": {
-    "key": "uk-T06",
-    "appId": "uk",
-    "testId": "T06",
-    "url": "https://www.salesforce.com/uk/sales/pricing/",
-    "finalUrl": "https://www.salesforce.com/uk/sales/pricing/",
-    "pageTitle": "Salesforce Sales Pricing | Salesforce UK",
-    "sideAPath": "/screenshots/uk-T06-sideA.jpg",
-    "sideBPath": "/screenshots/uk-T06-sideB.jpg",
-    "sideASha256": "70f6525440607dc43d0275fa3e9d7a94f7f1c8383e2670d4478095896e210c91",
-    "sideBSha256": "70f6525440607dc43d0275fa3e9d7a94f7f1c8383e2670d4478095896e210c91",
-    "sideABytes": 63995,
-    "sideBBytes": 63995,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:33.393Z"
-  },
-  "uk-T07": {
-    "key": "uk-T07",
-    "appId": "uk",
-    "testId": "T07",
-    "url": "https://www.salesforce.com/uk/service/",
-    "finalUrl": "https://www.salesforce.com/uk/service/",
-    "pageTitle": "Best Customer Service Software Powered by AI | Salesforce UK",
-    "sideAPath": "/screenshots/uk-T07-sideA.jpg",
-    "sideBPath": "/screenshots/uk-T07-sideB.jpg",
-    "sideASha256": "b603c7324148bd5e99a044e6437be9a76162ab52442bb828b010e35c5b85bb7e",
-    "sideBSha256": "b603c7324148bd5e99a044e6437be9a76162ab52442bb828b010e35c5b85bb7e",
-    "sideABytes": 53613,
-    "sideBBytes": 53613,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:36.179Z"
-  },
-  "uk-T08": {
-    "key": "uk-T08",
-    "appId": "uk",
-    "testId": "T08",
-    "url": "https://www.salesforce.com/uk/company/our-story/",
-    "finalUrl": "https://www.salesforce.com/uk/company/our-story/",
-    "pageTitle": "Salesforce develops the technology, the partnerships, and the communities that help companies connect with customers. | Salesforce UK",
-    "sideAPath": "/screenshots/uk-T08-sideA.jpg",
-    "sideBPath": "/screenshots/uk-T08-sideB.jpg",
-    "sideASha256": "d01033dee18360a476a3caf0a12e298558291a150400d82bfc11365845095a14",
-    "sideBSha256": "d01033dee18360a476a3caf0a12e298558291a150400d82bfc11365845095a14",
-    "sideABytes": 84214,
-    "sideBBytes": 84214,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:01:38.466Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "apac-T01": {
-    "key": "apac-T01",
-    "appId": "apac",
-    "testId": "T01",
     "url": "https://www.salesforce.com/ap/",
-    "finalUrl": "https://www.salesforce.com/ap/",
-    "pageTitle": "Salesforce: The #1 AI CRM | Salesforce AP",
-    "sideAPath": "/screenshots/apac-T01-sideA.jpg",
-    "sideBPath": "/screenshots/apac-T01-sideB.jpg",
-    "sideASha256": "a1cab682198bfba06a9fc6a2f2a9edfe2b3361c488a1fd0153d4a8378d96c78d",
-    "sideBSha256": "259dc438d5f760ab420cbf8465f148bc54568bbfb54ecb560021adb89491497a",
-    "sideABytes": 99763,
-    "sideBBytes": 99777,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:59:35.425Z",
+    "sideA": {
+      "bytes": 95843,
+      "sha256": "8557ef4dfa704a06541470e74a7000bd21a6880a31dbb3393242b10e637425c3",
+      "path": "/screenshots/apac-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 95843,
+      "sha256": "8557ef4dfa704a06541470e74a7000bd21a6880a31dbb3393242b10e637425c3",
+      "path": "/screenshots/apac-T01-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:59:35.425Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "apac-T02": {
-    "key": "apac-T02",
-    "appId": "apac",
-    "testId": "T02",
     "url": "https://www.salesforce.com/ap/sales/",
-    "finalUrl": "https://www.salesforce.com/ap/sales/",
-    "pageTitle": "Sales Software & Solutions Powered by AI | Salesforce AP",
-    "sideAPath": "/screenshots/apac-T02-sideA.jpg",
-    "sideBPath": "/screenshots/apac-T02-sideB.jpg",
-    "sideASha256": "6c5c0a97b85ed0a424fb80ce2152ee363fb6454e04bd19ff36fca1b222d9f076",
-    "sideBSha256": "6c5c0a97b85ed0a424fb80ce2152ee363fb6454e04bd19ff36fca1b222d9f076",
-    "sideABytes": 55167,
-    "sideBBytes": 55167,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:59:38.717Z",
+    "sideA": {
+      "bytes": 114322,
+      "sha256": "317861f6536fddd15d5334adf9454a88cba695016cf9e394a157b2f4a7e362be",
+      "path": "/screenshots/apac-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 114322,
+      "sha256": "317861f6536fddd15d5334adf9454a88cba695016cf9e394a157b2f4a7e362be",
+      "path": "/screenshots/apac-T02-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:59:38.717Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "apac-T03": {
-    "key": "apac-T03",
-    "appId": "apac",
-    "testId": "T03",
     "url": "https://www.salesforce.com/ap/artificial-intelligence/",
-    "finalUrl": "https://www.salesforce.com/ap/artificial-intelligence/",
-    "pageTitle": "AIforce: Salesforce AI, Wherever You Already Work | Salesforce AP",
-    "sideAPath": "/screenshots/apac-T03-sideA.jpg",
-    "sideBPath": "/screenshots/apac-T03-sideB.jpg",
-    "sideASha256": "e3a4cb63c88eea3ca60d717c53ca88a902dff561608db2dfef156a31f67b4b3a",
-    "sideBSha256": "8d3a2136cc61a1dd8e91b22f610a4f84bf52bc4b006cc7ad683c0c0450cb4ef0",
-    "sideABytes": 77673,
-    "sideBBytes": 77624,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T04:59:42.665Z"
+    "status": 200,
+    "capturedAt": "2026-11-13T04:59:42.665Z",
+    "sideA": {
+      "bytes": 80935,
+      "sha256": "a0cafcbc7a8faafc1a9fca67225947c4c661177831593ad2ab7da2f09b66def7",
+      "path": "/screenshots/apac-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 80472,
+      "sha256": "f375af7241f3b72993a957c6fe158000d6c63db6809d0001cca909849b90e118",
+      "path": "/screenshots/apac-T03-sideB.jpg"
+    },
+    "pixelDiffPercent": 12.56,
+    "changedPixels": 7635,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 0,
+      "y": 12.6,
+      "w": 100,
+      "h": 87.4
+    },
+    "zones": {
+      "headerPct": 7.69,
+      "heroCenterPct": 13.98,
+      "rightPanelPct": 4.72,
+      "lowerBodyPct": 19.77,
+      "footerPct": 17.41,
+      "headerEdgeContrastA": 14.96,
+      "headerEdgeContrastB": 14.97,
+      "rightEdgeContrastA": 4.22,
+      "rightEdgeContrastB": 4.15,
+      "meanLumDiff": 3.97
+    }
   },
   "apac-T04": {
-    "key": "apac-T04",
-    "appId": "apac",
-    "testId": "T04",
     "url": "https://www.salesforce.com/ap/customer-stories/",
-    "finalUrl": "https://www.salesforce.com/ap/customer-stories/",
-    "pageTitle": "Customer Success Stories | Salesforce AP",
-    "sideAPath": "/screenshots/apac-T04-sideA.jpg",
-    "sideBPath": "/screenshots/apac-T04-sideB.jpg",
-    "sideASha256": "0d653170a7202933e6ec08a43efff0580ec88f4cbccc06cbff34ec4b72125d58",
-    "sideBSha256": "0d653170a7202933e6ec08a43efff0580ec88f4cbccc06cbff34ec4b72125d58",
-    "sideABytes": 52565,
-    "sideBBytes": 52565,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:59:45.367Z",
+    "sideA": {
+      "bytes": 107278,
+      "sha256": "f18b7ba9456d2144eaf527ba6fdff978729fe1470547a149d329df05b9df05b6",
+      "path": "/screenshots/apac-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 107278,
+      "sha256": "f18b7ba9456d2144eaf527ba6fdff978729fe1470547a149d329df05b9df05b6",
+      "path": "/screenshots/apac-T04-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:59:45.367Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "apac-T05": {
-    "key": "apac-T05",
-    "appId": "apac",
-    "testId": "T05",
     "url": "https://www.salesforce.com/au/",
-    "finalUrl": "https://www.salesforce.com/au/",
-    "pageTitle": "Salesforce: The #1 AI CRM | Salesforce AU",
-    "sideAPath": "/screenshots/apac-T05-sideA.jpg",
-    "sideBPath": "/screenshots/apac-T05-sideB.jpg",
-    "sideASha256": "c5c637da1d6ccd67f0d411fab1cf7a2aa30661037d4d613b4f3d575b3a8204c1",
-    "sideBSha256": "c5c637da1d6ccd67f0d411fab1cf7a2aa30661037d4d613b4f3d575b3a8204c1",
-    "sideABytes": 106115,
-    "sideBBytes": 106115,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:59:49.014Z",
+    "sideA": {
+      "bytes": 99824,
+      "sha256": "73c746c67221c825e229adae153a5e4d9462a230f6b06bcacce43162dbd920c2",
+      "path": "/screenshots/apac-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 99824,
+      "sha256": "73c746c67221c825e229adae153a5e4d9462a230f6b06bcacce43162dbd920c2",
+      "path": "/screenshots/apac-T05-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:59:49.014Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "apac-T06": {
-    "key": "apac-T06",
-    "appId": "apac",
-    "testId": "T06",
     "url": "https://www.salesforce.com/in/",
-    "finalUrl": "https://www.salesforce.com/in/",
-    "pageTitle": "Salesforce: The #1 AI CRM | Salesforce IN",
-    "sideAPath": "/screenshots/apac-T06-sideA.jpg",
-    "sideBPath": "/screenshots/apac-T06-sideB.jpg",
-    "sideASha256": "35b980b8ce28b1f9b885e42dac52a51ea1c230164aa2a8403caae179388f00ae",
-    "sideBSha256": "83fdcd6afdf15ac3d49873c0018b98e0cf69ccd050767c468c04c0ca69205880",
-    "sideABytes": 105786,
-    "sideBBytes": 105894,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:59:53.404Z",
+    "sideA": {
+      "bytes": 105651,
+      "sha256": "41527317dccbbca4d7db3d61d532c1e25a9fb099f3593e624499f6093994b346",
+      "path": "/screenshots/apac-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 105651,
+      "sha256": "41527317dccbbca4d7db3d61d532c1e25a9fb099f3593e624499f6093994b346",
+      "path": "/screenshots/apac-T06-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:59:53.404Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "apac-T07": {
-    "key": "apac-T07",
-    "appId": "apac",
-    "testId": "T07",
     "url": "https://www.salesforce.com/ap/crm/",
-    "finalUrl": "https://www.salesforce.com/ap/crm/",
-    "pageTitle": "CRM Software: Try the World’s first AI CRM | Salesforce AP",
-    "sideAPath": "/screenshots/apac-T07-sideA.jpg",
-    "sideBPath": "/screenshots/apac-T07-sideB.jpg",
-    "sideASha256": "210a5efbf080f6ca77039bfa14a988fb16fccb4ed55c48e40ea322f90bfa4cf8",
-    "sideBSha256": "210a5efbf080f6ca77039bfa14a988fb16fccb4ed55c48e40ea322f90bfa4cf8",
-    "sideABytes": 65485,
-    "sideBBytes": 65485,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:59:55.998Z",
+    "sideA": {
+      "bytes": 117960,
+      "sha256": "08c5dee0df6c98659dd64a260e3be9658f670fc6eed1bd90d27c4b190bb5ece0",
+      "path": "/screenshots/apac-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 117960,
+      "sha256": "08c5dee0df6c98659dd64a260e3be9658f670fc6eed1bd90d27c4b190bb5ece0",
+      "path": "/screenshots/apac-T07-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:59:55.998Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "apac-T08": {
-    "key": "apac-T08",
-    "appId": "apac",
-    "testId": "T08",
     "url": "https://www.salesforce.com/ap/company/our-story/",
-    "finalUrl": "https://www.salesforce.com/ap/company/our-story/",
-    "pageTitle": "Salesforce develops the technology, the partnerships, and the communities that help companies connect with customers. | Salesforce AP",
-    "sideAPath": "/screenshots/apac-T08-sideA.jpg",
-    "sideBPath": "/screenshots/apac-T08-sideB.jpg",
-    "sideASha256": "d01033dee18360a476a3caf0a12e298558291a150400d82bfc11365845095a14",
-    "sideBSha256": "d01033dee18360a476a3caf0a12e298558291a150400d82bfc11365845095a14",
-    "sideABytes": 84214,
-    "sideBBytes": 84214,
+    "status": 200,
+    "capturedAt": "2026-11-13T04:59:58.548Z",
+    "sideA": {
+      "bytes": 101971,
+      "sha256": "8cf88e5b837adf1ae93890d2a07854bb0e57f02f89b27af84f5b65de1cfe44a1",
+      "path": "/screenshots/apac-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 101971,
+      "sha256": "8cf88e5b837adf1ae93890d2a07854bb0e57f02f89b27af84f5b65de1cfe44a1",
+      "path": "/screenshots/apac-T08-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T04:59:58.548Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "emea-T01": {
-    "key": "emea-T01",
-    "appId": "emea",
-    "testId": "T01",
     "url": "https://www.salesforce.com/eu/",
-    "finalUrl": "https://www.salesforce.com/eu/",
-    "pageTitle": "Salesforce: The #1 AI CRM | Salesforce EU",
-    "sideAPath": "/screenshots/emea-T01-sideA.jpg",
-    "sideBPath": "/screenshots/emea-T01-sideB.jpg",
-    "sideASha256": "4d37a9d93c8ca01a50ba07d5626350aa017e616366ae54c1bdd357bc591eebab",
-    "sideBSha256": "e722c5da30ce5f3b1a72230e883ce6b56118ffca524a4d0292ccfb6ec76f97c8",
-    "sideABytes": 104707,
-    "sideBBytes": 104677,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:03.112Z",
+    "sideA": {
+      "bytes": 103134,
+      "sha256": "d99990bb5aad9660d912202f7af75aaee226785fef78fed8c5916812950d8cde",
+      "path": "/screenshots/emea-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 103134,
+      "sha256": "d99990bb5aad9660d912202f7af75aaee226785fef78fed8c5916812950d8cde",
+      "path": "/screenshots/emea-T01-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:03.112Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "emea-T02": {
-    "key": "emea-T02",
-    "appId": "emea",
-    "testId": "T02",
     "url": "https://www.salesforce.com/eu/sales/",
-    "finalUrl": "https://www.salesforce.com/eu/sales/",
-    "pageTitle": "Sales Software & Solutions Powered by AI | Salesforce EU",
-    "sideAPath": "/screenshots/emea-T02-sideA.jpg",
-    "sideBPath": "/screenshots/emea-T02-sideB.jpg",
-    "sideASha256": "6c5c0a97b85ed0a424fb80ce2152ee363fb6454e04bd19ff36fca1b222d9f076",
-    "sideBSha256": "6c5c0a97b85ed0a424fb80ce2152ee363fb6454e04bd19ff36fca1b222d9f076",
-    "sideABytes": 55167,
-    "sideBBytes": 55167,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:05.895Z",
+    "sideA": {
+      "bytes": 101877,
+      "sha256": "dc1162aa08987dfa368ca5e88c5e21586559a9ad32337a51fc9c0b5c0157c1d1",
+      "path": "/screenshots/emea-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 101877,
+      "sha256": "dc1162aa08987dfa368ca5e88c5e21586559a9ad32337a51fc9c0b5c0157c1d1",
+      "path": "/screenshots/emea-T02-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:05.895Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "emea-T03": {
-    "key": "emea-T03",
-    "appId": "emea",
-    "testId": "T03",
     "url": "https://www.salesforce.com/eu/artificial-intelligence/",
-    "finalUrl": "https://www.salesforce.com/eu/artificial-intelligence/",
-    "pageTitle": "AIforce: Salesforce AI, Wherever You Already Work | Salesforce EU",
-    "sideAPath": "/screenshots/emea-T03-sideA.jpg",
-    "sideBPath": "/screenshots/emea-T03-sideB.jpg",
-    "sideASha256": "b010f0d4c2b9e531421211726ff0ff6c9e96a03841b065550dfddc47a4795c64",
-    "sideBSha256": "8d3a2136cc61a1dd8e91b22f610a4f84bf52bc4b006cc7ad683c0c0450cb4ef0",
-    "sideABytes": 77666,
-    "sideBBytes": 77624,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:09.747Z"
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:09.747Z",
+    "sideA": {
+      "bytes": 80903,
+      "sha256": "2a105b1ebd60c58f88309a82bdd65359dc0452679c7f522622c31866ac34b66c",
+      "path": "/screenshots/emea-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 80468,
+      "sha256": "ad6b9412685b96ad200efa9917ae12d18e1d8c66325df06116d755505c0f25cf",
+      "path": "/screenshots/emea-T03-sideB.jpg"
+    },
+    "pixelDiffPercent": 12.52,
+    "changedPixels": 7612,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 0,
+      "y": 12.6,
+      "w": 100,
+      "h": 87.4
+    },
+    "zones": {
+      "headerPct": 7.69,
+      "heroCenterPct": 13.87,
+      "rightPanelPct": 4.72,
+      "lowerBodyPct": 19.77,
+      "footerPct": 17.41,
+      "headerEdgeContrastA": 14.96,
+      "headerEdgeContrastB": 14.97,
+      "rightEdgeContrastA": 4.22,
+      "rightEdgeContrastB": 4.15,
+      "meanLumDiff": 4.04
+    }
   },
   "emea-T04": {
-    "key": "emea-T04",
-    "appId": "emea",
-    "testId": "T04",
     "url": "https://www.salesforce.com/fr/",
-    "finalUrl": "https://www.salesforce.com/fr/",
-    "pageTitle": "Salesforce : le n° 1 du CRM intégrant l’IA | Salesforce FR",
-    "sideAPath": "/screenshots/emea-T04-sideA.jpg",
-    "sideBPath": "/screenshots/emea-T04-sideB.jpg",
-    "sideASha256": "1d1599f79691081493a06170b3a0f78ea660a24afa0f2dc48351c376caef0114",
-    "sideBSha256": "1d1599f79691081493a06170b3a0f78ea660a24afa0f2dc48351c376caef0114",
-    "sideABytes": 108006,
-    "sideBBytes": 108006,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:13.636Z",
+    "sideA": {
+      "bytes": 108385,
+      "sha256": "b7aed19ea3eb806f807758b214b9669232baa9866b3cd1fc711a45da9bafb436",
+      "path": "/screenshots/emea-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 108385,
+      "sha256": "b7aed19ea3eb806f807758b214b9669232baa9866b3cd1fc711a45da9bafb436",
+      "path": "/screenshots/emea-T04-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:13.636Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "emea-T05": {
-    "key": "emea-T05",
-    "appId": "emea",
-    "testId": "T05",
     "url": "https://www.salesforce.com/es/",
-    "finalUrl": "https://www.salesforce.com/es/",
-    "pageTitle": "Salesforce: el principal CRM con IA del mundo | Salesforce ES",
-    "sideAPath": "/screenshots/emea-T05-sideA.jpg",
-    "sideBPath": "/screenshots/emea-T05-sideB.jpg",
-    "sideASha256": "7fcfbc1a6013747a1821b7db1a1cecbca1eed0e9317e64b709e3065ce974553c",
-    "sideBSha256": "7fcfbc1a6013747a1821b7db1a1cecbca1eed0e9317e64b709e3065ce974553c",
-    "sideABytes": 101703,
-    "sideBBytes": 101703,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:18.114Z",
+    "sideA": {
+      "bytes": 105312,
+      "sha256": "26e31a8d0d409a4c1a81d4a03ca739e1e0b37432878d47122a9b7bb17df3f823",
+      "path": "/screenshots/emea-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 105312,
+      "sha256": "26e31a8d0d409a4c1a81d4a03ca739e1e0b37432878d47122a9b7bb17df3f823",
+      "path": "/screenshots/emea-T05-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:18.114Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "emea-T06": {
-    "key": "emea-T06",
-    "appId": "emea",
-    "testId": "T06",
     "url": "https://www.salesforce.com/it/",
-    "finalUrl": "https://www.salesforce.com/it/",
-    "pageTitle": "Salesforce: il CRM basato sull’AI n. 1 al mondo | Salesforce IT",
-    "sideAPath": "/screenshots/emea-T06-sideA.jpg",
-    "sideBPath": "/screenshots/emea-T06-sideB.jpg",
-    "sideASha256": "c023be8ad603ad43220bbc62bdaad5d9f417c8c2d23f6e937749cd217ade1a45",
-    "sideBSha256": "c023be8ad603ad43220bbc62bdaad5d9f417c8c2d23f6e937749cd217ade1a45",
-    "sideABytes": 105374,
-    "sideBBytes": 105374,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:22.418Z",
+    "sideA": {
+      "bytes": 102083,
+      "sha256": "55d5102b53d5f42c0bafc0c185bfbe34862d577fb4b9ad2844fa84eb0b48bdb3",
+      "path": "/screenshots/emea-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 102083,
+      "sha256": "55d5102b53d5f42c0bafc0c185bfbe34862d577fb4b9ad2844fa84eb0b48bdb3",
+      "path": "/screenshots/emea-T06-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:22.418Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "emea-T07": {
-    "key": "emea-T07",
-    "appId": "emea",
-    "testId": "T07",
     "url": "https://www.salesforce.com/nl/",
-    "finalUrl": "https://www.salesforce.com/nl/",
-    "pageTitle": "Salesforce: het toonaangevende AI-CRM | Salesforce NL",
-    "sideAPath": "/screenshots/emea-T07-sideA.jpg",
-    "sideBPath": "/screenshots/emea-T07-sideB.jpg",
-    "sideASha256": "8cb96cddbb6b43be32f9499eeb189879d211e6bad84c1dd9f1164913dcb62282",
-    "sideBSha256": "8cb96cddbb6b43be32f9499eeb189879d211e6bad84c1dd9f1164913dcb62282",
-    "sideABytes": 111413,
-    "sideBBytes": 111413,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:26.068Z",
+    "sideA": {
+      "bytes": 114346,
+      "sha256": "e755c9cd9a9d2769f23d2fe57f6fcdb6bda5abc01d7a969cce36869165b111ae",
+      "path": "/screenshots/emea-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 114346,
+      "sha256": "e755c9cd9a9d2769f23d2fe57f6fcdb6bda5abc01d7a969cce36869165b111ae",
+      "path": "/screenshots/emea-T07-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:26.068Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "emea-T08": {
-    "key": "emea-T08",
-    "appId": "emea",
-    "testId": "T08",
     "url": "https://www.salesforce.com/eu/company/our-story/",
-    "finalUrl": "https://www.salesforce.com/eu/company/our-story/",
-    "pageTitle": "Salesforce develops the technology, the partnerships, and the communities that help companies connect with customers. | Salesforce EU",
-    "sideAPath": "/screenshots/emea-T08-sideA.jpg",
-    "sideBPath": "/screenshots/emea-T08-sideB.jpg",
-    "sideASha256": "d01033dee18360a476a3caf0a12e298558291a150400d82bfc11365845095a14",
-    "sideBSha256": "d01033dee18360a476a3caf0a12e298558291a150400d82bfc11365845095a14",
-    "sideABytes": 84214,
-    "sideBBytes": 84214,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:28.331Z",
+    "sideA": {
+      "bytes": 101971,
+      "sha256": "8cf88e5b837adf1ae93890d2a07854bb0e57f02f89b27af84f5b65de1cfe44a1",
+      "path": "/screenshots/emea-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 101971,
+      "sha256": "8cf88e5b837adf1ae93890d2a07854bb0e57f02f89b27af84f5b65de1cfe44a1",
+      "path": "/screenshots/emea-T08-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:28.331Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "americas-T01": {
-    "key": "americas-T01",
-    "appId": "americas",
-    "testId": "T01",
     "url": "https://www.salesforce.com/mx/",
-    "finalUrl": "https://www.salesforce.com/mx/",
-    "pageTitle": "Salesforce: el CRM n.º 1 de IA | Salesforce MX",
-    "sideAPath": "/screenshots/americas-T01-sideA.jpg",
-    "sideBPath": "/screenshots/americas-T01-sideB.jpg",
-    "sideASha256": "033082adcf45dc6c22693bdf863a28e1abfc22e9725d4f7e7086d9952f1ed645",
-    "sideBSha256": "bb6db8912b17017baf9db4f5b3ef0360f7bbdae8151c54dfb0d2f370bf9d45c1",
-    "sideABytes": 100225,
-    "sideBBytes": 100718,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:32.953Z",
+    "sideA": {
+      "bytes": 105275,
+      "sha256": "e082a6004a8794cc14468643ac39546229e1c0e27315ac46319830b295236151",
+      "path": "/screenshots/americas-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 105275,
+      "sha256": "e082a6004a8794cc14468643ac39546229e1c0e27315ac46319830b295236151",
+      "path": "/screenshots/americas-T01-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:32.953Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "americas-T02": {
-    "key": "americas-T02",
-    "appId": "americas",
-    "testId": "T02",
     "url": "https://www.salesforce.com/mx/sales/",
-    "finalUrl": "https://www.salesforce.com/mx/sales/",
-    "pageTitle": "Software y soluciones de ventas impulsados por IA | Salesforce MX",
-    "sideAPath": "/screenshots/americas-T02-sideA.jpg",
-    "sideBPath": "/screenshots/americas-T02-sideB.jpg",
-    "sideASha256": "6c8f53add25b5c1900a340735fb608013defb5dba525630a7d406475d7fcdd6b",
-    "sideBSha256": "6c8f53add25b5c1900a340735fb608013defb5dba525630a7d406475d7fcdd6b",
-    "sideABytes": 59490,
-    "sideBBytes": 59490,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:35.414Z",
+    "sideA": {
+      "bytes": 133250,
+      "sha256": "157b47bfa1e193bf0cf81c18d71549eae0d39d660c12cf47569ad1ddd77ebd3b",
+      "path": "/screenshots/americas-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 133250,
+      "sha256": "157b47bfa1e193bf0cf81c18d71549eae0d39d660c12cf47569ad1ddd77ebd3b",
+      "path": "/screenshots/americas-T02-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:35.414Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "americas-T03": {
-    "key": "americas-T03",
-    "appId": "americas",
-    "testId": "T03",
     "url": "https://www.salesforce.com/br/",
-    "finalUrl": "https://www.salesforce.com/br/",
-    "pageTitle": "Salesforce: o CRM com IA nº 1 | Salesforce BR",
-    "sideAPath": "/screenshots/americas-T03-sideA.jpg",
-    "sideBPath": "/screenshots/americas-T03-sideB.jpg",
-    "sideASha256": "d2ca2eae4337378391a51b2606c4d8a3688af44a739e3af33092aac74d69f36c",
-    "sideBSha256": "d2ca2eae4337378391a51b2606c4d8a3688af44a739e3af33092aac74d69f36c",
-    "sideABytes": 110858,
-    "sideBBytes": 110858,
-    "pixelDiffPercent": 0,
-    "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:39.072Z"
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:39.072Z",
+    "sideA": {
+      "bytes": 108629,
+      "sha256": "1676f427ba9cf22eabc8b72d1079bff77d1658a1a642da122e99fd34ad8be25d",
+      "path": "/screenshots/americas-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 105211,
+      "sha256": "76494f69a492c26a8cf87881fa3f7ad1529a0834865febfc63a0a020618553e4",
+      "path": "/screenshots/americas-T03-sideB.jpg"
+    },
+    "pixelDiffPercent": 18.75,
+    "changedPixels": 11402,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 0,
+      "y": 12.6,
+      "w": 100,
+      "h": 87.4
+    },
+    "zones": {
+      "headerPct": 7.69,
+      "heroCenterPct": 23.63,
+      "rightPanelPct": 10.16,
+      "lowerBodyPct": 30.76,
+      "footerPct": 19.26,
+      "headerEdgeContrastA": 15.71,
+      "headerEdgeContrastB": 15.71,
+      "rightEdgeContrastA": 14.33,
+      "rightEdgeContrastB": 13.38,
+      "meanLumDiff": 3.38
+    }
   },
   "americas-T04": {
-    "key": "americas-T04",
-    "appId": "americas",
-    "testId": "T04",
     "url": "https://www.salesforce.com/br/sales/",
-    "finalUrl": "https://www.salesforce.com/br/sales/",
-    "pageTitle": "Software e soluções de vendas com tecnologia de IA | Salesforce BR",
-    "sideAPath": "/screenshots/americas-T04-sideA.jpg",
-    "sideBPath": "/screenshots/americas-T04-sideB.jpg",
-    "sideASha256": "e1a2449191d1dc5ae010b49f74fdc4956be7da4dfc57bac91b46c5e89272bc46",
-    "sideBSha256": "e1a2449191d1dc5ae010b49f74fdc4956be7da4dfc57bac91b46c5e89272bc46",
-    "sideABytes": 58526,
-    "sideBBytes": 58526,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:41.675Z",
+    "sideA": {
+      "bytes": 131618,
+      "sha256": "2f91d386468cada92ba58677fdb48adf86b5dae40e9a68cdb118b56b15ceaeff",
+      "path": "/screenshots/americas-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 131618,
+      "sha256": "2f91d386468cada92ba58677fdb48adf86b5dae40e9a68cdb118b56b15ceaeff",
+      "path": "/screenshots/americas-T04-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:41.675Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "americas-T05": {
-    "key": "americas-T05",
-    "appId": "americas",
-    "testId": "T05",
     "url": "https://www.salesforce.com/ca/",
-    "finalUrl": "https://www.salesforce.com/ca/",
-    "pageTitle": "Salesforce: The #1 AI CRM | Salesforce CA",
-    "sideAPath": "/screenshots/americas-T05-sideA.jpg",
-    "sideBPath": "/screenshots/americas-T05-sideB.jpg",
-    "sideASha256": "4d37a9d93c8ca01a50ba07d5626350aa017e616366ae54c1bdd357bc591eebab",
-    "sideBSha256": "11e257c7c348efa6505fc5a02e79462a2662a0146f009eeba9eaaa4f900c4a3f",
-    "sideABytes": 104707,
-    "sideBBytes": 104675,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:45.305Z",
+    "sideA": {
+      "bytes": 103490,
+      "sha256": "c474f2850b9b5d7005e96554ac1b8985870d07ebdd8287c8d9227154742a4dd6",
+      "path": "/screenshots/americas-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 103490,
+      "sha256": "c474f2850b9b5d7005e96554ac1b8985870d07ebdd8287c8d9227154742a4dd6",
+      "path": "/screenshots/americas-T05-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:45.305Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "americas-T06": {
-    "key": "americas-T06",
-    "appId": "americas",
-    "testId": "T06",
     "url": "https://www.salesforce.com/fr-ca/",
-    "finalUrl": "https://www.salesforce.com/fr-ca/",
-    "pageTitle": "Salesforce, le CRM n° 1 intégrant l’IA agentique | Salesforce FR-CA",
-    "sideAPath": "/screenshots/americas-T06-sideA.jpg",
-    "sideBPath": "/screenshots/americas-T06-sideB.jpg",
-    "sideASha256": "ebd26c058f5f155b26b464d722fb2548bf3126c3c09256c5f706a718c4fc825f",
-    "sideBSha256": "ebd26c058f5f155b26b464d722fb2548bf3126c3c09256c5f706a718c4fc825f",
-    "sideABytes": 134778,
-    "sideBBytes": 134778,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:48.025Z",
+    "sideA": {
+      "bytes": 126033,
+      "sha256": "1e7f1e260abda3f71496723fc0fc62aa9dae4e802f0ebd25e2f949f0949b5e15",
+      "path": "/screenshots/americas-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 126033,
+      "sha256": "1e7f1e260abda3f71496723fc0fc62aa9dae4e802f0ebd25e2f949f0949b5e15",
+      "path": "/screenshots/americas-T06-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:48.025Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "americas-T07": {
-    "key": "americas-T07",
-    "appId": "americas",
-    "testId": "T07",
     "url": "https://www.salesforce.com/mx/crm/",
-    "finalUrl": "https://www.salesforce.com/mx/crm/",
-    "pageTitle": "Salesforce CRM: Prueba el CRM agéntico número 1 del mundo | Salesforce MX",
-    "sideAPath": "/screenshots/americas-T07-sideA.jpg",
-    "sideBPath": "/screenshots/americas-T07-sideB.jpg",
-    "sideASha256": "c91fc3c1989244e2b09cfbd2dea735aeb6e28da2bb11e26a416108fb4b56360c",
-    "sideBSha256": "c91fc3c1989244e2b09cfbd2dea735aeb6e28da2bb11e26a416108fb4b56360c",
-    "sideABytes": 76323,
-    "sideBBytes": 76323,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:50.348Z",
+    "sideA": {
+      "bytes": 118957,
+      "sha256": "3b9bc37757d2c38111e71199b81dca49e71f6eccae0c7027f44c8623d69bac6c",
+      "path": "/screenshots/americas-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 118957,
+      "sha256": "3b9bc37757d2c38111e71199b81dca49e71f6eccae0c7027f44c8623d69bac6c",
+      "path": "/screenshots/americas-T07-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:50.348Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   },
   "americas-T08": {
-    "key": "americas-T08",
-    "appId": "americas",
-    "testId": "T08",
     "url": "https://www.salesforce.com/br/crm/",
-    "finalUrl": "https://www.salesforce.com/br/crm/",
-    "pageTitle": "Salesforce CRM: experimente o CRM agêntico nº 1 do mundo | Salesforce BR",
-    "sideAPath": "/screenshots/americas-T08-sideA.jpg",
-    "sideBPath": "/screenshots/americas-T08-sideB.jpg",
-    "sideASha256": "7863fd7cb73e7c18c67110a8b4ab2b87d34e8ddaa9e0ad7eb4c87146fa4bde2a",
-    "sideBSha256": "7863fd7cb73e7c18c67110a8b4ab2b87d34e8ddaa9e0ad7eb4c87146fa4bde2a",
-    "sideABytes": 75104,
-    "sideBBytes": 75104,
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:52.717Z",
+    "sideA": {
+      "bytes": 127868,
+      "sha256": "b869d39dd5fa4e9a9356b6013b622fe5160c5aeadd851d54fe419566096b836e",
+      "path": "/screenshots/americas-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 127868,
+      "sha256": "b869d39dd5fa4e9a9356b6013b622fe5160c5aeadd851d54fe419566096b836e",
+      "path": "/screenshots/americas-T08-sideB.jpg"
+    },
     "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
     "changedBox": null,
-    "capturedAt": "2026-11-13T05:00:52.717Z"
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "japan-T01": {
+    "url": "https://www.salesforce.com/jp/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:55.850Z",
+    "sideA": {
+      "bytes": 116061,
+      "sha256": "6a5e4d451aabb693fa1e6ece6ae71f4ef0e72d5c5964c6c49c500a778640ce19",
+      "path": "/screenshots/japan-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 116061,
+      "sha256": "6a5e4d451aabb693fa1e6ece6ae71f4ef0e72d5c5964c6c49c500a778640ce19",
+      "path": "/screenshots/japan-T01-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "japan-T02": {
+    "url": "https://www.salesforce.com/jp/sales/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:00:58.325Z",
+    "sideA": {
+      "bytes": 84922,
+      "sha256": "296becc51afd9ced4c92251c0b163393259e0e20f2f38d65afa37f35a16af556",
+      "path": "/screenshots/japan-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 84922,
+      "sha256": "296becc51afd9ced4c92251c0b163393259e0e20f2f38d65afa37f35a16af556",
+      "path": "/screenshots/japan-T02-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "japan-T03": {
+    "url": "https://www.salesforce.com/jp/artificial-intelligence/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:02.223Z",
+    "sideA": {
+      "bytes": 104424,
+      "sha256": "0a338112ba7ae9709628b35fa8ce9ed24c4a74a644e6da3b6f20a86229a7c163",
+      "path": "/screenshots/japan-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 105922,
+      "sha256": "451b5a6fd0547ef2b19501ec7f1656c67f1c10d4834999663fec4a485674c2e4",
+      "path": "/screenshots/japan-T03-sideB.jpg"
+    },
+    "pixelDiffPercent": 13.08,
+    "changedPixels": 7955,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 0.6,
+      "y": 15.8,
+      "w": 98.8,
+      "h": 81.1
+    },
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 20.82,
+      "rightPanelPct": 5.32,
+      "lowerBodyPct": 13.83,
+      "footerPct": 14.55,
+      "headerEdgeContrastA": 17.05,
+      "headerEdgeContrastB": 17.05,
+      "rightEdgeContrastA": 23.6,
+      "rightEdgeContrastB": 23.7,
+      "meanLumDiff": 3.04
+    }
+  },
+  "japan-T04": {
+    "url": "https://www.salesforce.com/jp/customer-stories/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:04.713Z",
+    "sideA": {
+      "bytes": 83495,
+      "sha256": "61835a795cff34ed66c950cd856f62d5fb7d919f7655da9568ecfec411efd877",
+      "path": "/screenshots/japan-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 83495,
+      "sha256": "61835a795cff34ed66c950cd856f62d5fb7d919f7655da9568ecfec411efd877",
+      "path": "/screenshots/japan-T04-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "japan-T05": {
+    "url": "https://www.salesforce.com/jp/crm/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:07.114Z",
+    "sideA": {
+      "bytes": 93603,
+      "sha256": "fe06e50c7c78f8eb05bb9afa39352487dd6d7fb9c3909d9f58c3902c5eb9702f",
+      "path": "/screenshots/japan-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 93603,
+      "sha256": "fe06e50c7c78f8eb05bb9afa39352487dd6d7fb9c3909d9f58c3902c5eb9702f",
+      "path": "/screenshots/japan-T05-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "japan-T06": {
+    "url": "https://www.salesforce.com/jp/sales/pricing/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:09.681Z",
+    "sideA": {
+      "bytes": 93487,
+      "sha256": "90b9bd31584edf1d43a63167d22fdbf2bc10b41b07ccdb2c65610c88ab1d26a5",
+      "path": "/screenshots/japan-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 93487,
+      "sha256": "90b9bd31584edf1d43a63167d22fdbf2bc10b41b07ccdb2c65610c88ab1d26a5",
+      "path": "/screenshots/japan-T06-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "japan-T07": {
+    "url": "https://www.salesforce.com/jp/service/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:12.765Z",
+    "sideA": {
+      "bytes": 78183,
+      "sha256": "a90c74a6ed9f06e38e1b68c5223152830699f5e6cb186c744606c21505568c6b",
+      "path": "/screenshots/japan-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 78183,
+      "sha256": "a90c74a6ed9f06e38e1b68c5223152830699f5e6cb186c744606c21505568c6b",
+      "path": "/screenshots/japan-T07-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "japan-T08": {
+    "url": "https://www.salesforce.com/jp/company/our-story/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:15.215Z",
+    "sideA": {
+      "bytes": 110618,
+      "sha256": "a48f0702a6e999d64d912f8c8294d013ca84dcd930f2cef699d666b1733a13ba",
+      "path": "/screenshots/japan-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 110618,
+      "sha256": "a48f0702a6e999d64d912f8c8294d013ca84dcd930f2cef699d666b1733a13ba",
+      "path": "/screenshots/japan-T08-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "uk-T01": {
+    "url": "https://www.salesforce.com/uk/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:19.696Z",
+    "sideA": {
+      "bytes": 101206,
+      "sha256": "39a776ff27f2c5558926a890704fc7f36e0ccc7dde70577c9d934b7830ead6f6",
+      "path": "/screenshots/uk-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 101206,
+      "sha256": "39a776ff27f2c5558926a890704fc7f36e0ccc7dde70577c9d934b7830ead6f6",
+      "path": "/screenshots/uk-T01-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "uk-T02": {
+    "url": "https://www.salesforce.com/uk/sales/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:22.087Z",
+    "sideA": {
+      "bytes": 109674,
+      "sha256": "b043c8854b20e68efd81c2407f55acfa2537095ba3763e93671f4eb5703369de",
+      "path": "/screenshots/uk-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 109674,
+      "sha256": "b043c8854b20e68efd81c2407f55acfa2537095ba3763e93671f4eb5703369de",
+      "path": "/screenshots/uk-T02-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "uk-T03": {
+    "url": "https://www.salesforce.com/uk/artificial-intelligence/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:25.761Z",
+    "sideA": {
+      "bytes": 80707,
+      "sha256": "7d0027bb36e78da142049addd19868a2fd96cf97335c63083db2dbc1c5f7e125",
+      "path": "/screenshots/uk-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 80401,
+      "sha256": "ccfa07d397ce660802632abfcd1c0285e0bfb8fd1d837bec5c171c0ba67bfa0e",
+      "path": "/screenshots/uk-T03-sideB.jpg"
+    },
+    "pixelDiffPercent": 12.55,
+    "changedPixels": 7628,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 0,
+      "y": 12.6,
+      "w": 100,
+      "h": 87.4
+    },
+    "zones": {
+      "headerPct": 7.69,
+      "heroCenterPct": 13.94,
+      "rightPanelPct": 4.72,
+      "lowerBodyPct": 19.77,
+      "footerPct": 17.41,
+      "headerEdgeContrastA": 14.96,
+      "headerEdgeContrastB": 14.97,
+      "rightEdgeContrastA": 4.22,
+      "rightEdgeContrastB": 4.15,
+      "meanLumDiff": 3.88
+    }
+  },
+  "uk-T04": {
+    "url": "https://www.salesforce.com/uk/customer-stories/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:28.631Z",
+    "sideA": {
+      "bytes": 112777,
+      "sha256": "72b5377c37283476d944f0057f6adab9fe29f4c08126c19a0533dfd9c6413722",
+      "path": "/screenshots/uk-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 112777,
+      "sha256": "72b5377c37283476d944f0057f6adab9fe29f4c08126c19a0533dfd9c6413722",
+      "path": "/screenshots/uk-T04-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "uk-T05": {
+    "url": "https://www.salesforce.com/uk/crm/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:31.036Z",
+    "sideA": {
+      "bytes": 121380,
+      "sha256": "5c2005352d0bb70d81ca01007149a4fcd39197b19ed745e084b9dda0e65829cb",
+      "path": "/screenshots/uk-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 121380,
+      "sha256": "5c2005352d0bb70d81ca01007149a4fcd39197b19ed745e084b9dda0e65829cb",
+      "path": "/screenshots/uk-T05-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "uk-T06": {
+    "url": "https://www.salesforce.com/uk/sales/pricing/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:33.393Z",
+    "sideA": {
+      "bytes": 83350,
+      "sha256": "2cd996f88ade027394a9885abbebefa196ff63156c27f73a9bed753c7075a28f",
+      "path": "/screenshots/uk-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 83350,
+      "sha256": "2cd996f88ade027394a9885abbebefa196ff63156c27f73a9bed753c7075a28f",
+      "path": "/screenshots/uk-T06-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "uk-T07": {
+    "url": "https://www.salesforce.com/uk/service/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:36.179Z",
+    "sideA": {
+      "bytes": 93139,
+      "sha256": "e8fb336ee7f1c2b059d4ab7e39226339476820f53140c8486759719310a603f9",
+      "path": "/screenshots/uk-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 93139,
+      "sha256": "e8fb336ee7f1c2b059d4ab7e39226339476820f53140c8486759719310a603f9",
+      "path": "/screenshots/uk-T07-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "uk-T08": {
+    "url": "https://www.salesforce.com/uk/company/our-story/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:38.466Z",
+    "sideA": {
+      "bytes": 101971,
+      "sha256": "8cf88e5b837adf1ae93890d2a07854bb0e57f02f89b27af84f5b65de1cfe44a1",
+      "path": "/screenshots/uk-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 101971,
+      "sha256": "8cf88e5b837adf1ae93890d2a07854bb0e57f02f89b27af84f5b65de1cfe44a1",
+      "path": "/screenshots/uk-T08-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "germany-T01": {
+    "url": "https://www.salesforce.com/de/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:42.356Z",
+    "sideA": {
+      "bytes": 97935,
+      "sha256": "dec330d2136ffcd916ae44576b25a284d5cfa3fd147114a6c8fa2ab0cf46a2c0",
+      "path": "/screenshots/germany-T01-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 97935,
+      "sha256": "dec330d2136ffcd916ae44576b25a284d5cfa3fd147114a6c8fa2ab0cf46a2c0",
+      "path": "/screenshots/germany-T01-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "germany-T02": {
+    "url": "https://www.salesforce.com/de/sales/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:44.647Z",
+    "sideA": {
+      "bytes": 146861,
+      "sha256": "9b357321fb8e412f3820ea567062d69192d5cf5e94831861f79eefc354c4ccfb",
+      "path": "/screenshots/germany-T02-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 146861,
+      "sha256": "9b357321fb8e412f3820ea567062d69192d5cf5e94831861f79eefc354c4ccfb",
+      "path": "/screenshots/germany-T02-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "germany-T03": {
+    "url": "https://www.salesforce.com/de/artificial-intelligence/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:48.444Z",
+    "sideA": {
+      "bytes": 81662,
+      "sha256": "48da1c8a8496bb2023b55b764a80573641abcd7a36f0514afed12068c079c42c",
+      "path": "/screenshots/germany-T03-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 83155,
+      "sha256": "7bc728c19d20b90a7bb5b52e9ceb9a374aecc75dea403122bf21152bb17db8ab",
+      "path": "/screenshots/germany-T03-sideB.jpg"
+    },
+    "pixelDiffPercent": 12.99,
+    "changedPixels": 7897,
+    "totalPixels": 60800,
+    "changedBox": {
+      "x": 0,
+      "y": 12.6,
+      "w": 100,
+      "h": 87.4
+    },
+    "zones": {
+      "headerPct": 7.69,
+      "heroCenterPct": 14.23,
+      "rightPanelPct": 4.61,
+      "lowerBodyPct": 22.29,
+      "footerPct": 16.71,
+      "headerEdgeContrastA": 14.87,
+      "headerEdgeContrastB": 14.89,
+      "rightEdgeContrastA": 4.38,
+      "rightEdgeContrastB": 4.58,
+      "meanLumDiff": 3.93
+    }
+  },
+  "germany-T04": {
+    "url": "https://www.salesforce.com/de/customer-stories/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:50.895Z",
+    "sideA": {
+      "bytes": 78529,
+      "sha256": "aa3d74d2134434bd856dd9599c3b0a41d703b4f7701091efd5ced3a98e7a2d83",
+      "path": "/screenshots/germany-T04-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 78529,
+      "sha256": "aa3d74d2134434bd856dd9599c3b0a41d703b4f7701091efd5ced3a98e7a2d83",
+      "path": "/screenshots/germany-T04-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "germany-T05": {
+    "url": "https://www.salesforce.com/de/crm/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:53.462Z",
+    "sideA": {
+      "bytes": 136820,
+      "sha256": "a72fa975ec2ef334ec97984f032cbe69e8ae24d785ad937faddcc9853c0e1faa",
+      "path": "/screenshots/germany-T05-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 136820,
+      "sha256": "a72fa975ec2ef334ec97984f032cbe69e8ae24d785ad937faddcc9853c0e1faa",
+      "path": "/screenshots/germany-T05-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "germany-T06": {
+    "url": "https://www.salesforce.com/de/sales/pricing/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:55.926Z",
+    "sideA": {
+      "bytes": 94782,
+      "sha256": "ebef696034260f099e7fff7c6be2a9825550c92bf67c2d28d608de3b0bd0ef47",
+      "path": "/screenshots/germany-T06-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 94782,
+      "sha256": "ebef696034260f099e7fff7c6be2a9825550c92bf67c2d28d608de3b0bd0ef47",
+      "path": "/screenshots/germany-T06-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "germany-T07": {
+    "url": "https://www.salesforce.com/de/service/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:01:58.598Z",
+    "sideA": {
+      "bytes": 126474,
+      "sha256": "ae37adc696eaadac1984b0c3f9a89db1a46f9a7f59bbf6062dde9a65cd94418d",
+      "path": "/screenshots/germany-T07-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 126474,
+      "sha256": "ae37adc696eaadac1984b0c3f9a89db1a46f9a7f59bbf6062dde9a65cd94418d",
+      "path": "/screenshots/germany-T07-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
+  },
+  "germany-T08": {
+    "url": "https://www.salesforce.com/de/company/our-story/",
+    "status": 200,
+    "capturedAt": "2026-11-13T05:02:00.988Z",
+    "sideA": {
+      "bytes": 110121,
+      "sha256": "a374145eccca280b8463e5febbed74f2b00661fa7db77a36f06ee1e1c24fbd5e",
+      "path": "/screenshots/germany-T08-sideA.jpg"
+    },
+    "sideB": {
+      "bytes": 110121,
+      "sha256": "a374145eccca280b8463e5febbed74f2b00661fa7db77a36f06ee1e1c24fbd5e",
+      "path": "/screenshots/germany-T08-sideB.jpg"
+    },
+    "pixelDiffPercent": 0,
+    "changedPixels": 0,
+    "totalPixels": 60800,
+    "changedBox": null,
+    "zones": {
+      "headerPct": 0,
+      "heroCenterPct": 0,
+      "rightPanelPct": 0,
+      "lowerBodyPct": 0,
+      "footerPct": 0,
+      "meanLumDiff": 0
+    }
   }
 }

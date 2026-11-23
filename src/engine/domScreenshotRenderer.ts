@@ -1521,13 +1521,9 @@ export function renderLiveDomScreenshotDataUri(options: DomScreenshotOptions): s
 /**
  * Resolves the real 1280x760 headless Chromium JPEG screenshot URL (`/screenshots/<prop>-<testId>-side<A|B>.jpg`)
  * captured from the live salesforce.com property and served from S3 / CloudFront (`/portal-ui/screenshots/*`).
- * When the unified check observed an HTTP error status (>= 400, e.g. 403 Forbidden), returns the
- * status-matched HTTP error screen so a 403 check never displays a disjoint 200 OK screenshot.
+ * Never returns dummy or synthetic SVG mock images.
  */
 export function resolveLiveScreenshotUrl(options: DomScreenshotOptions): string {
-  if (typeof options.httpStatus === 'number' && options.httpStatus >= 400) {
-    return renderHttpErrorScreenshotDataUri(options);
-  }
   const {
     appId,
     testId = 'T01',
@@ -1545,12 +1541,9 @@ export function resolveLiveScreenshotUrl(options: DomScreenshotOptions): string 
 
 /**
  * Resolves the API-backed screenshot proxy endpoint (`/api/v1/screenshots/<prop>-<testId>-side<A|B>.jpg`)
- * which searches S3 portal-ui/ and runs/ prefixes cleanly and returns a live DOM capture if S3 JPEG is not yet written.
+ * which serves real captured JPEG screenshots from S3 or local disk (or auto-captures via headless Chromium on demand).
  */
 export function resolveApiScreenshotUrl(options: DomScreenshotOptions): string {
-  if (typeof options.httpStatus === 'number' && options.httpStatus >= 400) {
-    return renderHttpErrorScreenshotDataUri(options);
-  }
   const {
     appId,
     testId = 'T01',
@@ -1564,4 +1557,80 @@ export function resolveApiScreenshotUrl(options: DomScreenshotOptions): string {
 
   const revSuffix = revision ? `&r=${encodeURIComponent(String(revision))}` : '';
   return `/api/v1/screenshots/${propId}-${idUpper}-${effectiveSide}.jpg?v=live5${revSuffix}`;
+}
+
+/**
+ * Normalizes any `/screenshots/*` or non-live `/api/v1/screenshots/*` URL into a clean,
+ * CloudFront-edge-cacheable `/screenshots/<file>?v=live5[&r=<rev>]` URL by stripping
+ * extraneous query parameters (`url=`, `retry=`) that would otherwise fragment CDN & browser caches.
+ */
+export function normalizeEdgeScreenshotUrl(rawUrl: string): string {
+  if (!rawUrl || rawUrl.startsWith('data:')) return rawUrl;
+  const isApiShot = rawUrl.startsWith('/api/v1/screenshots/');
+  const isEdgeShot = rawUrl.startsWith('/screenshots/');
+  if (!isApiShot && !isEdgeShot) return rawUrl;
+
+  const [pathPart, queryPart = ''] = rawUrl.split('?');
+  const params = new URLSearchParams(queryPart);
+  if (isApiShot && (params.get('live') === '1' || params.get('refresh') === '1')) {
+    return rawUrl;
+  }
+  const cleanPath = isApiShot
+    ? `/screenshots/${pathPart.slice('/api/v1/screenshots/'.length)}`
+    : pathPart;
+  const kept = new URLSearchParams();
+  kept.set('v', params.get('v') || 'live5');
+  const rev = params.get('r');
+  if (rev) kept.set('r', rev);
+  return `${cleanPath}?${kept.toString()}`;
+}
+
+/**
+ * Converts a CloudFront S3 edge screenshot URL (`/screenshots/<file>`) into the API Gateway /
+ * Lambda on-demand live Chromium capture endpoint (`/api/v1/screenshots/<file>?live=1&url=...`)
+ * for seamless fallback when a brand-new check (e.g. T09) has not been synced to S3 yet.
+ */
+export function buildScreenshotFallbackUrl(
+  rawUrl: string,
+  options: { targetUrl?: string; nonce?: number } = {}
+): string {
+  if (!rawUrl || rawUrl.startsWith('data:')) return rawUrl;
+  const [pathPart, queryPart = ''] = rawUrl.split('?');
+  const apiPath = pathPart.startsWith('/screenshots/')
+    ? `/api/v1/screenshots/${pathPart.slice('/screenshots/'.length)}`
+    : pathPart;
+  const params = new URLSearchParams(queryPart);
+  if (!params.has('v')) params.set('v', 'live5');
+  params.set('live', '1');
+  if (options.targetUrl) {
+    params.set('url', options.targetUrl);
+  }
+  if (options.nonce) {
+    params.set('retry', String(options.nonce));
+  }
+  return `${apiPath}?${params.toString()}`;
+}
+
+const preloadedScreenshotUrlSet = new Set<string>();
+
+/**
+ * Eagerly warms the browser's CORS image cache (`crossOrigin = 'anonymous'`) for a batch of
+ * CloudFront edge screenshot URLs so switching checks or opening Visual AI renders in 0ms.
+ */
+export function preloadScreenshotUrls(urls: string[]): void {
+  if (typeof window === 'undefined' || typeof Image === 'undefined') return;
+  for (const raw of urls) {
+    if (!raw || raw.startsWith('data:')) continue;
+    const edgeUrl = normalizeEdgeScreenshotUrl(raw);
+    if (!edgeUrl || preloadedScreenshotUrlSet.has(edgeUrl)) continue;
+    preloadedScreenshotUrlSet.add(edgeUrl);
+    if (preloadedScreenshotUrlSet.size > 400) {
+      const first = preloadedScreenshotUrlSet.values().next().value;
+      if (first) preloadedScreenshotUrlSet.delete(first);
+    }
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.decoding = 'async';
+    img.src = edgeUrl;
+  }
 }

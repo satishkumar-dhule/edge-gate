@@ -79,10 +79,31 @@ export const VIEW_CHORD_MAP: Record<string, ShortcutViewMode> = {
   s: 'suites',
   r: 'run',
   m: 'mcp',
-  v: 'terminal',
   ',': 'settings',
   '?': 'about',
 };
+
+export const SECRET_CODE_EDITOR_SHORTCUT_LABEL = 'Ctrl+Shift+Alt+E';
+
+/**
+ * Pure matcher for the hidden Code Editor unlock/toggle shortcut:
+ * Ctrl+Shift+Alt+E (Windows/Linux) or Cmd+Shift+Alt+E (macOS).
+ * Checks both physical `code === 'KeyE'` and `key.toLowerCase() === 'e'`
+ * so macOS Option dead-key layouts still trigger reliably.
+ */
+export function isSecretCodeEditorShortcut(
+  event: Pick<
+    ShortcutKeyEventLike,
+    'key' | 'code' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'repeat' | 'defaultPrevented'
+  >
+): boolean {
+  if (!event || event.repeat || event.defaultPrevented) return false;
+  const hasPrimaryMod = Boolean(event.ctrlKey || event.metaKey);
+  if (!hasPrimaryMod || !event.shiftKey || !event.altKey) return false;
+  const code = event.code || '';
+  const key = (event.key || '').toLowerCase();
+  return code === 'KeyE' || key === 'e';
+}
 
 export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   {
@@ -175,14 +196,6 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     category: 'Navigation Chords (G then Key)',
     label: 'Cloud & MCP',
     description: 'Open Terraform IaC, AWS Lambda & MCP JSON-RPC controls',
-  },
-  {
-    id: 'nav-vscode',
-    keys: ['G', 'V'],
-    chordPrefix: 'g',
-    category: 'Navigation Chords (G then Key)',
-    label: 'VS Code IDE',
-    description: 'Open embedded Monaco Editor & integrated Compute Shell',
   },
   {
     id: 'nav-settings',

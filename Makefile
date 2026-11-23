@@ -15,7 +15,10 @@ SHELL := /bin/bash
 AWS_REGION ?= us-east-1
 TF_DIR := infra/terraform
 S3_BUCKET ?= salesforce-akamai-synthetics-030771555103-us-east-1
-CF_DIST_ID ?= $(shell cd $(TF_DIR) && /tmp/bin/terraform output -raw cloudfront_distribution_id 2>/dev/null || echo "")
+TERRAFORM := $(shell test -x /tmp/bin/terraform && echo "/tmp/bin/terraform" || (command -v terraform >/dev/null 2>&1 && echo "terraform" || echo "/tmp/bin/terraform"))
+PKG_MGR := $(shell command -v pnpm >/dev/null 2>&1 && echo "pnpm" || echo "npm")
+TSX := $(shell command -v pnpm >/dev/null 2>&1 && echo "pnpm exec tsx" || (test -x ./node_modules/.bin/tsx && echo "./node_modules/.bin/tsx" || echo "npx --yes tsx"))
+CF_DIST_ID ?= $(shell cd $(TF_DIR) && $(TERRAFORM) output -raw cloudfront_distribution_id 2>/dev/null || echo "")
 API_URL ?= http://localhost:3000
 TARGET ?= www.prod.staging
 CANDIDATE ?= www.prod.staging
@@ -30,7 +33,7 @@ BY ?= user-wbbmbfobdqdu@salesforce.com
         run-adhoc compare api-health \
         user-list user-add user-reset-password user-disable user-enable user-delete user-auth user-stats user-audit
 
-# Default `make` target: runs full pnpm install + test + lint + build + terraform apply + S3 SPA sync + CloudFront URL summary
+# Default `make` target: runs full install + test + lint + build + terraform apply + S3 SPA sync + CloudFront URL summary
 all: deploy-all
 
 deploy: deploy-all
@@ -38,31 +41,31 @@ deploy: deploy-all
 deply: deploy-all
 
 deploy-all:
-	pnpm exec tsx scripts/deploy-aws-portal.ts deploy-all
+	$(TSX) scripts/deploy-aws-portal.ts deploy-all
 
 zero-token-cycle:
-	pnpm exec tsx scripts/zero-token-cycle.ts
+	$(TSX) scripts/zero-token-cycle.ts
 
 zero-token-watch:
-	pnpm exec tsx scripts/zero-token-cycle.ts --watch
+	$(TSX) scripts/zero-token-cycle.ts --watch
 
 help:
 	@echo "=========================================================================================="
 	@echo " Salesforce Edge & AWS Synthetics Release Gate — Make CLI Targets"
 	@echo "=========================================================================================="
 	@echo ""
-	@echo " [0] ONE-COMMAND FULL PIPELINE (PNPM + BUILD + TERRAFORM APPLY + S3 SYNC + CLOUDFRONT URL)"
-	@echo "   make                         Run full pipeline: pnpm test + lint + build + tf-apply + sync-ui + print URL"
-	@echo "   make all                     Alias for full end-to-end pnpm + terraform apply + S3 sync deployment"
-	@echo "   make deploy                  Alias for full end-to-end pnpm + terraform apply + S3 sync deployment"
+	@echo " [0] ONE-COMMAND FULL PIPELINE (BUILD + TERRAFORM APPLY + S3 SYNC + CLOUDFRONT URL)"
+	@echo "   make                         Run full pipeline: test + lint + build + tf-apply + sync-ui + print URL"
+	@echo "   make all                     Alias for full end-to-end build + terraform apply + S3 sync deployment"
+	@echo "   make deploy                  Alias for full end-to-end build + terraform apply + S3 sync deployment"
 	@echo "   make deply                   Alias for make deploy (syncs SPA to S3 & prints CloudFront URL)"
 	@echo ""
 	@echo " [1] BUILD, TDD & VERIFICATION"
-	@echo "   make install                 Install pnpm dependencies"
+	@echo "   make install                 Install dependencies ($(PKG_MGR))"
 	@echo "   make dev                     Start local Express + Vite + MCP server on port 3000"
 	@echo "   make build                   Build production SPA bundle into dist/ and verify index.html + assets"
 	@echo "   make verify-bundle           Verify compiled dist/ SPA bundle integrity & S3 MIME mappings"
-	@echo "   make test                    Run all unit tests (src/engine/rules.test.ts)"
+	@echo "   make test                    Run all unit tests"
 	@echo "   make lint                    Run TypeScript strict type-checking (tsc --noEmit)"
 	@echo "   make verify                  Run test + lint + build + Lambda/Canary syntax checks"
 	@echo ""
@@ -96,22 +99,22 @@ help:
 # 1. BUILD, TDD & VERIFICATION
 # ----------------------------------------------------------------------------
 install:
-	pnpm install
+	$(PKG_MGR) install
 
 dev:
-	pnpm run dev
+	$(PKG_MGR) run dev
 
 build:
-	pnpm exec tsx scripts/deploy-aws-portal.ts build
+	$(TSX) scripts/deploy-aws-portal.ts build
 
 verify-bundle:
-	pnpm exec tsx scripts/deploy-aws-portal.ts verify-bundle
+	$(TSX) scripts/deploy-aws-portal.ts verify-bundle
 
 test:
-	pnpm exec tsx --test src/engine/rules.test.ts
+	$(PKG_MGR) test
 
 lint:
-	pnpm run lint
+	$(PKG_MGR) run lint
 
 verify: test lint build
 	node --check aws-synthetics/canary-har-runner.js
@@ -125,31 +128,31 @@ verify: test lint build
 # 2. AWS TERRAFORM & CLOUDFRONT + SCALE-TO-ZERO LAMBDA DEPLOYMENT
 # ----------------------------------------------------------------------------
 tf-init:
-	pnpm exec tsx scripts/deploy-aws-portal.ts tf-init
+	$(TSX) scripts/deploy-aws-portal.ts tf-init
 
 tf-validate:
-	pnpm exec tsx scripts/deploy-aws-portal.ts tf-validate
+	$(TSX) scripts/deploy-aws-portal.ts tf-validate
 
 tf-plan:
-	pnpm exec tsx scripts/deploy-aws-portal.ts tf-plan
+	$(TSX) scripts/deploy-aws-portal.ts tf-plan
 
 tf-apply:
-	pnpm exec tsx scripts/deploy-aws-portal.ts tf-apply
+	$(TSX) scripts/deploy-aws-portal.ts tf-apply
 
 tf-destroy:
-	cd $(TF_DIR) && terraform destroy -auto-approve
+	cd $(TF_DIR) && $(TERRAFORM) destroy -auto-approve
 
 sync-ui:
-	pnpm exec tsx scripts/deploy-aws-portal.ts sync-ui
+	$(TSX) scripts/deploy-aws-portal.ts sync-ui
 
 sync-chromium:
-	pnpm exec tsx scripts/deploy-aws-portal.ts sync-chromium
+	$(TSX) scripts/deploy-aws-portal.ts sync-chromium
 
 invalidate-cloudfront:
-	pnpm exec tsx scripts/deploy-aws-portal.ts invalidate-cloudfront
+	$(TSX) scripts/deploy-aws-portal.ts invalidate-cloudfront
 
 test-e2e:
-	pnpm exec tsx scripts/verify-cloudfront-e2e.ts
+	$(TSX) scripts/verify-cloudfront-e2e.ts
 
 verify-cloudfront: test-e2e
 
@@ -162,22 +165,22 @@ deploy-cloudfront: deploy-all
 # 3. AD-HOC SYNTHETIC EXECUTION & 3-DIM RELEASE GATE (CLI)
 # ----------------------------------------------------------------------------
 run-adhoc:
-	pnpm exec tsx scripts/user-admin-cli.ts run-adhoc --target="$(TARGET)" --by="$(BY)"
+	$(TSX) scripts/user-admin-cli.ts run-adhoc --target="$(TARGET)" --by="$(BY)"
 
 compare:
-	pnpm exec tsx scripts/user-admin-cli.ts compare --candidate="$(CANDIDATE)" --baseline="$(BASELINE)" --by="$(BY)"
+	$(TSX) scripts/user-admin-cli.ts compare --candidate="$(CANDIDATE)" --baseline="$(BASELINE)" --by="$(BY)"
 
 api-health:
-	curl -sS "$(API_URL)/api/v1/health" | pnpm exec tsx -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.stringify(JSON.parse(d),null,2)))"
+	curl -sS "$(API_URL)/api/v1/health" | $(TSX) -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.stringify(JSON.parse(d),null,2)))"
 
 # ----------------------------------------------------------------------------
 # 4. USER ADMINISTRATION, PASSWORD RESET & TRACKING STATS (CLI-ONLY, NO UI)
 # ----------------------------------------------------------------------------
 user-list:
-	pnpm exec tsx scripts/user-admin-cli.ts list
+	$(TSX) scripts/user-admin-cli.ts list
 
 user-add:
-	pnpm exec tsx scripts/user-admin-cli.ts add \
+	$(TSX) scripts/user-admin-cli.ts add \
 		--email="$(EMAIL)" \
 		--password="$(PASSWORD)" \
 		--name="$(NAME)" \
@@ -186,25 +189,25 @@ user-add:
 		--by="$(BY)"
 
 user-reset-password:
-	pnpm exec tsx scripts/user-admin-cli.ts reset-password \
+	$(TSX) scripts/user-admin-cli.ts reset-password \
 		--email="$(EMAIL)" \
 		--new-password="$(NEW_PASSWORD)$(PASSWORD)" \
 		--by="$(BY)"
 
 user-disable:
-	pnpm exec tsx scripts/user-admin-cli.ts status --email="$(EMAIL)" --status="disabled" --by="$(BY)"
+	$(TSX) scripts/user-admin-cli.ts status --email="$(EMAIL)" --status="disabled" --by="$(BY)"
 
 user-enable:
-	pnpm exec tsx scripts/user-admin-cli.ts status --email="$(EMAIL)" --status="active" --by="$(BY)"
+	$(TSX) scripts/user-admin-cli.ts status --email="$(EMAIL)" --status="active" --by="$(BY)"
 
 user-delete:
-	pnpm exec tsx scripts/user-admin-cli.ts delete --email="$(EMAIL)" --by="$(BY)"
+	$(TSX) scripts/user-admin-cli.ts delete --email="$(EMAIL)" --by="$(BY)"
 
 user-auth:
-	pnpm exec tsx scripts/user-admin-cli.ts auth --email="$(EMAIL)" --password="$(PASSWORD)"
+	$(TSX) scripts/user-admin-cli.ts auth --email="$(EMAIL)" --password="$(PASSWORD)"
 
 user-stats:
-	pnpm exec tsx scripts/user-admin-cli.ts stats --email="$(EMAIL)"
+	$(TSX) scripts/user-admin-cli.ts stats --email="$(EMAIL)"
 
 user-audit:
-	pnpm exec tsx scripts/user-admin-cli.ts audit --email="$(EMAIL)"
+	$(TSX) scripts/user-admin-cli.ts audit --email="$(EMAIL)"
