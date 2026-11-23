@@ -872,25 +872,26 @@ test('Salesforce.com HTTP Flow tracking captures multi-hop redirects, DNS/TCP/TL
     'https://www.salesforce.com/crm/'
   );
 
-  // Verify workspace .env does NOT contain default/hardcoded credentials
+  // Verify committed .env.example template does NOT contain hardcoded/default credentials
+  // (Local gitignored .env may hold the operator's own live AWS credentials during `make deploy`)
   const fsMod = await import('node:fs');
   const osMod = await import('node:os');
   const pathMod = await import('node:path');
-  const dotEnvPath = pathMod.resolve(process.cwd(), '.env');
-  const rawDotEnv = fsMod.existsSync(dotEnvPath)
-    ? fsMod.readFileSync(dotEnvPath, 'utf8')
+  const dotEnvExamplePath = pathMod.resolve(process.cwd(), '.env.example');
+  const rawDotEnvExample = fsMod.existsSync(dotEnvExamplePath)
+    ? fsMod.readFileSync(dotEnvExamplePath, 'utf8')
     : '';
   assert.ok(
-    !/AKIA[0-9A-Z]{16}/.test(rawDotEnv),
-    '.env must not contain hardcoded AWS Access Key IDs'
+    !/AKIA[0-9A-Z]{16}/.test(rawDotEnvExample),
+    '.env.example must not contain hardcoded AWS Access Key IDs'
   );
   assert.ok(
-    !/^[ \t]*(Password|AWS Secret Key)[ \t]*:[ \t]*\S+/im.test(rawDotEnv),
-    '.env must not contain hardcoded default passwords or AWS secret keys'
+    !/^[ \t]*(Password|AWS Secret Key)[ \t]*:[ \t]*\S+/im.test(rawDotEnvExample),
+    '.env.example must not contain hardcoded default passwords or AWS secret keys'
   );
   assert.ok(
-    !/^[ \t]*(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)[ \t]*=[ \t]*\S+/m.test(rawDotEnv),
-    '.env must not contain default AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY values'
+    !/^[ \t]*(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)[ \t]*=[ \t]*\S+/m.test(rawDotEnvExample),
+    '.env.example must not contain default AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY values'
   );
 
   const savedEnv = {
@@ -906,13 +907,28 @@ test('Salesforce.com HTTP Flow tracking captures multi-hop redirects, DNS/TCP/TL
     delete process.env.AWS_ACCOUNT_ID;
     delete process.env.AWS_OPERATOR_USERNAME;
 
-    const defaultCreds = loadDotEnvCredentials(dotEnvPath);
+    // Empty .env must never fall back to hardcoded default credentials
+    const emptyEnvPath = pathMod.join(tmpDir, '.env.empty');
+    fsMod.writeFileSync(
+      emptyEnvPath,
+      [
+        'AWS_REGION=us-east-1',
+        'AWS_ACCESS_KEY_ID=',
+        'AWS_SECRET_ACCESS_KEY=',
+        'AWS_ACCOUNT_ID=',
+        'AWS_OPERATOR_USERNAME=',
+      ].join('\n'),
+      'utf8'
+    );
+    const defaultCreds = loadDotEnvCredentials(emptyEnvPath);
     assert.equal(defaultCreds.loaded, false);
     assert.equal(defaultCreds.hasAccessKey, false);
     assert.equal(defaultCreds.hasSecretKey, false);
+    assert.equal(defaultCreds.accountId, '');
+    assert.equal(defaultCreds.operatorUsername, '');
     assert.equal(defaultCreds.maskedAccessKey, 'not-configured');
 
-    // Verify parser still parses explicit credentials cleanly without exposing raw secrets
+    // Verify parser still parses operator-supplied credentials cleanly without exposing raw secrets
     const tmpEnvPath = pathMod.join(tmpDir, '.env');
     fsMod.writeFileSync(
       tmpEnvPath,
