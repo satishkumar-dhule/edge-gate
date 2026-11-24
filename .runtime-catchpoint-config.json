@@ -2466,5 +2466,30 @@
       "order": 4
     }
   ],
-  "updatedAt": "2026-11-16T13:16:07.867Z"
+  "policies": {
+    "acceptedRules": [
+      {
+        "id": "rule-init-1",
+        "appId": "www",
+        "comparisonId": "all",
+        "kind": "x-akamai-request-id",
+        "enabled": true,
+        "by": "user-tcchhlxprfng@salesforce.com",
+        "at": "2026-11-06T12:00:00Z",
+        "note": "Unique per-edge-request trace ID"
+      }
+    ],
+    "acceptedCookies": [
+      "_abck",
+      "bm_sz",
+      "ak_bmsc",
+      "ew_renderer_id",
+      "akacd_smb_overview_split",
+      "edge_region"
+    ],
+    "acceptedVisualTests": [],
+    "acceptedVisualParams": {},
+    "ignoreAcceptedDiffs": true
+  },
+  "updatedAt": "2026-11-24T04:27:16.801Z"
 }

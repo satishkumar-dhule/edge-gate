@@ -9,3 +9,5 @@ pnpm-debug.log*
 !.env.example
 .cache/
 aws-lambda/.dist/
+.runtime-mcp-auth.json
+

@@ -28,6 +28,7 @@ export interface DevStudioViewProps {
   ) => void;
   onSaveProperty: (app: AppConfig) => void;
   onSaveSuite: (appId: string, suite: TestCaseDefinition[]) => void;
+  onConfigMutated?: () => void;
 }
 
 export const DevStudioView: React.FC<DevStudioViewProps> = ({
@@ -46,6 +47,7 @@ export const DevStudioView: React.FC<DevStudioViewProps> = ({
   onInspectPropertyInWorkbench,
   onSaveProperty,
   onSaveSuite,
+  onConfigMutated,
 }) => {
   const [mode, setMode] = useState<DevStudioMode>(
     codeEditorUnlocked ? initialMode : 'mcp'
@@ -145,6 +147,7 @@ export const DevStudioView: React.FC<DevStudioViewProps> = ({
           propertySummaries={propertySummaries}
           onOpenWorkbench={onOpenWorkbench}
           onInspectPropertyInWorkbench={onInspectPropertyInWorkbench}
+          onConfigMutated={onConfigMutated}
         />
       ) : (
         <div className="flex-1 min-w-0">

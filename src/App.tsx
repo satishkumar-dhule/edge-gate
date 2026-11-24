@@ -318,6 +318,67 @@ export default function App() {
     };
   }, [customTopologyEdited]);
 
+  const refreshWorkspaceFromServer = useCallback(() => {
+    fetch('/api/v1/config')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data) return;
+        const serverConfig = data.config as TemplateConfig | undefined;
+        const serverSuites = data.suitesByAppId as
+          | Record<string, TestCaseDefinition[]>
+          | undefined;
+        if (serverConfig?.properties?.length) {
+          setApps(serverConfig.properties);
+        }
+        if (serverSuites && Object.keys(serverSuites).length > 0) {
+          setSuitesByAppId(serverSuites);
+        }
+        const serverPolicies = data.policies as
+          | {
+              acceptedRules?: AcceptedRule[];
+              acceptedCookies?: string[];
+              acceptedVisualTests?: string[];
+              acceptedVisualParams?: Record<string, string[]>;
+              ignoreAcceptedDiffs?: boolean;
+            }
+          | undefined;
+        if (serverPolicies) {
+          if (Array.isArray(serverPolicies.acceptedRules)) {
+            setAcceptedRules(serverPolicies.acceptedRules);
+          }
+          if (Array.isArray(serverPolicies.acceptedCookies)) {
+            setAcceptedCookies(serverPolicies.acceptedCookies);
+          }
+          if (Array.isArray(serverPolicies.acceptedVisualTests)) {
+            setAcceptedVisualTests(serverPolicies.acceptedVisualTests);
+          }
+          if (
+            serverPolicies.acceptedVisualParams &&
+            typeof serverPolicies.acceptedVisualParams === 'object'
+          ) {
+            setAcceptedVisualParams(serverPolicies.acceptedVisualParams);
+          }
+          if (typeof serverPolicies.ignoreAcceptedDiffs === 'boolean') {
+            setIgnoreAcceptedDiffs(serverPolicies.ignoreAcceptedDiffs);
+          }
+        }
+      })
+      .catch(() => undefined);
+
+    fetch('/api/v1/runs')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data || !Array.isArray(data.runs)) return;
+        const freshServerRuns = (data.runs as RunRecord[]).filter(
+          (r) => !isDummySeededRun(r)
+        );
+        if (freshServerRuns.length > 0) {
+          setRuns(freshServerRuns);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
   const activeProp = useMemo(
     () => apps.find((a) => a.id === activeAppId) || apps[0],
     [apps, activeAppId]
@@ -2367,6 +2428,7 @@ export default function App() {
             }}
             onSaveProperty={handleSaveProperty}
             onSaveSuite={handleSaveSuiteForApp}
+            onConfigMutated={refreshWorkspaceFromServer}
           />
         </main>
       )}

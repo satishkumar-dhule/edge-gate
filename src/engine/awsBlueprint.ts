@@ -260,7 +260,7 @@ export function getOpenApiEndpointCatalog(
       tag: 'MCP JSON-RPC',
       summary: 'Execute MCP 2025-03-26 JSON-RPC 2.0 Server Request',
       description:
-        'Primary Model Context Protocol (2025-03-26) endpoint supporting `initialize`, `tools/list`, `tools/call` (`get_fleet_status`, `get_property_gate`, `inspect_check_evidence`, `get_curl_reproduction`, `rerun_check`, `run_live_gate`, `evaluate_visual_diff_nova_lite`, `run_gate_plugin_pipeline`, `manage_test_suite`), `resources/read`, and `prompts/get`.',
+        'Primary Model Context Protocol (2025-03-26) endpoint supporting `initialize`, `tools/list`, `tools/call` (`list_akamai_properties`, `manage_property`, `manage_environment`, `manage_test_suite`, `manage_test_folders`, `manage_gate_policies`, `get_fleet_status`, `get_property_gate`, `compare_targets`, `inspect_check_evidence`, `get_curl_reproduction`, `rerun_check`, `run_live_gate`, `manage_runs`, `manage_synthetics_canaries`, `evaluate_visual_diff_nova_lite`, `run_gate_plugin_pipeline`), `resources/read`, and `prompts/get`.',
       sampleBody: {
         jsonrpc: '2.0',
         id: 101,

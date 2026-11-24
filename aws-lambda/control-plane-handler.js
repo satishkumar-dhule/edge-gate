@@ -3417,24 +3417,999 @@ exports.handler = async (event) => {
     }
   }
 
-  // 7. MCP JSON-RPC 2.0 Endpoint (/api/v1/mcp/rpc)
-  if (rawPath === '/api/v1/mcp/rpc' && method === 'POST') {
-    const rpcId = body.id ?? 1;
-    const toolName =
-      body?.params?.name || body?.tool || 'list_akamai_properties';
-    await recordDdbUserAudit(operatorEmail, 'mcp_rpc_call', toolName);
+  // 7. MCP 2025-03-26 JSON-RPC 2.0 Endpoint (/api/v1/mcp/rpc, /api/v1/mcp/manifest, /.well-known/mcp.json)
+  const LAMBDA_MCP_TOOLS = [
+    { name: 'list_akamai_properties', title: 'List Akamai Properties & HostMaps', readOnlyHint: true },
+    { name: 'manage_property', title: 'Manage Properties (CRUD & Clone)', readOnlyHint: false },
+    { name: 'manage_environment', title: 'Manage Environments & HostMaps', readOnlyHint: false },
+    { name: 'manage_test_suite', title: 'Manage Tests & Suite Manipulations', readOnlyHint: false },
+    { name: 'manage_test_folders', title: 'Manage Test Suite Folders', readOnlyHint: false },
+    { name: 'manage_gate_policies', title: 'Manage Gate Policies & Waivers', readOnlyHint: false },
+    { name: 'get_fleet_status', title: 'Get Fleet Release Readiness', readOnlyHint: true },
+    { name: 'get_property_gate', title: 'Evaluate 3-Dim Property Gate', readOnlyHint: true },
+    { name: 'compare_targets', title: 'Compare Any Two Targets or Runs', readOnlyHint: true },
+    { name: 'evaluate_visual_diff_nova_lite', title: 'Cost-Gated Nova Lite Visual Judge', readOnlyHint: true },
+    { name: 'run_gate_plugin_pipeline', title: 'Run Modular Gate Plugin Pipeline', readOnlyHint: true },
+    { name: 'inspect_check_evidence', title: 'Inspect Check Diff & HTTP Trace', readOnlyHint: true },
+    { name: 'get_curl_reproduction', title: 'Generate Zero-Secret Edge cURL', readOnlyHint: true },
+    { name: 'rerun_check', title: 'Re-probe Live Edge Check', readOnlyHint: false },
+    { name: 'run_live_gate', title: 'Trigger Full Property Gate Run', readOnlyHint: false },
+    { name: 'manage_runs', title: 'Manage Synthetic Runs & Baselines', readOnlyHint: false },
+    { name: 'manage_synthetics_canaries', title: 'AWS Synthetics Canaries & Fan-Out', readOnlyHint: false },
+  ];
+
+  const persistLambdaRuntimeConfig = async (nextCfg) => {
+    cachedRuntimeConfig = nextCfg;
+    try {
+      await ddb.send(
+        new PutItemCommand({
+          TableName: DYNAMODB_TABLE,
+          Item: {
+            target: { S: '__RUNTIME_CONFIG__' },
+            runKey: { S: 'latest' },
+            appId: { S: '__CONFIG__' },
+            startTime: { S: new Date().toISOString() },
+            payloadJson: { S: JSON.stringify(nextCfg) },
+          },
+        })
+      );
+    } catch {
+      // Non-fatal if DynamoDB write fails
+    }
+    if (S3_BUCKET && process.env.PORTAL_CONFIG_S3_KEY) {
+      try {
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: S3_BUCKET,
+            Key: process.env.PORTAL_CONFIG_S3_KEY,
+            ContentType: 'application/json',
+            Body: JSON.stringify(nextCfg, null, 2),
+          })
+        );
+      } catch {
+        // Non-fatal S3 mirror
+      }
+    }
+  };
+
+  const LAMBDA_MCP_SCOPES = [
+    { scope: 'mcp:read', label: 'Read & Inspect', description: 'Read properties, envs, suites, policies, verdicts, evidence, and resources.', tools: ['list_akamai_properties', 'get_fleet_status', 'get_property_gate', 'compare_targets', 'inspect_check_evidence', 'get_curl_reproduction'] },
+    { scope: 'mcp:write:env', label: 'Write Envs & Properties', description: 'Create, update, clone, reorder, and delete properties, environments, hostMaps, and edge IPs.', tools: ['manage_property', 'manage_environment'] },
+    { scope: 'mcp:write:tests', label: 'Write Tests & Folders', description: 'Upsert, patch, clone, toggle, reorder, bulk-edit, and delete synthetic checks and folders.', tools: ['manage_test_suite', 'manage_test_folders'] },
+    { scope: 'mcp:write:policies', label: 'Write Gate Policies', description: 'Manage accepted header rules, cookie waivers, visual waivers, and waiver toggles.', tools: ['manage_gate_policies'] },
+    { scope: 'mcp:exec', label: 'Live Execution & Canaries', description: 'Trigger live edge probes, full property gates, run pinning/purging, and AWS Synthetics canaries.', tools: ['rerun_check', 'run_live_gate', 'manage_runs', 'manage_synthetics_canaries'] },
+    { scope: 'mcp:admin', label: 'Full Admin (*)', description: 'Unrestricted access to all MCP tools, mutations, live executions, and resources.', tools: ['*'] },
+  ];
+  const VALID_LAMBDA_SCOPES = new Set(LAMBDA_MCP_SCOPES.map((s) => s.scope));
+
+  const loadLambdaMcpAuth = async () => {
+    const fallback = {
+      policy: {
+        enforceAuth: false,
+        requireAuthForReads: false,
+        allowSameOriginStudio: true,
+        defaultRateLimitRpm: 120,
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'system',
+      },
+      tokens: [],
+      auditLog: [],
+    };
+    try {
+      const resp = await ddb.send(
+        new GetItemCommand({
+          TableName: DYNAMODB_TABLE,
+          Key: { target: { S: '__MCP_AUTH__' }, runKey: { S: 'latest' } },
+        })
+      );
+      if (resp?.Item?.payloadJson?.S) {
+        const parsed = JSON.parse(resp.Item.payloadJson.S);
+        return {
+          policy: { ...fallback.policy, ...(parsed.policy || {}) },
+          tokens: Array.isArray(parsed.tokens) ? parsed.tokens : [],
+          auditLog: Array.isArray(parsed.auditLog) ? parsed.auditLog.slice(0, 250) : [],
+        };
+      }
+    } catch {
+      // Non-fatal fallback
+    }
+    return fallback;
+  };
+
+  const persistLambdaMcpAuth = async (nextAuth) => {
+    try {
+      await ddb.send(
+        new PutItemCommand({
+          TableName: DYNAMODB_TABLE,
+          Item: {
+            target: { S: '__MCP_AUTH__' },
+            runKey: { S: 'latest' },
+            appId: { S: '__MCP_AUTH__' },
+            startTime: { S: new Date().toISOString() },
+            payloadJson: { S: JSON.stringify(nextAuth) },
+          },
+        })
+      );
+    } catch {
+      // Non-fatal
+    }
+  };
+
+  const hashLambdaToken = (raw) => crypto.createHash('sha256').update(String(raw), 'utf8').digest('hex');
+  const eqHashTimingSafe = (a, b) => {
+    if (!a || !b || a.length !== b.length) return false;
+    try {
+      const ba = Buffer.from(a, 'hex');
+      const bb = Buffer.from(b, 'hex');
+      return ba.length > 0 && ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
+    } catch {
+      return false;
+    }
+  };
+  const toLambdaPublicToken = (t) => {
+    const { tokenHash: _omit, ...rest } = t;
+    return {
+      ...rest,
+      isExpired: Boolean(t.expiresAt) && new Date(t.expiresAt).getTime() <= Date.now(),
+    };
+  };
+
+  if (rawPath === '/.well-known/oauth-protected-resource' && method === 'GET') {
+    const authState = await loadLambdaMcpAuth();
     return jsonResponse(200, {
-      jsonrpc: '2.0',
-      id: rpcId,
-      result: {
+      resource: '/api/v1/mcp/rpc',
+      bearer_methods_supported: ['header'],
+      scopes_supported: LAMBDA_MCP_SCOPES.map((s) => s.scope),
+      enforcement: {
+        enforceAuth: authState.policy.enforceAuth,
+        requireAuthForReads: authState.policy.requireAuthForReads,
+      },
+    });
+  }
+
+  if (rawPath === '/api/v1/mcp/tokens' && method === 'GET') {
+    const authState = await loadLambdaMcpAuth();
+    const tokens = authState.tokens.map(toLambdaPublicToken);
+    return jsonResponse(200, {
+      policy: authState.policy,
+      scopesCatalog: LAMBDA_MCP_SCOPES,
+      tokens,
+      summary: {
+        totalTokens: tokens.length,
+        activeTokens: tokens.filter((t) => t.status === 'active' && !t.isExpired).length,
+        revokedTokens: tokens.filter((t) => t.status === 'revoked').length,
+        totalAuditEvents: authState.auditLog.length,
+        deniedEvents: authState.auditLog.filter((e) => e.decision === 'denied').length,
+      },
+      auditLog: authState.auditLog.slice(0, 80),
+    });
+  }
+
+  if (rawPath === '/api/v1/mcp/tokens' && method === 'POST') {
+    const authState = await loadLambdaMcpAuth();
+    const name = String(body?.name || '').trim();
+    if (name.length < 2 || name.length > 80) {
+      return jsonResponse(400, { error: 'Token name must be 2–80 characters' });
+    }
+    const scopes = Array.isArray(body?.scopes) ? body.scopes.filter((s) => VALID_LAMBDA_SCOPES.has(s)) : [];
+    if (scopes.length === 0) return jsonResponse(400, { error: 'At least one valid scope is required' });
+    const allowedAppIds = Array.isArray(body?.allowedAppIds) && body.allowedAppIds.length > 0
+      ? body.allowedAppIds.map((a) => String(a).trim().toLowerCase()).filter(Boolean)
+      : ['*'];
+    const rateLimitRpm = Math.min(6000, Math.max(5, Math.round(Number(body?.rateLimitRpm || authState.policy.defaultRateLimitRpm || 120))));
+    const days = body?.expiresInDays ? Math.min(3650, Math.max(1, Math.round(Number(body.expiresInDays)))) : null;
+    const prefix = `rg_mcp_${crypto.randomBytes(4).toString('hex')}`;
+    const rawToken = `${prefix}_${crypto.randomBytes(24).toString('hex')}`;
+    const record = {
+      id: `tok_${crypto.randomBytes(6).toString('hex')}`,
+      name,
+      prefix,
+      tokenHash: hashLambdaToken(rawToken),
+      scopes,
+      allowedAppIds,
+      status: 'active',
+      rateLimitRpm,
+      createdAt: new Date().toISOString(),
+      createdBy: operatorEmail,
+      expiresAt: days ? new Date(Date.now() + days * 86400000).toISOString() : null,
+      lastUsedAt: null,
+      lastToolUsed: null,
+      usageCount: 0,
+      rotatedAt: null,
+      revokedAt: null,
+      note: body?.note ? String(body.note).trim().slice(0, 240) : '',
+    };
+    authState.tokens = [record, ...authState.tokens];
+    await persistLambdaMcpAuth(authState);
+    return jsonResponse(201, {
+      token: toLambdaPublicToken(record),
+      rawToken,
+      oneTimeNotice: 'Copy this token now. Only its SHA-256 digest is stored.',
+    });
+  }
+
+  const lambdaTokenActionMatch = rawPath.match(/^\/api\/v1\/mcp\/tokens\/([^/]+)(?:\/(rotate|revoke))?$/);
+  if (lambdaTokenActionMatch) {
+    const tokenId = decodeURIComponent(lambdaTokenActionMatch[1]);
+    const subAction = lambdaTokenActionMatch[2] || '';
+    const authState = await loadLambdaMcpAuth();
+    const idx = authState.tokens.findIndex((t) => t.id === tokenId);
+    if (idx === -1) return jsonResponse(404, { error: `MCP token "${tokenId}" not found` });
+
+    if (method === 'POST' && subAction === 'rotate') {
+      if (authState.tokens[idx].status === 'revoked') {
+        return jsonResponse(400, { error: 'Cannot rotate a revoked token' });
+      }
+      const prefix = `rg_mcp_${crypto.randomBytes(4).toString('hex')}`;
+      const rawToken = `${prefix}_${crypto.randomBytes(24).toString('hex')}`;
+      authState.tokens[idx] = {
+        ...authState.tokens[idx],
+        prefix,
+        tokenHash: hashLambdaToken(rawToken),
+        rotatedAt: new Date().toISOString(),
+      };
+      await persistLambdaMcpAuth(authState);
+      return jsonResponse(200, { token: toLambdaPublicToken(authState.tokens[idx]), rawToken });
+    }
+
+    if (method === 'POST' && subAction === 'revoke') {
+      authState.tokens[idx] = {
+        ...authState.tokens[idx],
+        status: 'revoked',
+        revokedAt: authState.tokens[idx].revokedAt || new Date().toISOString(),
+      };
+      await persistLambdaMcpAuth(authState);
+      return jsonResponse(200, { token: toLambdaPublicToken(authState.tokens[idx]) });
+    }
+
+    if (method === 'PATCH' && !subAction) {
+      const existing = authState.tokens[idx];
+      if (existing.status === 'revoked') return jsonResponse(400, { error: 'Cannot update a revoked token' });
+      authState.tokens[idx] = {
+        ...existing,
+        ...(body?.name ? { name: String(body.name).trim() } : {}),
+        ...(Array.isArray(body?.scopes) && body.scopes.length ? { scopes: body.scopes.filter((s) => VALID_LAMBDA_SCOPES.has(s)) } : {}),
+        ...(Array.isArray(body?.allowedAppIds) && body.allowedAppIds.length ? { allowedAppIds: body.allowedAppIds } : {}),
+        ...(body?.status === 'active' || body?.status === 'disabled' ? { status: body.status } : {}),
+        ...(body?.rateLimitRpm !== undefined ? { rateLimitRpm: Math.min(6000, Math.max(5, Math.round(Number(body.rateLimitRpm)))) } : {}),
+      };
+      await persistLambdaMcpAuth(authState);
+      return jsonResponse(200, { token: toLambdaPublicToken(authState.tokens[idx]) });
+    }
+
+    if (method === 'DELETE' && !subAction) {
+      authState.tokens = authState.tokens.filter((t) => t.id !== tokenId);
+      await persistLambdaMcpAuth(authState);
+      return jsonResponse(200, { deletedId: tokenId });
+    }
+  }
+
+  if (rawPath === '/api/v1/mcp/auth-policy' && method === 'PUT') {
+    const authState = await loadLambdaMcpAuth();
+    authState.policy = {
+      ...authState.policy,
+      ...(typeof body?.enforceAuth === 'boolean' ? { enforceAuth: body.enforceAuth } : {}),
+      ...(typeof body?.requireAuthForReads === 'boolean' ? { requireAuthForReads: body.requireAuthForReads } : {}),
+      ...(typeof body?.allowSameOriginStudio === 'boolean' ? { allowSameOriginStudio: body.allowSameOriginStudio } : {}),
+      ...(body?.defaultRateLimitRpm !== undefined ? { defaultRateLimitRpm: Math.min(6000, Math.max(5, Math.round(Number(body.defaultRateLimitRpm)))) } : {}),
+      updatedAt: new Date().toISOString(),
+      updatedBy: operatorEmail,
+    };
+    await persistLambdaMcpAuth(authState);
+    return jsonResponse(200, { policy: authState.policy });
+  }
+
+  if (rawPath === '/api/v1/mcp/audit' && method === 'GET') {
+    const authState = await loadLambdaMcpAuth();
+    return jsonResponse(200, {
+      total: authState.auditLog.length,
+      auditLog: authState.auditLog.slice(0, 80),
+    });
+  }
+
+  if (
+    (rawPath === '/api/v1/mcp/manifest' ||
+      rawPath === '/.well-known/mcp.json' ||
+      rawPath === '/api/v1/mcp/rpc') &&
+    method === 'GET'
+  ) {
+    const authState = await loadLambdaMcpAuth();
+    return jsonResponse(200, {
+      name: 'akamai-synthetic-release-gate',
+      version: '3.0.0',
+      protocolVersion: '2025-03-26',
+      transport: { type: 'streamable-http', endpoint: '/api/v1/mcp/rpc' },
+      auth: {
+        type: 'bearer',
+        protectedResourceMetadata: '/.well-known/oauth-protected-resource',
+        enforceAuth: authState.policy.enforceAuth,
+        scopes: LAMBDA_MCP_SCOPES.map((s) => s.scope),
+      },
+      counts: { tools: LAMBDA_MCP_TOOLS.length },
+      tools: LAMBDA_MCP_TOOLS,
+    });
+  }
+
+  if (rawPath === '/api/v1/mcp/rpc' && method === 'POST') {
+    const rpcId = body?.id !== undefined ? body.id : 1;
+    const rpcMethod = typeof body?.method === 'string' ? body.method : '';
+    const hdrs = event?.headers || {};
+    const sessionId = hdrs['mcp-session-id'] || hdrs['Mcp-Session-Id'] || crypto.randomUUID();
+    const mcpHeaders = { 'mcp-session-id': sessionId };
+
+    // Verify Bearer token & scope enforcement in Lambda
+    const authHeader = hdrs.authorization || hdrs.Authorization || '';
+    const xMcpToken = hdrs['x-mcp-token'] || hdrs['X-MCP-Token'] || '';
+    const bearerMatch = String(authHeader).trim().match(/^Bearer\s+(.+)$/i);
+    const rawBearer = (bearerMatch && bearerMatch[1].trim()) || String(xMcpToken).trim() || '';
+
+    const paramsObjPre = body?.params && typeof body.params === 'object' ? body.params : {};
+    const preToolName =
+      (typeof paramsObjPre.name === 'string' && paramsObjPre.name.trim()) ||
+      (typeof body?.tool === 'string' && body.tool.trim()) ||
+      '';
+    const preArgs =
+      paramsObjPre.arguments && typeof paramsObjPre.arguments === 'object' ? paramsObjPre.arguments : {};
+    const preAction = String(preArgs.action || '').trim().toLowerCase();
+    const isReadMethod =
+      ['initialize', 'ping', 'tools/list', 'resources/list', 'resources/templates/list', 'resources/read', 'prompts/list', 'prompts/get'].includes(rpcMethod) ||
+      rpcMethod.startsWith('notifications/') ||
+      ['list', 'get', 'export_csv', 'status', 'deep_dive'].includes(preAction) ||
+      ['list_akamai_properties', 'get_fleet_status', 'get_property_gate', 'compare_targets', 'inspect_check_evidence', 'get_curl_reproduction', 'evaluate_visual_diff_nova_lite', 'run_gate_plugin_pipeline'].includes(preToolName);
+
+    const requiredScope = isReadMethod
+      ? 'mcp:read'
+      : ['manage_property', 'manage_environment'].includes(preToolName)
+      ? 'mcp:write:env'
+      : ['manage_test_suite', 'manage_test_folders'].includes(preToolName)
+      ? 'mcp:write:tests'
+      : preToolName === 'manage_gate_policies'
+      ? 'mcp:write:policies'
+      : 'mcp:exec';
+
+    const authState = await loadLambdaMcpAuth();
+    const isStudioSameOrigin =
+      String(hdrs['x-mcp-studio-origin'] || hdrs['X-MCP-Studio-Origin'] || '') === 'same-origin';
+
+    if (rawBearer) {
+      const h = hashLambdaToken(rawBearer);
+      const matched = authState.tokens.find((t) => eqHashTimingSafe(t.tokenHash, h));
+      const expired = matched && matched.expiresAt && new Date(matched.expiresAt).getTime() <= Date.now();
+      const targetApp = typeof preArgs.appId === 'string' ? preArgs.appId.trim().toLowerCase() : undefined;
+      if (!matched || matched.status === 'revoked' || expired) {
+        return jsonResponse(401, { jsonrpc: '2.0', id: rpcId, error: { code: -32001, message: 'Invalid, revoked, or expired MCP access token' } }, { ...mcpHeaders, 'www-authenticate': 'Bearer realm="akamai-synthetic-release-gate", error="invalid_token"' });
+      }
+      if (matched.status === 'disabled') {
+        return jsonResponse(403, { jsonrpc: '2.0', id: rpcId, error: { code: -32003, message: 'MCP token is disabled' } }, mcpHeaders);
+      }
+      if (!matched.scopes.includes('mcp:admin') && !matched.scopes.includes(requiredScope)) {
+        return jsonResponse(403, { jsonrpc: '2.0', id: rpcId, error: { code: -32003, message: `Insufficient scope: requires "${requiredScope}"` } }, { ...mcpHeaders, 'www-authenticate': `Bearer error="insufficient_scope", scope="${requiredScope}"` });
+      }
+      if (targetApp && targetApp !== 'all' && !matched.allowedAppIds.includes('*') && !matched.allowedAppIds.includes(targetApp)) {
+        return jsonResponse(403, { jsonrpc: '2.0', id: rpcId, error: { code: -32003, message: `Token is not permitted to access property "${targetApp}"` } }, mcpHeaders);
+      }
+      matched.usageCount = (matched.usageCount || 0) + 1;
+      matched.lastUsedAt = new Date().toISOString();
+      matched.lastToolUsed = preToolName || rpcMethod || 'rpc';
+      authState.auditLog = [
+        {
+          id: `aud_${crypto.randomBytes(5).toString('hex')}`,
+          timestamp: new Date().toISOString(),
+          method: rpcMethod || 'tools/call',
+          toolName: preToolName || undefined,
+          action: preAction || undefined,
+          appId: targetApp,
+          requiredScope,
+          decision: 'allowed',
+          statusCode: 200,
+          tokenId: matched.id,
+          tokenName: matched.name,
+          tokenPrefix: matched.prefix,
+          authMode: 'bearer-token',
+        },
+        ...authState.auditLog,
+      ].slice(0, 250);
+      await persistLambdaMcpAuth(authState);
+    } else if (
+      authState.policy.enforceAuth &&
+      !(isStudioSameOrigin && authState.policy.allowSameOriginStudio) &&
+      (!isReadMethod || authState.policy.requireAuthForReads)
+    ) {
+      return jsonResponse(
+        401,
+        { jsonrpc: '2.0', id: rpcId, error: { code: -32001, message: `Authentication required: supply Authorization: Bearer token with scope "${requiredScope}"` } },
+        { ...mcpHeaders, 'www-authenticate': `Bearer realm="akamai-synthetic-release-gate", scope="${requiredScope}"` }
+      );
+    }
+
+    if (rpcMethod === 'notifications/initialized' || rpcMethod.startsWith('notifications/')) {
+      return { statusCode: 202, headers: mcpHeaders, body: '' };
+    }
+    if (rpcMethod === 'ping') {
+      return jsonResponse(200, { jsonrpc: '2.0', id: rpcId, result: {} }, mcpHeaders);
+    }
+    if (rpcMethod === 'initialize') {
+      return jsonResponse(
+        200,
+        {
+          jsonrpc: '2.0',
+          id: rpcId,
+          result: {
+            protocolVersion: '2025-03-26',
+            capabilities: {
+              tools: { listChanged: true },
+              resources: { subscribe: false, listChanged: true },
+              prompts: { listChanged: false },
+            },
+            serverInfo: {
+              name: 'akamai-synthetic-release-gate',
+              version: '3.0.0',
+            },
+          },
+        },
+        mcpHeaders
+      );
+    }
+    if (rpcMethod === 'tools/list') {
+      return jsonResponse(
+        200,
+        {
+          jsonrpc: '2.0',
+          id: rpcId,
+          result: {
+            tools: LAMBDA_MCP_TOOLS.map((t) => ({
+              name: t.name,
+              title: t.title,
+              description: t.title,
+              inputSchema: { type: 'object', properties: {} },
+              annotations: { title: t.title, readOnlyHint: t.readOnlyHint },
+            })),
+          },
+        },
+        mcpHeaders
+      );
+    }
+
+    const paramsObj = body?.params && typeof body.params === 'object' ? body.params : {};
+    const toolName =
+      (typeof paramsObj.name === 'string' && paramsObj.name.trim()) ||
+      (typeof body?.tool === 'string' && body.tool.trim()) ||
+      'list_akamai_properties';
+    const args =
+      paramsObj.arguments && typeof paramsObj.arguments === 'object'
+        ? paramsObj.arguments
+        : !rpcMethod
+        ? paramsObj
+        : {};
+
+    await recordDdbUserAudit(operatorEmail, 'mcp_rpc_call', toolName);
+
+    const wrapResult = (payload, isError = false) => {
+      if (rpcMethod === 'tools/call') {
+        return jsonResponse(
+          200,
+          {
+            jsonrpc: '2.0',
+            id: rpcId,
+            result: {
+              content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+              structuredContent: payload && typeof payload === 'object' ? payload : { value: payload },
+              isError,
+            },
+          },
+          mcpHeaders
+        );
+      }
+      return jsonResponse(200, { jsonrpc: '2.0', id: rpcId, result: payload }, mcpHeaders);
+    };
+
+    try {
+      const cfg = runtimeConfig && typeof runtimeConfig === 'object' ? runtimeConfig : {};
+      if (!Array.isArray(cfg.properties)) cfg.properties = [];
+      if (!cfg.suitesByAppId || typeof cfg.suitesByAppId !== 'object') cfg.suitesByAppId = {};
+      if (!Array.isArray(cfg.folders)) {
+        cfg.folders = [
+          { id: 'folder-core', name: 'Core Experience', color: 'sky', order: 1 },
+          { id: 'folder-identity', name: 'Identity, Redirects & SSL', color: 'emerald', order: 2 },
+          { id: 'folder-conversion', name: 'Transactions & Conversion Flows', color: 'amber', order: 3 },
+          { id: 'folder-network', name: 'APIs, DNS & Network Protocols', color: 'violet', order: 4 },
+        ];
+      }
+      if (!cfg.policies || typeof cfg.policies !== 'object') {
+        cfg.policies = {
+          acceptedRules: [],
+          acceptedCookies: ['_abck', 'bm_sz', 'ak_bmsc', 'edge_region'],
+          acceptedVisualTests: [],
+          acceptedVisualParams: {},
+          ignoreAcceptedDiffs: true,
+        };
+      }
+
+      const cleanSafeId = (raw, label) => {
+        const v = String(raw || '').trim().toLowerCase();
+        if (!/^[a-z0-9][a-z0-9_-]{1,31}$/.test(v) || ['__proto__', 'constructor', 'prototype'].includes(v)) {
+          throw new Error(`Invalid ${label}: "${v}"`);
+        }
+        return v;
+      };
+
+      const isPrivateHost = (h) => {
+        const s = String(h || '').trim().toLowerCase();
+        return (
+          !s ||
+          s === 'localhost' ||
+          s === '::1' ||
+          s === '0.0.0.0' ||
+          /^127\./.test(s) ||
+          /^10\./.test(s) ||
+          /^192\.168\./.test(s) ||
+          /^169\.254\./.test(s) ||
+          /^172\.(1[6-9]|2\d|3[0-1])\./.test(s)
+        );
+      };
+
+      const getSuiteFor = (appId) =>
+        Array.isArray(cfg.suitesByAppId[appId])
+          ? [...cfg.suitesByAppId[appId]]
+          : Array.isArray(cfg.testSuite)
+          ? [...cfg.testSuite]
+          : [];
+
+      if (toolName === 'list_akamai_properties') {
+        const q = String(args.search || '').trim().toLowerCase();
+        const props = q
+          ? cfg.properties.filter((p) => `${p.id} ${p.name}`.toLowerCase().includes(q))
+          : cfg.properties;
+        return wrapResult({
+          totalProperties: props.length,
+          properties: props,
+          networks: cfg.networks,
+          computeMode: 'aws-lambda-scale-to-zero',
+        });
+      }
+
+      if (toolName === 'manage_property') {
+        const action = String(args.action || 'list').toLowerCase();
+        if (action === 'list') {
+          return wrapResult({ action: 'list', totalProperties: cfg.properties.length, properties: cfg.properties });
+        }
+        const appId = cleanSafeId(args.appId, 'appId');
+        const idx = cfg.properties.findIndex((p) => String(p.id).toLowerCase() === appId);
+        if (action === 'get') {
+          if (idx < 0) throw new Error(`Property "${appId}" not found`);
+          return wrapResult({ action: 'get', property: cfg.properties[idx], suiteCount: getSuiteFor(appId).length });
+        }
+        if (action === 'create') {
+          if (idx >= 0) throw new Error(`Property "${appId}" already exists`);
+          const domain = cfg?.branding?.defaultDomain || 'salesforce.com';
+          const host = String(args.canonicalHost || `${appId}.${domain}`).trim().toLowerCase();
+          if (isPrivateHost(host)) throw new Error(`Disallowed host "${host}"`);
+          const prop = {
+            id: appId,
+            name: String(args.name || `${appId.toUpperCase()} (${host})`).trim(),
+            suitePath: `config/suites/${appId}.csv`,
+            defaultNetworks: Array.isArray(args.defaultNetworks) && args.defaultNetworks.length ? args.defaultNetworks : ['prod', 'staging'],
+            envs: Array.isArray(args.envs) && args.envs.length ? args.envs : [{ id: 'prod', name: 'PROD', tier: 'prod', hostMap: { [host]: host }, networks: ['prod', 'staging'] }],
+            ...(args.description ? { description: String(args.description) } : {}),
+            ...(Array.isArray(args.tags) ? { tags: args.tags.map(String) } : {}),
+          };
+          cfg.properties = [...cfg.properties, prop];
+          cfg.suitesByAppId[appId] = [{ id: 'T01', name: `${prop.name} Health`, path: '/', expectedStatus: '200', testType: 'web-chrome', enabled: true }];
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action: 'create', created: prop, totalProperties: cfg.properties.length });
+        }
+        if (action === 'update' || action === 'patch') {
+          if (idx < 0) throw new Error(`Property "${appId}" not found`);
+          const updated = {
+            ...cfg.properties[idx],
+            ...(args.name !== undefined ? { name: String(args.name).trim() } : {}),
+            ...(args.description !== undefined ? { description: String(args.description).trim() } : {}),
+            ...(Array.isArray(args.tags) ? { tags: args.tags.map(String) } : {}),
+            ...(Array.isArray(args.defaultNetworks) ? { defaultNetworks: args.defaultNetworks } : {}),
+            ...(Array.isArray(args.envs) && args.envs.length ? { envs: args.envs } : {}),
+          };
+          cfg.properties[idx] = updated;
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, updated, totalProperties: cfg.properties.length });
+        }
+        if (action === 'clone') {
+          if (idx < 0) throw new Error(`Property "${appId}" not found`);
+          const newAppId = cleanSafeId(args.newAppId, 'newAppId');
+          if (cfg.properties.some((p) => String(p.id).toLowerCase() === newAppId)) {
+            throw new Error(`Property "${newAppId}" already exists`);
+          }
+          const src = cfg.properties[idx];
+          const cloned = { ...JSON.parse(JSON.stringify(src)), id: newAppId, name: String(args.name || `${src.name} (Clone)`) };
+          cfg.properties = [...cfg.properties, cloned];
+          cfg.suitesByAppId[newAppId] = args.cloneSuite === false ? [] : JSON.parse(JSON.stringify(getSuiteFor(appId)));
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action: 'clone', sourceAppId: appId, cloned, totalProperties: cfg.properties.length });
+        }
+        if (action === 'delete') {
+          if (idx < 0) throw new Error(`Property "${appId}" not found`);
+          if (cfg.properties.length <= 1) throw new Error('Cannot delete the last remaining property');
+          cfg.properties = cfg.properties.filter((p) => String(p.id).toLowerCase() !== appId);
+          delete cfg.suitesByAppId[appId];
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action: 'delete', deletedAppId: appId, totalProperties: cfg.properties.length });
+        }
+        throw new Error(`Unsupported manage_property action: ${action}`);
+      }
+
+      if (toolName === 'manage_environment') {
+        const action = String(args.action || 'list').toLowerCase();
+        const appId = cleanSafeId(args.appId || 'www', 'appId');
+        const pIdx = cfg.properties.findIndex((p) => String(p.id).toLowerCase() === appId);
+        if (pIdx < 0) throw new Error(`Property "${appId}" not found`);
+        const prop = cfg.properties[pIdx];
+        if (!Array.isArray(prop.envs)) prop.envs = [];
+
+        if (action === 'list') {
+          return wrapResult({ action: 'list', appId, totalEnvironments: prop.envs.length, environments: prop.envs });
+        }
+        const envId = cleanSafeId(args.envId, 'envId');
+        const eIdx = prop.envs.findIndex((e) => String(e.id).toLowerCase() === envId);
+        if (action === 'get') {
+          if (eIdx < 0) throw new Error(`Environment "${envId}" not found on "${appId}"`);
+          return wrapResult({ action: 'get', appId, environment: prop.envs[eIdx] });
+        }
+        if (['add', 'create', 'update', 'upsert', 'patch'].includes(action)) {
+          if ((action === 'add' || action === 'create') && eIdx >= 0) throw new Error(`Environment "${envId}" already exists`);
+          if ((action === 'update' || action === 'patch') && eIdx < 0) throw new Error(`Environment "${envId}" not found`);
+          const existing = eIdx >= 0 ? prop.envs[eIdx] : { id: envId, name: envId.toUpperCase(), hostMap: {}, networks: ['prod', 'staging'] };
+          const nextHostMap = args.hostMap && typeof args.hostMap === 'object'
+            ? (args.merge ? { ...(existing.hostMap || {}), ...args.hostMap } : { ...args.hostMap })
+            : { ...(existing.hostMap || {}) };
+          if (args.canonicalHost && args.targetHost) {
+            if (isPrivateHost(args.canonicalHost) || isPrivateHost(args.targetHost)) throw new Error('Private/loopback hosts are blocked');
+            nextHostMap[String(args.canonicalHost).trim().toLowerCase()] = String(args.targetHost).trim().toLowerCase();
+          }
+          const nextEnv = {
+            ...existing,
+            id: envId,
+            name: args.name !== undefined ? String(args.name).trim() : existing.name,
+            ...(args.tier ? { tier: String(args.tier) } : {}),
+            ...(args.description !== undefined ? { description: String(args.description) } : {}),
+            hostMap: nextHostMap,
+            networks: Array.isArray(args.networks) && args.networks.length ? args.networks : existing.networks || ['prod', 'staging'],
+            ...(args.stagingEdgeIp || args.prodEdgeIp
+              ? { edgeIps: { ...(existing.edgeIps || {}), ...(args.stagingEdgeIp ? { staging: String(args.stagingEdgeIp) } : {}), ...(args.prodEdgeIp ? { prod: String(args.prodEdgeIp) } : {}) } }
+              : {}),
+            ...(args.headers && typeof args.headers === 'object' ? { headers: args.merge ? { ...(existing.headers || {}), ...args.headers } : args.headers } : {}),
+            ...(args.variables && typeof args.variables === 'object' ? { variables: args.merge ? { ...(existing.variables || {}), ...args.variables } : args.variables } : {}),
+            ...(args.scheduleIntervalMin !== undefined ? { scheduleIntervalMin: Number(args.scheduleIntervalMin) } : {}),
+            ...(args.alertThresholdMs !== undefined ? { alertThresholdMs: Number(args.alertThresholdMs) } : {}),
+            ...(args.pinnedBaselineRunKey !== undefined ? { pinnedBaselineRunKey: String(args.pinnedBaselineRunKey) } : {}),
+          };
+          if (eIdx >= 0) prop.envs[eIdx] = nextEnv;
+          else prop.envs.push(nextEnv);
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, appId, environment: nextEnv, totalEnvironments: prop.envs.length });
+        }
+        if (action === 'clone') {
+          if (eIdx < 0) throw new Error(`Environment "${envId}" not found`);
+          const newEnvId = cleanSafeId(args.newEnvId, 'newEnvId');
+          if (prop.envs.some((e) => String(e.id).toLowerCase() === newEnvId)) throw new Error(`Environment "${newEnvId}" already exists`);
+          const cloned = { ...JSON.parse(JSON.stringify(prop.envs[eIdx])), id: newEnvId, name: String(args.name || `${prop.envs[eIdx].name} (${newEnvId.toUpperCase()})`) };
+          prop.envs.push(cloned);
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action: 'clone', appId, cloned, totalEnvironments: prop.envs.length });
+        }
+        if (action === 'delete') {
+          if (eIdx < 0) throw new Error(`Environment "${envId}" not found`);
+          if (prop.envs.length <= 1) throw new Error('A property must retain at least one environment');
+          prop.envs.splice(eIdx, 1);
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action: 'delete', appId, deletedEnvId: envId, totalEnvironments: prop.envs.length });
+        }
+        if (action === 'reorder') {
+          if (eIdx < 0) throw new Error(`Environment "${envId}" not found`);
+          const swapIdx = args.direction === 'down' ? eIdx + 1 : eIdx - 1;
+          if (swapIdx >= 0 && swapIdx < prop.envs.length) {
+            const [moved] = prop.envs.splice(eIdx, 1);
+            prop.envs.splice(swapIdx, 0, moved);
+            await persistLambdaRuntimeConfig(cfg);
+          }
+          return wrapResult({ action: 'reorder', appId, order: prop.envs.map((e) => e.id) });
+        }
+        if (['set_host_map', 'remove_host_map_key', 'set_edge_ips', 'set_networks', 'set_headers', 'set_variables', 'set_schedule', 'pin_baseline'].includes(action)) {
+          if (eIdx < 0) throw new Error(`Environment "${envId}" not found`);
+          const target = prop.envs[eIdx];
+          if (action === 'set_host_map') {
+            if (args.hostMap && typeof args.hostMap === 'object') {
+              target.hostMap = args.merge ? { ...(target.hostMap || {}), ...args.hostMap } : { ...args.hostMap };
+            } else if (args.canonicalHost && args.targetHost) {
+              target.hostMap = { ...(target.hostMap || {}), [String(args.canonicalHost).toLowerCase()]: String(args.targetHost).toLowerCase() };
+            }
+          } else if (action === 'remove_host_map_key') {
+            const key = String(args.canonicalHost || '').toLowerCase();
+            if (target.hostMap && key in target.hostMap && Object.keys(target.hostMap).length > 1) {
+              delete target.hostMap[key];
+            }
+          } else if (action === 'set_edge_ips') {
+            target.edgeIps = {
+              ...(target.edgeIps || {}),
+              ...(args.stagingEdgeIp ? { staging: String(args.stagingEdgeIp) } : {}),
+              ...(args.prodEdgeIp ? { prod: String(args.prodEdgeIp) } : {}),
+            };
+          } else if (action === 'set_networks' && Array.isArray(args.networks) && args.networks.length) {
+            target.networks = args.networks;
+          } else if (action === 'set_headers' && args.headers && typeof args.headers === 'object') {
+            target.headers = args.merge ? { ...(target.headers || {}), ...args.headers } : { ...args.headers };
+          } else if (action === 'set_variables' && args.variables && typeof args.variables === 'object') {
+            target.variables = args.merge ? { ...(target.variables || {}), ...args.variables } : { ...args.variables };
+          } else if (action === 'set_schedule') {
+            if (args.scheduleIntervalMin !== undefined) target.scheduleIntervalMin = Number(args.scheduleIntervalMin);
+            if (args.alertThresholdMs !== undefined) target.alertThresholdMs = Number(args.alertThresholdMs);
+            if (args.defaultPopId !== undefined) target.defaultPopId = String(args.defaultPopId);
+          } else if (action === 'pin_baseline') {
+            target.pinnedBaselineRunKey = args.pinnedBaselineRunKey ? String(args.pinnedBaselineRunKey) : undefined;
+          }
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, appId, envId, environment: target });
+        }
+        throw new Error(`Unsupported manage_environment action: ${action}`);
+      }
+
+      if (toolName === 'manage_test_suite') {
+        const action = String(args.action || 'list').toLowerCase();
+        const appId = cleanSafeId(args.appId || 'www', 'appId');
+        let suite = getSuiteFor(appId);
+
+        if (action === 'list') {
+          return wrapResult({ action: 'list', appId, totalChecks: suite.length, checks: suite });
+        }
+        const nextAutoId = () => `T${String(suite.length + 1).padStart(2, '0')}`;
+        const tid = args.testId ? String(args.testId).trim().toUpperCase() : '';
+        const tIdx = tid ? suite.findIndex((c) => String(c.id).toUpperCase() === tid) : -1;
+
+        if (action === 'get') {
+          if (tIdx < 0) throw new Error(`Check "${tid}" not found in "${appId}"`);
+          return wrapResult({ action: 'get', appId, check: suite[tIdx] });
+        }
+        if (['upsert', 'create', 'patch', 'update'].includes(action)) {
+          const finalId = tid || nextAutoId();
+          if (action === 'create' && tIdx >= 0) throw new Error(`Check "${finalId}" already exists`);
+          if ((action === 'patch' || action === 'update') && tIdx < 0) throw new Error(`Check "${finalId}" not found`);
+          const base = tIdx >= 0 ? suite[tIdx] : { id: finalId, name: `Synthetic Check ${finalId}`, path: '/', expectedStatus: '200', testType: 'web-chrome', enabled: true };
+          const updated = {
+            ...base,
+            id: args.newTestId ? String(args.newTestId).trim().toUpperCase() : finalId,
+            ...(args.name !== undefined ? { name: String(args.name).trim() } : {}),
+            ...(args.path !== undefined ? { path: String(args.path).trim() } : {}),
+            ...(args.expectedStatus !== undefined ? { expectedStatus: String(args.expectedStatus).trim() } : {}),
+            ...(args.testType !== undefined ? { testType: String(args.testType) } : {}),
+            ...(args.httpMethod !== undefined ? { httpMethod: String(args.httpMethod).toUpperCase() } : {}),
+            ...(args.category !== undefined ? { category: String(args.category) } : {}),
+            ...(args.folderId !== undefined ? { folderId: String(args.folderId) } : {}),
+            ...(args.enabled !== undefined ? { enabled: Boolean(args.enabled) } : {}),
+            ...(args.visualGate !== undefined ? { visualGate: Boolean(args.visualGate) } : {}),
+            ...(args.critical !== undefined ? { critical: Boolean(args.critical) } : {}),
+            ...(args.requestHeaders && typeof args.requestHeaders === 'object' ? { requestHeaders: args.requestHeaders } : {}),
+            ...(args.requestBody !== undefined ? { requestBody: String(args.requestBody) } : {}),
+            ...(args.assertions && typeof args.assertions === 'object' ? { assertions: args.assertions } : {}),
+            ...(Array.isArray(args.transactionSteps) ? { transactionSteps: args.transactionSteps } : {}),
+            ...(args.scriptEngine !== undefined ? { scriptEngine: String(args.scriptEngine) } : {}),
+            ...(args.customScript !== undefined ? { customScript: String(args.customScript) } : {}),
+            ...(Array.isArray(args.tags) ? { tags: args.tags.map(String) } : {}),
+          };
+          if (tIdx >= 0) suite[tIdx] = updated;
+          else suite.push(updated);
+          cfg.suitesByAppId[appId] = suite;
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, appId, check: updated, totalChecks: suite.length });
+        }
+        if (action === 'delete') {
+          if (tIdx < 0) throw new Error(`Check "${tid}" not found`);
+          suite.splice(tIdx, 1);
+          cfg.suitesByAppId[appId] = suite;
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action: 'delete', appId, deleted: tid, totalChecks: suite.length });
+        }
+        if (action === 'clone') {
+          if (tIdx < 0) throw new Error(`Check "${tid}" not found`);
+          const clonedId = args.newTestId ? String(args.newTestId).trim().toUpperCase() : nextAutoId();
+          const cloned = { ...JSON.parse(JSON.stringify(suite[tIdx])), id: clonedId, name: String(args.name || `${suite[tIdx].name} (Copy)`) };
+          suite.push(cloned);
+          cfg.suitesByAppId[appId] = suite;
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action: 'clone', appId, cloned, totalChecks: suite.length });
+        }
+        if (action === 'toggle_enabled' || action === 'toggle_visual_gate' || action === 'toggle_critical') {
+          if (tIdx < 0) throw new Error(`Check "${tid}" not found`);
+          const field = action === 'toggle_enabled' ? 'enabled' : action === 'toggle_visual_gate' ? 'visualGate' : 'critical';
+          const nextVal = typeof args[field] === 'boolean' ? args[field] : !suite[tIdx][field];
+          suite[tIdx][field] = nextVal;
+          cfg.suitesByAppId[appId] = suite;
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, appId, testId: tid, [field]: nextVal });
+        }
+        if (action === 'reorder' || action === 'move_to_position') {
+          if (tIdx < 0) throw new Error(`Check "${tid}" not found`);
+          const targetIdx = action === 'move_to_position'
+            ? Math.max(0, Math.min(suite.length - 1, Math.round(Number(args.position || 1)) - 1))
+            : args.direction === 'down'
+            ? Math.min(suite.length - 1, tIdx + 1)
+            : Math.max(0, tIdx - 1);
+          const [moved] = suite.splice(tIdx, 1);
+          suite.splice(targetIdx, 0, moved);
+          cfg.suitesByAppId[appId] = suite;
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, appId, order: suite.map((c) => c.id) });
+        }
+        if (action === 'bulk_upsert' && Array.isArray(args.tests)) {
+          for (const item of args.tests) {
+            if (!item || typeof item !== 'object') continue;
+            const id = String(item.id || item.testId || nextAutoId()).toUpperCase();
+            const existingIdx = suite.findIndex((c) => String(c.id).toUpperCase() === id);
+            const merged = { ...(existingIdx >= 0 ? suite[existingIdx] : {}), ...item, id };
+            if (existingIdx >= 0) suite[existingIdx] = merged;
+            else suite.push(merged);
+          }
+          cfg.suitesByAppId[appId] = suite;
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action: 'bulk_upsert', appId, totalChecks: suite.length });
+        }
+        if (action === 'bulk_delete' && Array.isArray(args.testIds)) {
+          const drop = new Set(args.testIds.map((x) => String(x).toUpperCase()));
+          suite = suite.filter((c) => !drop.has(String(c.id).toUpperCase()));
+          cfg.suitesByAppId[appId] = suite;
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action: 'bulk_delete', appId, totalChecks: suite.length });
+        }
+        if (action === 'bulk_toggle' && Array.isArray(args.testIds)) {
+          const ids = new Set(args.testIds.map((x) => String(x).toUpperCase()));
+          const enabled = args.enabled !== false;
+          suite = suite.map((c) => (ids.has(String(c.id).toUpperCase()) ? { ...c, enabled } : c));
+          cfg.suitesByAppId[appId] = suite;
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action: 'bulk_toggle', appId, enabled, totalChecks: suite.length });
+        }
+        if (action === 'bulk_assign_folder' && Array.isArray(args.testIds)) {
+          const ids = new Set(args.testIds.map((x) => String(x).toUpperCase()));
+          const folderId = cleanSafeId(args.folderId, 'folderId');
+          suite = suite.map((c) => (ids.has(String(c.id).toUpperCase()) ? { ...c, folderId } : c));
+          cfg.suitesByAppId[appId] = suite;
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action: 'bulk_assign_folder', appId, folderId });
+        }
+        if (['set_headers', 'set_assertions', 'set_transaction_steps', 'set_script', 'set_tags'].includes(action)) {
+          if (tIdx < 0) throw new Error(`Check "${tid}" not found`);
+          if (action === 'set_headers') suite[tIdx].requestHeaders = args.requestHeaders || {};
+          if (action === 'set_assertions') suite[tIdx].assertions = args.assertions || {};
+          if (action === 'set_transaction_steps') suite[tIdx].transactionSteps = Array.isArray(args.transactionSteps) ? args.transactionSteps : [];
+          if (action === 'set_script') {
+            suite[tIdx].scriptEngine = args.scriptEngine || suite[tIdx].scriptEngine || 'playwright';
+            suite[tIdx].customScript = String(args.customScript ?? '');
+          }
+          if (action === 'set_tags') suite[tIdx].tags = Array.isArray(args.tags) ? args.tags.map(String) : [];
+          cfg.suitesByAppId[appId] = suite;
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, appId, check: suite[tIdx] });
+        }
+        if (action === 'export_csv') {
+          const rows = suite.map((c) => `"${c.id}","${String(c.name || '').replace(/"/g, '""')}","${c.path || '/'}","${c.expectedStatus || '200'}"`);
+          return wrapResult({ action: 'export_csv', appId, rowCount: suite.length, csv: ['id,name,path,expectedStatus', ...rows].join('\n') });
+        }
+        if (action === 'reset_defaults') {
+          cfg.suitesByAppId[appId] = Array.isArray(cfg.testSuite) ? [...cfg.testSuite] : [];
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action: 'reset_defaults', appId, totalChecks: cfg.suitesByAppId[appId].length });
+        }
+        throw new Error(`Unsupported manage_test_suite action: ${action}`);
+      }
+
+      if (toolName === 'manage_test_folders') {
+        const action = String(args.action || 'list').toLowerCase();
+        if (action === 'list') return wrapResult({ action: 'list', totalFolders: cfg.folders.length, folders: cfg.folders });
+        if (action === 'create' || action === 'update') {
+          const id = args.folderId ? cleanSafeId(args.folderId, 'folderId') : `folder-${Date.now().toString(36)}`;
+          const idx = cfg.folders.findIndex((f) => f.id === id);
+          const next = {
+            ...(idx >= 0 ? cfg.folders[idx] : { id, color: 'sky', order: cfg.folders.length + 1 }),
+            id,
+            name: String(args.name || (idx >= 0 ? cfg.folders[idx].name : id)),
+            ...(args.description !== undefined ? { description: String(args.description) } : {}),
+            ...(args.color ? { color: String(args.color) } : {}),
+          };
+          if (idx >= 0) cfg.folders[idx] = next;
+          else cfg.folders.push(next);
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, folder: next, totalFolders: cfg.folders.length });
+        }
+        if (action === 'delete') {
+          const id = cleanSafeId(args.folderId, 'folderId');
+          if (cfg.folders.length <= 1) throw new Error('Cannot delete the last remaining folder');
+          cfg.folders = cfg.folders.filter((f) => f.id !== id);
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action: 'delete', deletedFolderId: id, totalFolders: cfg.folders.length });
+        }
+        throw new Error(`Unsupported manage_test_folders action: ${action}`);
+      }
+
+      if (toolName === 'manage_gate_policies') {
+        const action = String(args.action || 'list').toLowerCase();
+        const pol = cfg.policies;
+        if (action === 'list') return wrapResult({ action: 'list', ...pol });
+        if (action === 'add_header_rule') {
+          const rule = {
+            id: String(args.ruleId || `rule-${Date.now().toString(36)}`),
+            appId: String(args.appId || 'all'),
+            comparisonId: 'all',
+            kind: String(args.field || '').toLowerCase(),
+            enabled: args.enabled !== false,
+            by: operatorEmail,
+            at: new Date().toISOString(),
+            note: String(args.note || ''),
+          };
+          pol.acceptedRules = [...pol.acceptedRules.filter((r) => r.id !== rule.id), rule];
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, rule });
+        }
+        if (action === 'toggle_header_rule') {
+          pol.acceptedRules = pol.acceptedRules.map((r) =>
+            r.id === args.ruleId || r.kind === String(args.field || '').toLowerCase()
+              ? { ...r, enabled: typeof args.enabled === 'boolean' ? args.enabled : !r.enabled }
+              : r
+          );
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, acceptedRules: pol.acceptedRules });
+        }
+        if (action === 'delete_header_rule') {
+          pol.acceptedRules = pol.acceptedRules.filter(
+            (r) => r.id !== args.ruleId && r.kind !== String(args.field || '').toLowerCase()
+          );
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, acceptedRules: pol.acceptedRules });
+        }
+        if (action === 'add_cookie_waiver') {
+          const c = String(args.cookieName || '').trim().toLowerCase();
+          if (c && !pol.acceptedCookies.includes(c)) pol.acceptedCookies.push(c);
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, acceptedCookies: pol.acceptedCookies });
+        }
+        if (action === 'remove_cookie_waiver') {
+          const c = String(args.cookieName || '').trim().toLowerCase();
+          pol.acceptedCookies = pol.acceptedCookies.filter((x) => x !== c);
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, acceptedCookies: pol.acceptedCookies });
+        }
+        if (action === 'add_visual_waiver') {
+          const tid = String(args.testId || '').trim().toUpperCase();
+          if (tid && !pol.acceptedVisualTests.includes(tid)) pol.acceptedVisualTests.push(tid);
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, acceptedVisualTests: pol.acceptedVisualTests });
+        }
+        if (action === 'remove_visual_waiver') {
+          const tid = String(args.testId || '').trim().toUpperCase();
+          pol.acceptedVisualTests = pol.acceptedVisualTests.filter((x) => x !== tid);
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, acceptedVisualTests: pol.acceptedVisualTests });
+        }
+        if (action === 'set_ignore_accepted') {
+          pol.ignoreAcceptedDiffs = typeof args.ignoreAcceptedDiffs === 'boolean' ? args.ignoreAcceptedDiffs : !pol.ignoreAcceptedDiffs;
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, ignoreAcceptedDiffs: pol.ignoreAcceptedDiffs });
+        }
+        if (action === 'reset_defaults') {
+          cfg.policies = { acceptedRules: [], acceptedCookies: ['_abck', 'bm_sz', 'ak_bmsc', 'edge_region'], acceptedVisualTests: [], acceptedVisualParams: {}, ignoreAcceptedDiffs: true };
+          await persistLambdaRuntimeConfig(cfg);
+          return wrapResult({ action, ...cfg.policies });
+        }
+        throw new Error(`Unsupported manage_gate_policies action: ${action}`);
+      }
+
+      return wrapResult({
         tool: toolName,
         computeMode: 'aws-lambda-scale-to-zero',
         awsRegion: REGION,
         visualJudgeModel: BEDROCK_MODEL_ID,
-        properties: runtimeConfig.properties || [],
+        properties: cfg.properties || [],
         evaluatedAt: new Date().toISOString(),
-      },
-    });
+      });
+    } catch (err) {
+      return wrapResult({ error: err?.message || 'MCP tool execution failed' }, true);
+    }
   }
 
   // 8. Built-In Portal AI Agent Skills & Chat Endpoints (/api/v1/agent/*)

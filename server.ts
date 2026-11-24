@@ -23,12 +23,37 @@ import {
   INITIAL_RUNS,
   buildInitialComparison,
 } from './src/data/mockStore';
-import { generateReproduceCurl } from './src/engine/rules';
+import { generateComparisonMarkdownSummary, generateReproduceCurl } from './src/engine/rules';
 import { computePropertyGateSummary } from './src/engine/workbenchModel';
 import {
   buildMcpManifest,
   dispatchMcpJsonRpc,
 } from './src/engine/mcpProtocol';
+import {
+  executeManageEnvironment,
+  executeManageGatePolicies,
+  executeManageProperty,
+  executeManageRuns,
+  executeManageTestFolders,
+  executeManageTestSuite,
+  type McpPolicyState,
+  type McpStateStore,
+} from './src/engine/mcpOperations';
+import {
+  MCP_SCOPES_CATALOG,
+  createInitialMcpAuthState,
+  createMcpToken,
+  deleteMcpToken,
+  evaluateMcpRequestAuth,
+  recordMcpAuditEvent,
+  revokeMcpToken,
+  rotateMcpToken,
+  toPublicTokenView,
+  touchMcpTokenUsage,
+  updateMcpAuthPolicy,
+  updateMcpToken,
+  type McpAuthStoreState,
+} from './src/engine/mcpAuth';
 import {
   buildOpenApiSpec,
   evaluateNovaLiteVisualDiff,
@@ -181,9 +206,30 @@ async function startServer() {
     }
     return map;
   };
+  const DEFAULT_RUNTIME_POLICIES: McpPolicyState = {
+    acceptedRules: INITIAL_RULES.map((r) => ({ ...r })),
+    acceptedCookies: [
+      '_abck',
+      'bm_sz',
+      'ak_bmsc',
+      'ew_renderer_id',
+      'akacd_smb_overview_split',
+      'edge_region',
+    ],
+    acceptedVisualTests: [],
+    acceptedVisualParams: {},
+    ignoreAcceptedDiffs: true,
+  };
   let runtimeProperties: AppConfig[] = [...DEFAULT_TEMPLATE_CONFIG.properties];
   let runtimeSuitesByAppId: Record<string, TestCaseDefinition[]> = buildDefaultSuitesMap();
   let runtimeFolders: TestFolder[] = [...DEFAULT_TEST_FOLDERS];
+  let runtimePolicies: McpPolicyState = {
+    acceptedRules: DEFAULT_RUNTIME_POLICIES.acceptedRules.map((r) => ({ ...r })),
+    acceptedCookies: [...DEFAULT_RUNTIME_POLICIES.acceptedCookies],
+    acceptedVisualTests: [...DEFAULT_RUNTIME_POLICIES.acceptedVisualTests],
+    acceptedVisualParams: { ...DEFAULT_RUNTIME_POLICIES.acceptedVisualParams },
+    ignoreAcceptedDiffs: DEFAULT_RUNTIME_POLICIES.ignoreAcceptedDiffs,
+  };
 
   // AWS CloudWatch Synthetics Canary Registry & Fan-Out Batch State
   const syntheticsStateFile = path.resolve(__dirname, '.runtime-synthetics-canaries.json');
@@ -241,6 +287,28 @@ async function startServer() {
       if (Array.isArray(parsedCfg.folders) && parsedCfg.folders.length > 0) {
         runtimeFolders = parsedCfg.folders;
       }
+      if (parsedCfg.policies && typeof parsedCfg.policies === 'object') {
+        runtimePolicies = {
+          acceptedRules: Array.isArray(parsedCfg.policies.acceptedRules)
+            ? parsedCfg.policies.acceptedRules
+            : runtimePolicies.acceptedRules,
+          acceptedCookies: Array.isArray(parsedCfg.policies.acceptedCookies)
+            ? parsedCfg.policies.acceptedCookies
+            : runtimePolicies.acceptedCookies,
+          acceptedVisualTests: Array.isArray(parsedCfg.policies.acceptedVisualTests)
+            ? parsedCfg.policies.acceptedVisualTests
+            : runtimePolicies.acceptedVisualTests,
+          acceptedVisualParams:
+            parsedCfg.policies.acceptedVisualParams &&
+            typeof parsedCfg.policies.acceptedVisualParams === 'object'
+              ? parsedCfg.policies.acceptedVisualParams
+              : runtimePolicies.acceptedVisualParams,
+          ignoreAcceptedDiffs:
+            typeof parsedCfg.policies.ignoreAcceptedDiffs === 'boolean'
+              ? parsedCfg.policies.ignoreAcceptedDiffs
+              : runtimePolicies.ignoreAcceptedDiffs,
+        };
+      }
     }
   } catch {
     // Ignore malformed runtime cache and keep clean defaults
@@ -255,6 +323,7 @@ async function startServer() {
             properties: runtimeProperties,
             suitesByAppId: runtimeSuitesByAppId,
             folders: runtimeFolders,
+            policies: runtimePolicies,
             updatedAt: new Date().toISOString(),
           },
           null,
@@ -264,6 +333,25 @@ async function startServer() {
       );
     } catch {
       // Ignore write failures in read-only runtimes
+    }
+  };
+
+  const getMcpStateSnapshot = (): McpStateStore => ({
+    properties: runtimeProperties,
+    suitesByAppId: runtimeSuitesByAppId,
+    folders: runtimeFolders,
+    policies: runtimePolicies,
+    runs: serverRuns,
+  });
+
+  const commitMcpState = (next: McpStateStore, persistConfig = true) => {
+    runtimeProperties = next.properties;
+    runtimeSuitesByAppId = next.suitesByAppId;
+    runtimeFolders = next.folders;
+    runtimePolicies = next.policies;
+    serverRuns = next.runs;
+    if (persistConfig) {
+      persistRuntimeCatchpointConfig();
     }
   };
 
@@ -499,8 +587,38 @@ async function startServer() {
       properties: runtimeProperties,
       suitesByAppId: runtimeSuitesByAppId,
       folders: runtimeFolders,
+      policies: runtimePolicies,
       catchpointTypesCount: CATCHPOINT_TEST_TYPES.length,
     });
+  });
+
+  app.get('/api/v1/policies', (_req, res) => {
+    res.json(runtimePolicies);
+  });
+
+  app.put('/api/v1/policies', (req, res) => {
+    const b = req.body || {};
+    runtimePolicies = {
+      acceptedRules: Array.isArray(b.acceptedRules)
+        ? b.acceptedRules
+        : runtimePolicies.acceptedRules,
+      acceptedCookies: Array.isArray(b.acceptedCookies)
+        ? b.acceptedCookies
+        : runtimePolicies.acceptedCookies,
+      acceptedVisualTests: Array.isArray(b.acceptedVisualTests)
+        ? b.acceptedVisualTests
+        : runtimePolicies.acceptedVisualTests,
+      acceptedVisualParams:
+        b.acceptedVisualParams && typeof b.acceptedVisualParams === 'object'
+          ? b.acceptedVisualParams
+          : runtimePolicies.acceptedVisualParams,
+      ignoreAcceptedDiffs:
+        typeof b.ignoreAcceptedDiffs === 'boolean'
+          ? b.ignoreAcceptedDiffs
+          : runtimePolicies.ignoreAcceptedDiffs,
+    };
+    persistRuntimeCatchpointConfig();
+    res.json({ saved: true, policies: runtimePolicies });
   });
 
   // 3b. Catchpoint Supported Monitor & Test Type Catalog
@@ -2488,7 +2606,10 @@ async function startServer() {
     const envId = prop?.envs?.[0]?.id || 'prod';
     const candidateTarget = params.candidateTarget || `${prop.id}.${envId}.staging`;
     const baselineTarget = params.baselineTarget || `${prop.id}.${envId}.prod`;
-    const ignoreAcceptedDiffs = params.ignoreAcceptedDiffs !== false;
+    const ignoreAcceptedDiffs =
+      typeof params.ignoreAcceptedDiffs === 'boolean'
+        ? params.ignoreAcceptedDiffs
+        : runtimePolicies.ignoreAcceptedDiffs;
 
     const candRun = serverRuns.find((r) => r.target === candidateTarget);
     const baseRun = serverRuns.find((r) => r.target === baselineTarget);
@@ -2503,12 +2624,18 @@ async function startServer() {
       };
     }
 
-    const comparison = buildInitialComparison(candRun, baseRun, 'network', INITIAL_RULES, {
-      apps: runtimeProperties,
-      acceptedCookies: DEFAULT_MCP_ACCEPTED_COOKIES,
-      acceptedVisualTests: [],
-      ignoreAcceptedDiffs,
-    });
+    const comparison = buildInitialComparison(
+      candRun,
+      baseRun,
+      'network',
+      runtimePolicies.acceptedRules,
+      {
+        apps: runtimeProperties,
+        acceptedCookies: runtimePolicies.acceptedCookies,
+        acceptedVisualTests: runtimePolicies.acceptedVisualTests,
+        ignoreAcceptedDiffs,
+      }
+    );
 
     return {
       appId: prop.id,
@@ -2548,10 +2675,10 @@ async function startServer() {
       computePropertyGateSummary({
         app,
         runs: serverRuns,
-        rules: INITIAL_RULES,
-        acceptedCookies: DEFAULT_MCP_ACCEPTED_COOKIES,
-        acceptedVisualTests: [],
-        ignoreAcceptedDiffs: true,
+        rules: runtimePolicies.acceptedRules,
+        acceptedCookies: runtimePolicies.acceptedCookies,
+        acceptedVisualTests: runtimePolicies.acceptedVisualTests,
+        ignoreAcceptedDiffs: runtimePolicies.ignoreAcceptedDiffs,
         templateConfig: cfg,
         apps: runtimeProperties,
       })
@@ -2591,12 +2718,18 @@ async function startServer() {
     if (!candRun || !baseRun) {
       throw new Error(`Run not found for ${candidateTarget} vs ${baselineTarget}`);
     }
-    const comparison = buildInitialComparison(candRun, baseRun, 'network', INITIAL_RULES, {
-      apps: runtimeProperties,
-      acceptedCookies: DEFAULT_MCP_ACCEPTED_COOKIES,
-      acceptedVisualTests: [],
-      ignoreAcceptedDiffs: true,
-    });
+    const comparison = buildInitialComparison(
+      candRun,
+      baseRun,
+      'network',
+      runtimePolicies.acceptedRules,
+      {
+        apps: runtimeProperties,
+        acceptedCookies: runtimePolicies.acceptedCookies,
+        acceptedVisualTests: runtimePolicies.acceptedVisualTests,
+        ignoreAcceptedDiffs: runtimePolicies.ignoreAcceptedDiffs,
+      }
+    );
     const item =
       comparison.items.find((i) => i.testId.toUpperCase() === testUpper) || comparison.items[0];
     if (!item || !item.candidateResult) {
@@ -2631,8 +2764,226 @@ async function startServer() {
     };
   };
 
+  // 9a. MCP Access Token Governance, Bearer Auth Enforcement, Rate Limiting & Audit Log
+  const MCP_AUTH_STORE_PATH = path.resolve(process.cwd(), '.runtime-mcp-auth.json');
+  const mcpRateLimitBuckets = new Map<string, number[]>();
+
+  const loadMcpAuthState = (): McpAuthStoreState => {
+    const fallback = createInitialMcpAuthState();
+    try {
+      if (fs.existsSync(MCP_AUTH_STORE_PATH)) {
+        const parsed = JSON.parse(fs.readFileSync(MCP_AUTH_STORE_PATH, 'utf8'));
+        if (parsed && typeof parsed === 'object') {
+          return {
+            policy: { ...fallback.policy, ...(parsed.policy || {}) },
+            tokens: Array.isArray(parsed.tokens) ? parsed.tokens : [],
+            auditLog: Array.isArray(parsed.auditLog) ? parsed.auditLog.slice(0, 250) : [],
+          };
+        }
+      }
+    } catch {
+      // Fall back to default state on parse error
+    }
+    return fallback;
+  };
+
+  let runtimeMcpAuth: McpAuthStoreState = loadMcpAuthState();
+
+  const persistMcpAuthState = (next: McpAuthStoreState) => {
+    runtimeMcpAuth = next;
+    try {
+      fs.writeFileSync(MCP_AUTH_STORE_PATH, JSON.stringify(next, null, 2), 'utf8');
+    } catch {
+      // Non-fatal in read-only runtimes
+    }
+  };
+
+  const isSameOriginStudioRequest = (req: express.Request): boolean => {
+    if (String(req.headers['x-mcp-studio-origin'] || '') !== 'same-origin') {
+      return false;
+    }
+    const originHeader = String(req.headers.origin || '').trim();
+    const hostHeader = String(req.headers['x-forwarded-host'] || req.headers.host || '').trim();
+    if (!originHeader || !hostHeader) return false;
+    try {
+      const originHost = new URL(originHeader).host.toLowerCase();
+      return originHost === hostHeader.toLowerCase();
+    } catch {
+      return false;
+    }
+  };
+
+  app.get('/.well-known/oauth-protected-resource', (req, res) => {
+    const origin = resolveMcpOrigin(req);
+    res.json({
+      resource: `${origin}/api/v1/mcp/rpc`,
+      bearer_methods_supported: ['header'],
+      scopes_supported: MCP_SCOPES_CATALOG.map((s) => s.scope),
+      resource_documentation: `${origin}/api/v1/openapi.json`,
+      enforcement: {
+        enforceAuth: runtimeMcpAuth.policy.enforceAuth,
+        requireAuthForReads: runtimeMcpAuth.policy.requireAuthForReads,
+      },
+    });
+  });
+
+  app.get('/api/v1/mcp/tokens', (_req, res) => {
+    const nowMs = Date.now();
+    const tokens = runtimeMcpAuth.tokens.map((t) => toPublicTokenView(t, nowMs));
+    res.json({
+      policy: runtimeMcpAuth.policy,
+      scopesCatalog: MCP_SCOPES_CATALOG,
+      tokens,
+      summary: {
+        totalTokens: tokens.length,
+        activeTokens: tokens.filter((t) => t.status === 'active' && !t.isExpired).length,
+        revokedTokens: tokens.filter((t) => t.status === 'revoked').length,
+        totalAuditEvents: runtimeMcpAuth.auditLog.length,
+        deniedEvents: runtimeMcpAuth.auditLog.filter((e) => e.decision === 'denied').length,
+      },
+      auditLog: runtimeMcpAuth.auditLog.slice(0, 80),
+    });
+  });
+
+  app.post('/api/v1/mcp/tokens', (req, res) => {
+    try {
+      const operatorEmail = resolveOperatorEmail(req);
+      const { state, token, rawToken } = createMcpToken(runtimeMcpAuth, {
+        name: req.body?.name,
+        scopes: req.body?.scopes,
+        allowedAppIds: req.body?.allowedAppIds,
+        expiresInDays: req.body?.expiresInDays,
+        rateLimitRpm: req.body?.rateLimitRpm,
+        note: req.body?.note,
+        createdBy: operatorEmail,
+      });
+      persistMcpAuthState(state);
+      defaultUserManager.trackUserAction({
+        email: operatorEmail,
+        action: 'MCP_TOOL_INVOKED',
+        target: `token:create:${token.prefix}`,
+        source: 'rest-api',
+        metadata: { tokenId: token.id, scopes: token.scopes.join(',') },
+      });
+      res.status(201).json({
+        token,
+        rawToken,
+        oneTimeNotice: 'Copy this token now. Only its SHA-256 digest is stored on the server.',
+      });
+    } catch (err: unknown) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Failed to generate MCP token',
+      });
+    }
+  });
+
+  app.patch('/api/v1/mcp/tokens/:tokenId', (req, res) => {
+    try {
+      const { state, token } = updateMcpToken(runtimeMcpAuth, req.params.tokenId, {
+        name: req.body?.name,
+        scopes: req.body?.scopes,
+        allowedAppIds: req.body?.allowedAppIds,
+        rateLimitRpm: req.body?.rateLimitRpm,
+        status: req.body?.status,
+        note: req.body?.note,
+      });
+      persistMcpAuthState(state);
+      res.json({ token });
+    } catch (err: unknown) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Failed to update MCP token',
+      });
+    }
+  });
+
+  app.post('/api/v1/mcp/tokens/:tokenId/rotate', (req, res) => {
+    try {
+      const { state, token, rawToken } = rotateMcpToken(
+        runtimeMcpAuth,
+        req.params.tokenId
+      );
+      mcpRateLimitBuckets.delete(req.params.tokenId);
+      persistMcpAuthState(state);
+      res.json({
+        token,
+        rawToken,
+        oneTimeNotice: 'Previous secret invalidated immediately. Copy the rotated token now.',
+      });
+    } catch (err: unknown) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Failed to rotate MCP token',
+      });
+    }
+  });
+
+  app.post('/api/v1/mcp/tokens/:tokenId/revoke', (req, res) => {
+    try {
+      const { state, token } = revokeMcpToken(runtimeMcpAuth, req.params.tokenId);
+      mcpRateLimitBuckets.delete(req.params.tokenId);
+      persistMcpAuthState(state);
+      res.json({ token });
+    } catch (err: unknown) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Failed to revoke MCP token',
+      });
+    }
+  });
+
+  app.delete('/api/v1/mcp/tokens/:tokenId', (req, res) => {
+    try {
+      const { state, deletedId } = deleteMcpToken(runtimeMcpAuth, req.params.tokenId);
+      mcpRateLimitBuckets.delete(req.params.tokenId);
+      persistMcpAuthState(state);
+      res.json({ deletedId });
+    } catch (err: unknown) {
+      res.status(404).json({
+        error: err instanceof Error ? err.message : 'Token not found',
+      });
+    }
+  });
+
+  app.put('/api/v1/mcp/auth-policy', (req, res) => {
+    try {
+      const operatorEmail = resolveOperatorEmail(req);
+      const { state, policy } = updateMcpAuthPolicy(
+        runtimeMcpAuth,
+        req.body || {},
+        operatorEmail
+      );
+      persistMcpAuthState(state);
+      res.json({ policy });
+    } catch (err: unknown) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Failed to update MCP auth policy',
+      });
+    }
+  });
+
+  app.get('/api/v1/mcp/audit', (req, res) => {
+    const decisionFilter = String(req.query.decision || '').trim().toLowerCase();
+    const limit = Math.min(250, Math.max(1, Number(req.query.limit || 80)));
+    const filtered = runtimeMcpAuth.auditLog.filter((evt) => {
+      if (decisionFilter === 'allowed' || decisionFilter === 'denied') {
+        return evt.decision === decisionFilter;
+      }
+      return true;
+    });
+    res.json({
+      total: filtered.length,
+      auditLog: filtered.slice(0, limit),
+    });
+  });
+
   app.get(['/.well-known/mcp.json', '/api/v1/mcp/manifest'], (req, res) => {
-    res.json(buildMcpManifest(resolveMcpOrigin(req), getRuntimeConfigSnapshot()));
+    res.json({
+      ...buildMcpManifest(resolveMcpOrigin(req), getRuntimeConfigSnapshot()),
+      auth: {
+        type: 'bearer',
+        protectedResourceMetadata: '/.well-known/oauth-protected-resource',
+        enforceAuth: runtimeMcpAuth.policy.enforceAuth,
+        scopes: MCP_SCOPES_CATALOG.map((s) => s.scope),
+      },
+    });
   });
 
   app.get('/api/v1/mcp/rpc', (req, res) => {
@@ -2654,6 +3005,7 @@ async function startServer() {
   });
 
   app.post('/api/v1/mcp/rpc', async (req, res) => {
+    const rpcStartedAt = Date.now();
     const operatorEmail = resolveOperatorEmail(req);
     const sessionId =
       (typeof req.headers['mcp-session-id'] === 'string' && req.headers['mcp-session-id']) ||
@@ -2661,6 +3013,83 @@ async function startServer() {
     res.setHeader('Mcp-Session-Id', sessionId);
 
     const method = typeof req.body?.method === 'string' ? req.body.method : '';
+    const rpcToolName =
+      method === 'tools/call'
+        ? String(req.body?.params?.name || '')
+        : typeof req.body?.tool === 'string'
+        ? req.body.tool
+        : undefined;
+    const rpcArgs =
+      method === 'tools/call' && req.body?.params?.arguments && typeof req.body.params.arguments === 'object'
+        ? (req.body.params.arguments as Record<string, unknown>)
+        : req.body?.params && typeof req.body.params === 'object'
+        ? (req.body.params as Record<string, unknown>)
+        : undefined;
+    const rpcResourceUri =
+      method === 'resources/read' && typeof req.body?.params?.uri === 'string'
+        ? req.body.params.uri
+        : undefined;
+
+    const authDecision = evaluateMcpRequestAuth(
+      runtimeMcpAuth,
+      {
+        authorizationHeader:
+          typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
+        xMcpTokenHeader:
+          typeof req.headers['x-mcp-token'] === 'string' ? req.headers['x-mcp-token'] : undefined,
+        isSameOriginStudioRequest: isSameOriginStudioRequest(req),
+        method: method || 'tools/call',
+        toolName: rpcToolName,
+        args: rpcArgs,
+        resourceUri: rpcResourceUri,
+      },
+      mcpRateLimitBuckets
+    );
+
+    if (authDecision.rateLimitLimit !== undefined) {
+      res.setHeader('X-RateLimit-Limit', String(authDecision.rateLimitLimit));
+      res.setHeader('X-RateLimit-Remaining', String(authDecision.rateLimitRemaining ?? 0));
+    }
+
+    if (!authDecision.allowed) {
+      if (authDecision.wwwAuthenticate) {
+        res.setHeader('WWW-Authenticate', authDecision.wwwAuthenticate);
+      }
+      if (authDecision.retryAfterSec) {
+        res.setHeader('Retry-After', String(authDecision.retryAfterSec));
+      }
+      const deniedState = recordMcpAuditEvent(runtimeMcpAuth, {
+        method: method || 'tools/call',
+        toolName: rpcToolName,
+        action: typeof rpcArgs?.action === 'string' ? rpcArgs.action : undefined,
+        appId: authDecision.targetAppId,
+        requiredScope: authDecision.requiredScope,
+        decision: 'denied',
+        statusCode: authDecision.statusCode,
+        reason: authDecision.error,
+        tokenId: authDecision.tokenId,
+        tokenName: authDecision.tokenName,
+        tokenPrefix: authDecision.tokenPrefix,
+        authMode: authDecision.authMode,
+        latencyMs: Date.now() - rpcStartedAt,
+      });
+      persistMcpAuthState(deniedState);
+      res.status(authDecision.statusCode).json({
+        jsonrpc: '2.0',
+        id: req.body?.id !== undefined ? req.body.id : null,
+        error: {
+          code: authDecision.statusCode === 429 ? -32029 : authDecision.statusCode === 403 ? -32003 : -32001,
+          message: authDecision.error || 'MCP access denied',
+          data: {
+            requiredScope: authDecision.requiredScope,
+            ...(authDecision.targetAppId ? { appId: authDecision.targetAppId } : {}),
+            ...(authDecision.retryAfterSec ? { retryAfterSec: authDecision.retryAfterSec } : {}),
+          },
+        },
+      });
+      return;
+    }
+
     const auditTarget =
       method === 'tools/call'
         ? String(req.body?.params?.name || 'tools/call')
@@ -2671,7 +3100,12 @@ async function startServer() {
       action: 'MCP_TOOL_INVOKED',
       target: auditTarget,
       source: 'mcp',
-      metadata: { method: method || 'legacy', target: auditTarget },
+      metadata: {
+        method: method || 'legacy',
+        target: auditTarget,
+        authMode: authDecision.authMode,
+        ...(authDecision.tokenPrefix ? { tokenPrefix: authDecision.tokenPrefix } : {}),
+      },
     });
 
     const response = await dispatchMcpJsonRpc(req.body, {
@@ -2696,6 +3130,24 @@ async function startServer() {
                 properties: runtimeProperties,
                 totalRunsIndexed: serverRuns.length,
               },
+              null,
+              2
+            ),
+          };
+        }
+        if (uri === 'gate://policies/active') {
+          return {
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(runtimePolicies, null, 2),
+          };
+        }
+        if (uri === 'gate://folders/catalog') {
+          return {
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(
+              { totalFolders: runtimeFolders.length, folders: runtimeFolders },
               null,
               2
             ),
@@ -2752,6 +3204,30 @@ async function startServer() {
             ),
           };
         }
+        const envMatch = uri.match(/^gate:\/\/property\/([a-z0-9_-]+)\/environments$/i);
+        if (envMatch) {
+          const outcome = executeManageEnvironment(getMcpStateSnapshot(), {
+            action: 'list',
+            appId: envMatch[1].toLowerCase(),
+          });
+          return {
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(outcome.result, null, 2),
+          };
+        }
+        const runsMatch = uri.match(/^gate:\/\/property\/([a-z0-9_-]+)\/runs$/i);
+        if (runsMatch) {
+          const outcome = executeManageRuns(getMcpStateSnapshot(), {
+            action: 'list',
+            appId: runsMatch[1].toLowerCase(),
+          });
+          return {
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(outcome.result, null, 2),
+          };
+        }
         return null;
       },
       executeTool: async (toolName: string, args: Record<string, unknown>) => {
@@ -2762,28 +3238,61 @@ async function startServer() {
         }
 
         if (toolName === 'list_akamai_properties') {
-          const q = String(args.search || '').trim().toLowerCase();
-          const props = q
-            ? runtimeProperties.filter(
-                (p) =>
-                  p.id.toLowerCase().includes(q) ||
-                  p.name.toLowerCase().includes(q)
-              )
-            : runtimeProperties;
+          const outcome = executeManageProperty(getMcpStateSnapshot(), {
+            action: 'list',
+            search: args.search,
+            tag: args.tag,
+          });
           return {
-            properties: props.map((p) => ({
-              id: p.id,
-              name: p.name,
-              envs: p.envs.map((e) => ({
-                id: e.id,
-                name: e.name,
-                hostMap: e.hostMap || {},
-              })),
-              networks: p.defaultNetworks || ['staging', 'prod'],
-            })),
+            ...(outcome.result as Record<string, unknown>),
             networks: cfg.networks,
             totalRunsIndexed: serverRuns.length,
           };
+        }
+
+        if (toolName === 'manage_property') {
+          const outcome = executeManageProperty(getMcpStateSnapshot(), args);
+          if (outcome.mutated) {
+            commitMcpState(outcome.state, true);
+          }
+          return outcome.result;
+        }
+
+        if (toolName === 'manage_environment') {
+          const outcome = executeManageEnvironment(getMcpStateSnapshot(), args);
+          if (outcome.mutated) {
+            commitMcpState(outcome.state, true);
+          }
+          return outcome.result;
+        }
+
+        if (toolName === 'manage_test_suite') {
+          const outcome = executeManageTestSuite(getMcpStateSnapshot(), args);
+          if (outcome.mutated) {
+            commitMcpState(outcome.state, true);
+          }
+          return outcome.result;
+        }
+
+        if (toolName === 'manage_test_folders') {
+          const outcome = executeManageTestFolders(getMcpStateSnapshot(), args);
+          if (outcome.mutated) {
+            commitMcpState(outcome.state, true);
+          }
+          return outcome.result;
+        }
+
+        if (toolName === 'manage_gate_policies') {
+          const outcome = executeManageGatePolicies(
+            getMcpStateSnapshot(),
+            args,
+            DEFAULT_RUNTIME_POLICIES,
+            operatorEmail
+          );
+          if (outcome.mutated) {
+            commitMcpState(outcome.state, true);
+          }
+          return outcome.result;
         }
 
         if (toolName === 'get_property_gate') {
@@ -2793,8 +3302,75 @@ async function startServer() {
               typeof args.candidateTarget === 'string' ? args.candidateTarget : undefined,
             baselineTarget:
               typeof args.baselineTarget === 'string' ? args.baselineTarget : undefined,
-            ignoreAcceptedDiffs: args.ignoreAcceptedDiffs !== false,
+            ignoreAcceptedDiffs:
+              typeof args.ignoreAcceptedDiffs === 'boolean'
+                ? args.ignoreAcceptedDiffs
+                : runtimePolicies.ignoreAcceptedDiffs,
           });
+        }
+
+        if (toolName === 'compare_targets') {
+          const candidateTarget = String(args.candidateTarget || 'www.prod.staging').trim();
+          const baselineTarget = String(args.baselineTarget || 'www.prod.prod').trim();
+          const candRun = args.candidateRunKey
+            ? serverRuns.find((r) => r.key === String(args.candidateRunKey))
+            : serverRuns.find((r) => r.target === candidateTarget);
+          const baseRun = args.baselineRunKey
+            ? serverRuns.find((r) => r.key === String(args.baselineRunKey))
+            : serverRuns.find((r) => r.target === baselineTarget);
+          if (!candRun || !baseRun) {
+            throw new Error(
+              `Run not found for ${!candRun ? candidateTarget : baselineTarget}. Run "run_live_gate" first.`
+            );
+          }
+          const inferredKind =
+            args.kind === 'env' || args.kind === 'adhoc' || args.kind === 'network'
+              ? args.kind
+              : candRun.envId !== baseRun.envId
+              ? 'env'
+              : 'network';
+          const ignoreAcceptedDiffs =
+            typeof args.ignoreAcceptedDiffs === 'boolean'
+              ? args.ignoreAcceptedDiffs
+              : runtimePolicies.ignoreAcceptedDiffs;
+          const comparison = buildInitialComparison(
+            candRun,
+            baseRun,
+            inferredKind,
+            runtimePolicies.acceptedRules,
+            {
+              apps: runtimeProperties,
+              acceptedCookies: runtimePolicies.acceptedCookies,
+              acceptedVisualTests: runtimePolicies.acceptedVisualTests,
+              ignoreAcceptedDiffs,
+            }
+          );
+          return {
+            comparisonId: comparison.comparisonId,
+            kind: comparison.kind,
+            candidateTarget: comparison.candidateTarget,
+            baselineTarget: comparison.baselineTarget,
+            candidateRunKey: comparison.candidateRunKey,
+            baselineRunKey: comparison.baselineRunKey,
+            isPartial: comparison.isPartial,
+            headlineVerdict: comparison.headlineVerdict,
+            counts: comparison.counts,
+            rollup: comparison.rollup,
+            items: comparison.items.map((it) => ({
+              testId: it.testId,
+              testName: it.testName,
+              url: it.url,
+              itemVerdict: it.itemVerdict,
+              candidateStatus: it.candidateResult?.actualStatus,
+              baselineStatus: it.baselineResult?.actualStatus,
+              functionalDiffs: it.functionalDiffs,
+              cookieDiffs: it.cookieDiffs || [],
+              visualVerdict: it.visualResult?.verdict || 'same',
+            })),
+            ...(args.includeMarkdownSummary !== false
+              ? { markdownSummary: generateComparisonMarkdownSummary(comparison) }
+              : {}),
+          };
         }
 
         if (toolName === 'inspect_check_evidence') {
@@ -2811,18 +3387,22 @@ async function startServer() {
         if (toolName === 'get_curl_reproduction') {
           const appId = String(args.appId || 'www').toLowerCase();
           const testId = String(args.testId || 'T01').toUpperCase();
+          const envId = String(args.envId || 'prod').toLowerCase();
           const network = args.network === 'prod' ? 'prod' : 'staging';
           const suite = getRuntimeSuiteForApp(appId);
           const checkDef = suite.find((t) => t.id.toUpperCase() === testId) || suite[0];
-          const targetId = `${appId}.prod.${network}`;
+          const targetId = `${appId}.${envId}.${network}`;
           const existingRun = serverRuns.find((r) => r.target === targetId);
           const existingRes = existingRun?.results.find(
             (r) => r.id.toUpperCase() === testId
           );
-          const host = resolvePropertyHostname(appId, 'prod', cfg);
+          const prop = runtimeProperties.find((p) => p.id.toLowerCase() === appId);
+          const envObj = prop?.envs.find((e) => e.id.toLowerCase() === envId);
+          const host = resolvePropertyHostname(appId, envId, cfg);
           const regional = resolveRegionalEdgeNode(appId);
           const edgeIp =
-            network === 'staging' ? regional.stagingEdgeIp : regional.prodEdgeIp;
+            (network === 'staging' ? envObj?.edgeIps?.staging : envObj?.edgeIps?.prod) ||
+            (network === 'staging' ? regional.stagingEdgeIp : regional.prodEdgeIp);
           const resultObj =
             existingRes ||
             ({
@@ -2846,6 +3426,7 @@ async function startServer() {
 
           return {
             appId,
+            envId,
             testId,
             network,
             edgeIp,
@@ -2860,15 +3441,20 @@ async function startServer() {
         if (toolName === 'rerun_check') {
           const appId = String(args.appId || 'www').toLowerCase();
           const testId = String(args.testId || 'T01').toUpperCase();
+          const envId = String(args.envId || 'prod').toLowerCase();
           const isStaging = args.network !== 'prod';
           const suite = getRuntimeSuiteForApp(appId);
           const checkDef = suite.find((t) => t.id.toUpperCase() === testId) || suite[0];
-          const host = resolvePropertyHostname(appId, 'prod', cfg);
+          const prop = runtimeProperties.find((p) => p.id.toLowerCase() === appId);
+          const envObj = prop?.envs.find((e) => e.id.toLowerCase() === envId);
+          const host = resolvePropertyHostname(appId, envId, cfg);
           const targetUrl = checkDef?.path?.startsWith('http')
             ? checkDef.path
             : `https://${host}${checkDef?.path || '/'}`;
           const regional = resolveRegionalEdgeNode(appId, targetUrl);
-          const edgeIp = isStaging ? regional.stagingEdgeIp : regional.prodEdgeIp;
+          const edgeIp =
+            (isStaging ? envObj?.edgeIps?.staging : envObj?.edgeIps?.prod) ||
+            (isStaging ? regional.stagingEdgeIp : regional.prodEdgeIp);
           const netCfg = isStaging ? cfg.networks.staging : cfg.networks.prod;
 
           const flow = await probeLiveUrlHttpFlow({
@@ -2880,11 +3466,15 @@ async function startServer() {
             expectedStatus: checkDef?.expectedStatus || '200',
             maxHops: 5,
             httpMethod: checkDef?.httpMethod,
-            customHeaders: checkDef?.requestHeaders,
+            customHeaders: {
+              ...(prop?.headers || {}),
+              ...(envObj?.headers || {}),
+              ...(checkDef?.requestHeaders || {}),
+            },
             requestBody: checkDef?.requestBody,
           });
 
-          const targetKey = `${appId}.prod.${isStaging ? 'staging' : 'prod'}`;
+          const targetKey = `${appId}.${envId}.${isStaging ? 'staging' : 'prod'}`;
           serverRuns = serverRuns.map((run) => {
             if (run.target !== targetKey) return run;
             return {
@@ -2908,6 +3498,7 @@ async function startServer() {
 
           return {
             appId,
+            envId,
             testId,
             network: isStaging ? 'staging' : 'prod',
             url: targetUrl,
@@ -2943,7 +3534,7 @@ async function startServer() {
             appId,
             candidateTarget: targetId,
             baselineTarget: targetId.replace(/\.staging$/, '.prod'),
-            ignoreAcceptedDiffs: true,
+            ignoreAcceptedDiffs: runtimePolicies.ignoreAcceptedDiffs,
           });
           return {
             runKey: newRun.key,
@@ -2954,6 +3545,171 @@ async function startServer() {
             gateVerdict: gate.headlineVerdict,
             rollup: 'rollup' in gate ? gate.rollup : undefined,
           };
+        }
+
+        if (toolName === 'manage_runs') {
+          const action = String(args.action || 'list').trim().toLowerCase();
+          if (action === 'seed_fleet') {
+            const seeded = await seedLiveFleetOnServer();
+            return {
+              action: 'seed_fleet',
+              seededRuns: seeded.length,
+              totalRunsIndexed: serverRuns.length,
+              targets: seeded.map((r) => r.target),
+            };
+          }
+          const outcome = executeManageRuns(getMcpStateSnapshot(), args);
+          if (outcome.mutated) {
+            commitMcpState(outcome.state, false);
+          }
+          return outcome.result;
+        }
+
+        if (toolName === 'manage_synthetics_canaries') {
+          const action = String(args.action || 'list').trim().toLowerCase();
+          const canaries = getManagedCanariesInventory();
+
+          if (action === 'list' || action === 'status') {
+            const filterApp = args.appId ? String(args.appId).trim().toLowerCase() : '';
+            const filtered = filterApp
+              ? canaries.filter((c) => c.appId.toLowerCase() === filterApp)
+              : canaries;
+            return {
+              action,
+              awsRegion: awsEnv.region || DEFAULT_TEMPLATE_CONFIG.infrastructure.awsRegion,
+              awsLiveConnected: awsSyntheticsLiveConnected,
+              awsStatusMessage: lastAwsDescribeMessage,
+              totalCanaries: filtered.length,
+              canaries: filtered,
+              recentBatches: fanOutBatches.slice(0, 6),
+            };
+          }
+
+          if (action === 'deep_dive') {
+            const name = String(args.canaryName || '').trim().toLowerCase();
+            const canary = canaries.find(
+              (c) => c.canaryName.toLowerCase() === name || c.targetId.toLowerCase() === name
+            );
+            if (!canary) throw new Error(`Canary "${name}" not found`);
+            return buildCanaryDeepDiveReport({
+              canary,
+              allCanaries: canaries,
+              suite: getRuntimeSuiteForApp(canary.appId),
+              runs: serverRuns,
+            });
+          }
+
+          if (action === 'sync') {
+            const appId = args.appId ? String(args.appId).trim().toLowerCase() : '';
+            const targetApps = appId
+              ? runtimeProperties.filter((p) => p.id === appId).map((p) => p.id)
+              : runtimeProperties.map((p) => p.id);
+            if (targetApps.length === 0) throw new Error(`Property "${appId}" not found`);
+            const outcomes = (
+              await Promise.all(targetApps.map((id) => syncPropertyCanariesToAws(id)))
+            ).flat();
+            return {
+              action: 'sync',
+              totalSyncedCanaries: outcomes.length,
+              outcomes,
+            };
+          }
+
+          if (action === 'start') {
+            const name = String(args.canaryName || '').trim().toLowerCase();
+            const canary = canaries.find(
+              (c) => c.canaryName.toLowerCase() === name || c.targetId.toLowerCase() === name
+            );
+            if (!canary) throw new Error(`Canary "${name}" not found`);
+            const startOutcome = await startAwsSyntheticsCanary({
+              canaryName: canary.canaryName,
+              creds: resolveRuntimeAwsCredentials(),
+            });
+            const runNum = serverRuns.filter((r) => r.target === canary.targetId).length + 1;
+            const newRun = await executeLiveSalesforceRun({
+              targetId: canary.targetId,
+              runNumber: runNum,
+              label: `mcp-canary #${runNum}`,
+              operatorEmail,
+              suiteAppId: canary.appId,
+              config: cfg,
+              suite: getRuntimeSuiteForApp(canary.appId),
+            });
+            serverRuns = [newRun, ...serverRuns.filter((r) => r.key !== newRun.key)];
+            return {
+              action: 'start',
+              canaryName: canary.canaryName,
+              targetId: canary.targetId,
+              awsDispatched: startOutcome.dispatchedToAws,
+              awsMessage: startOutcome.message,
+              runKey: newRun.key,
+              passedTests: newRun.passedTests,
+              failedTests: newRun.failedTests,
+            };
+          }
+
+          if (action === 'fan_out') {
+            const rawScope = String(args.scope || 'property').toLowerCase();
+            const scope: FanOutScope =
+              rawScope === 'all'
+                ? 'fleet-all'
+                : rawScope === 'blockers'
+                ? 'property-pair'
+                : 'property-pair';
+            const appId = args.appId ? String(args.appId).trim().toLowerCase() : 'www';
+            const netArg = String(args.network || 'both').toLowerCase();
+            const networks: ('staging' | 'prod')[] =
+              netArg === 'staging'
+                ? ['staging']
+                : netArg === 'prod'
+                ? ['prod']
+                : ['staging', 'prod'];
+            const plan = planFanOutExecution({
+              scope,
+              canaries,
+              appId: scope === 'fleet-all' ? undefined : appId,
+              networks,
+              maxConcurrency: 4,
+            });
+            const creds = resolveRuntimeAwsCredentials();
+            const results = await Promise.all(
+              plan.targets.slice(0, 8).map(async (target) => {
+                const startOutcome = await startAwsSyntheticsCanary({
+                  canaryName: target.canaryName,
+                  creds,
+                });
+                const runNum = serverRuns.filter((r) => r.target === target.targetId).length + 1;
+                const newRun = await executeLiveSalesforceRun({
+                  targetId: target.targetId,
+                  runNumber: runNum,
+                  label: `mcp-fanout #${runNum}`,
+                  operatorEmail,
+                  suiteAppId: target.appId,
+                  config: cfg,
+                  suite: getRuntimeSuiteForApp(target.appId),
+                });
+                serverRuns = [newRun, ...serverRuns.filter((r) => r.key !== newRun.key)];
+                return {
+                  canaryName: target.canaryName,
+                  targetId: target.targetId,
+                  awsDispatched: startOutcome.dispatchedToAws,
+                  runKey: newRun.key,
+                  passedTests: newRun.passedTests,
+                  failedTests: newRun.failedTests,
+                };
+              })
+            );
+            return {
+              action: 'fan_out',
+              scope: rawScope,
+              executedCount: results.length,
+              results,
+            };
+          }
+
+          throw new Error(
+            `Unsupported manage_synthetics_canaries action "${action}". Allowed: list, status, deep_dive, sync, start, fan_out`
+          );
         }
 
         if (
@@ -3008,49 +3764,6 @@ async function startServer() {
           });
         }
 
-        if (toolName === 'manage_test_suite') {
-          const action = String(args.action || 'list').toLowerCase();
-          const appId = String(args.appId || 'www').toLowerCase();
-          const currentSuite = [...getRuntimeSuiteForApp(appId)];
-
-          if (action === 'list') {
-            return { appId, totalChecks: currentSuite.length, checks: currentSuite };
-          }
-          if (action === 'delete') {
-            const testId = String(args.testId || '').toUpperCase();
-            if (!testId) throw new Error('testId is required to delete a check');
-            const filtered = currentSuite.filter((c) => c.id.toUpperCase() !== testId);
-            runtimeSuitesByAppId[appId] = filtered;
-            persistRuntimeCatchpointConfig();
-            return { appId, deleted: testId, totalChecks: filtered.length };
-          }
-          if (action === 'upsert') {
-            const testId =
-              (typeof args.testId === 'string' && args.testId.trim().toUpperCase()) ||
-              generateNextTestId(currentSuite);
-            const rawCheck = normalizeTestCaseWithCatchpointDefaults({
-              id: testId,
-              name: String(args.name || `Synthetic Check ${testId}`),
-              path: String(args.path || '/'),
-              expectedStatus: String(args.expectedStatus || '200'),
-            });
-            const existsIdx = currentSuite.findIndex((c) => c.id.toUpperCase() === testId);
-            if (existsIdx >= 0) {
-              currentSuite[existsIdx] = rawCheck;
-            } else {
-              currentSuite.push(rawCheck);
-            }
-            runtimeSuitesByAppId[appId] = currentSuite;
-            persistRuntimeCatchpointConfig();
-            return {
-              appId,
-              upserted: rawCheck,
-              totalChecks: currentSuite.length,
-            };
-          }
-          throw new Error(`Unsupported manage_test_suite action: ${action}`);
-        }
-
         // Legacy compatible tools
         if (toolName === 'get_user_stats' || toolName === 'list_users') {
           return defaultUserManager.getStatsSummary(
@@ -3073,6 +3786,34 @@ async function startServer() {
         throw new Error(`Unknown MCP tool: ${toolName}`);
       },
     });
+
+    let nextAuthState = runtimeMcpAuth;
+    if (authDecision.tokenId) {
+      nextAuthState = touchMcpTokenUsage(
+        nextAuthState,
+        authDecision.tokenId,
+        rpcToolName || method || 'rpc'
+      );
+    }
+    if (method !== 'ping' && !method.startsWith('notifications/')) {
+      nextAuthState = recordMcpAuditEvent(nextAuthState, {
+        method: method || 'tools/call',
+        toolName: rpcToolName,
+        action: typeof rpcArgs?.action === 'string' ? rpcArgs.action : undefined,
+        appId: authDecision.targetAppId,
+        requiredScope: authDecision.requiredScope,
+        decision: 'allowed',
+        statusCode: response.statusCode,
+        tokenId: authDecision.tokenId,
+        tokenName: authDecision.tokenName,
+        tokenPrefix: authDecision.tokenPrefix,
+        authMode: authDecision.authMode,
+        latencyMs: Date.now() - rpcStartedAt,
+      });
+      persistMcpAuthState(nextAuthState);
+    } else if (authDecision.tokenId) {
+      persistMcpAuthState(nextAuthState);
+    }
 
     if (response.isNotification) {
       res.status(202).end();
